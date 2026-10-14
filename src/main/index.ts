@@ -22,6 +22,7 @@ function createWindow(preloadArgs: string[]): BrowserWindow {
     show: false,
     backgroundColor: '#0f0d17',
     title: 'GHOST',
+    icon: app.isPackaged ? undefined : join(app.getAppPath(), 'resources/icon.png'),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 16, y: 14 },
     titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#e8e4f8', height: 40 },
@@ -46,6 +47,7 @@ function createWindow(preloadArgs: string[]): BrowserWindow {
 
 app.whenReady().then(async () => {
   handleArtProtocol()
+  if (!app.isPackaged && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources/icon.png'))
   handle = await createServices(broadcast)
   registerIpc(handle.services)
   createWindow(handle.preloadArgs)
