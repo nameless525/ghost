@@ -1,0 +1,209 @@
+/* Shared transport / track controls (controls.tsx). */
+
+/* ---- play / pause: icon morph + buffering ring ---- */
+.np-play {
+  position: relative;
+  overflow: visible;
+}
+.np-play__icons {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.np-play .np-play__icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity 220ms var(--ease-out-quint),
+    transform 380ms var(--ease-out-back);
+}
+.np-play .np-play__icon--play {
+  margin-left: 2px;
+  fill: currentColor;
+}
+.np-play .np-play__icon--pause {
+  fill: currentColor;
+  opacity: 0;
+  transform: scale(0.4) rotate(-90deg);
+}
+.np-play--playing .np-play__icon--play {
+  opacity: 0;
+  transform: scale(0.4) rotate(90deg);
+}
+.np-play--playing .np-play__icon--pause {
+  opacity: 1;
+  transform: none;
+}
+.np-play__busy {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent-hi);
+  border-right-color: rgb(var(--accent-rgb) / 0.4);
+  opacity: 0;
+  transition: opacity 200ms;
+  pointer-events: none;
+}
+.np-play--busy .np-play__busy {
+  opacity: 1;
+  animation: np-spin 0.8s linear infinite;
+}
+@keyframes np-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- mode toggles: active dot + tiny tag ---- */
+.np-mode {
+  position: relative;
+}
+.np-mode__dot {
+  position: absolute;
+  left: 50%;
+  bottom: 1px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+.np-mode__tag {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 8px;
+  font-weight: var(--fw-black);
+  line-height: 12px;
+  text-align: center;
+}
+
+/* ---- like: pop + ring burst ---- */
+.np-like {
+  position: relative;
+  overflow: visible;
+}
+.np-like__icon {
+  display: grid;
+  place-items: center;
+}
+.np-like--on {
+  color: var(--accent);
+}
+.np-like--on svg {
+  filter: drop-shadow(0 0 6px rgb(var(--accent-rgb) / 0.7));
+}
+.np-like__burst {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 14px rgb(var(--accent-rgb) / 0.8);
+  animation: np-like-burst 620ms var(--ease-out-quint) forwards;
+}
+.np-like__burst::before,
+.np-like__burst::after {
+  content: '';
+  position: absolute;
+  inset: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px;
+  border-radius: 1px;
+  background: var(--accent-hi);
+  box-shadow:
+    -14px -14px 0 var(--accent-hi),
+    14px -14px 0 var(--accent),
+    -14px 14px 0 var(--accent),
+    14px 14px 0 var(--accent-hi),
+    0 -19px 0 var(--accent),
+    0 19px 0 var(--accent-hi),
+    -19px 0 0 var(--accent-hi),
+    19px 0 0 var(--accent);
+  animation: np-like-sparks 620ms var(--ease-out-quint) forwards;
+}
+.np-like__burst::after {
+  rotate: 22deg;
+  scale: 0.7;
+}
+@keyframes np-like-burst {
+  from {
+    transform: scale(0.5);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes np-like-sparks {
+  from {
+    transform: scale(0.4);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* ---- volume ---- */
+.np-volume {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.np-volume__slider {
+  width: var(--np-vol-w, 110px);
+}
+
+/* The kit's volume thumb uses the CSS `scale` property, which composes after its
+   translateX and so pulls the thumb off the fill end. Size it explicitly instead. */
+.np-volume .np-volume__slider.g-slider .g-slider__thumb {
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  scale: 1;
+  opacity: 0;
+  transition: opacity 180ms var(--ease-out-quint);
+}
+.np-volume .np-volume__slider.g-slider:hover .g-slider__thumb,
+.np-volume .np-volume__slider.g-slider.is-dragging .g-slider__thumb,
+.np-volume .np-volume__slider.g-slider:focus-visible .g-slider__thumb {
+  opacity: 1;
+}
+
+/* ---- queue toggle with an up-next count ---- */
+.np-queue-toggle {
+  position: relative;
+  margin-left: 4px;
+  overflow: visible;
+}
+.np-queue-toggle__count {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 9px;
+  font-weight: var(--fw-bold);
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}

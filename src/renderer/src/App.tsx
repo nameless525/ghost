@@ -6,6 +6,7 @@ import { startAccentDriver } from './theme'
 import './motion'
 import { BackgroundLayer } from './gfx/background'
 import { useMediaSession, usePlayerThemeSync } from './hooks'
+import { VolumeMeter } from './overlays/now-playing/VolumeMeter'
 import { applyDeepLinks, FpsMeter, GlobalKeys, initNotifications, OverlayHost, ScreenStack, ToastStack, Toolbar } from './shell'
 import { useSettings } from './state/settings'
 import { UIHosts } from './ui'
@@ -46,6 +47,7 @@ export default function App() {
         <OverlayHost />
         <Toolbar />
         <ToastStack />
+        <VolumeMeter />
         <FpsMeter />
         <UIHosts />
       </div>
