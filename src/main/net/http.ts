@@ -50,7 +50,11 @@ export const DEFAULT_HOST_POLICIES: Record<string, HostPolicy> = {
   'gbs.joshw.info': { concurrency: 1, spacingMs: 1500 },
   'hes.joshw.info': { concurrency: 1, spacingMs: 1500 },
   'kss.joshw.info': { concurrency: 1, spacingMs: 1500 },
-  'vgmrips.net': { concurrency: 2, spacingMs: 1000 }
+  'vgmrips.net': { concurrency: 2, spacingMs: 1000 },
+  // Zophar's Domain listing / album pages (the MP3 host fi.zophar.net streams through the engine).
+  'www.zophar.net': { concurrency: 1, spacingMs: 1000 },
+  // Modland's daily index file (files stream through the engine).
+  'ftp.modland.com': { concurrency: 1, spacingMs: 1000 }
 }
 const FALLBACK_POLICY: HostPolicy = { concurrency: 4, spacingMs: 0 }
 

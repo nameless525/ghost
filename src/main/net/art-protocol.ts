@@ -291,7 +291,10 @@ async function fetchBytes(url: string, retries: number): Promise<{ bytes: Buffer
 /** KHInsider full-size scans occasionally 404 while their /thumbs/ copy exists. */
 function fallbackUrl(url: string): string | null {
   const m = /^(https?:\/\/[^/]*vgmtreasurechest\.com\/soundtracks\/[^/]+\/)(?!thumbs)([^/]+)$/.exec(url)
-  return m ? `${m[1]}thumbs/${m[2]}` : null
+  if (m) return `${m[1]}thumbs/${m[2]}`
+  // Zophar's full-size cover → its large thumbnail.
+  const z = /^(https?:\/\/fi\.zophar\.net\/soundcovers\/[^/]+\/)(?!thumbs_)([^/]+)$/.exec(url)
+  return z ? `${z[1]}thumbs_large/${z[2]}` : null
 }
 
 async function fetchArt(url: string): Promise<{ bytes: Buffer; contentType: string | null }> {

@@ -8,7 +8,9 @@
 //      short-lived URLs). Network searches set `findTrackMode: 'fallback'` so they only run when
 //      the album's own sources failed. `searchExternal` + `getAlbum` make it importable.
 //   2. Register it in `createDefaultRegistry` with the id used in settings (DEFAULT_SOURCE_ORDER:
-//      'local', 'chip', 'bandcamp', 'khinsider', 'archive', 'youtube').
+//      'local', 'chip', 'bandcamp', 'khinsider', 'zophar', 'modland', 'archive', 'soundcloud',
+//      'youtube'). Index providers crawl in registration order; the first one (KHInsider) builds
+//      the catalog and the others follow it.
 // The catalog caches every resolved stream in the `sources` table, ranks them (provider order,
 // then the quality ladder, then confidence) and demotes ones the engine reports as failed.
 
@@ -24,6 +26,7 @@ import { KhinsiderProvider } from './khinsider'
 import { LocalLibrary, LocalProvider } from './local'
 import type { Provider } from './types'
 import { YouTubeProvider } from './youtube'
+import { ZopharProvider } from './zophar'
 
 export class ProviderRegistry {
   private providers = new Map<string, Provider>()
@@ -78,6 +81,7 @@ export function createDefaultRegistry(http: HttpClient, deps: RegistryDeps = {})
     .register(new ChipProvider({ http, inspectArchive: deps.inspectArchive, log: (m) => log(`chip: ${m}`) }))
     .register(new BandcampProvider(http))
     .register(new KhinsiderProvider(http))
+    .register(new ZopharProvider(http))
     .register(new ArchiveProvider({ fetch: deps.fetch }))
     .register(new YouTubeProvider(deps.ytdlp ?? sharedYtDlp, { log }))
 }
