@@ -427,7 +427,7 @@ describe('source fallback', () => {
     await t.settle()
     expect(t.catalog.failedMarks.map((m) => m.cacheKey)).toEqual(['t1#yt'])
     // not excluded on the retry, and the fresh URL is what plays
-    expect(t.catalog.resolveCalls.filter((c) => c.trackId === 't1').at(-1)?.opts?.exclude).toEqual([])
+    expect((t.catalog.resolveCalls.filter((c) => c.trackId === "t1").at(-1)?.opts as { exclude?: string[] } | undefined)?.exclude).toEqual([])
     const [track] = t.engine.lastCall('setCurrent') as [EngineTrack]
     expect(track.id).toBe(uid)
     expect(track.source).toMatchObject({ url: 'https://cdn.example/t1/fresh.m4a' })
