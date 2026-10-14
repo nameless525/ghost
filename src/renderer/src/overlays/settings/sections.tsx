@@ -913,7 +913,7 @@ export const SECTIONS: SectionDef[] = [
             id: 'providers',
             label: 'Source priority',
             description: 'GHOST tries sources from top to bottom and falls back automatically when one fails. Drag to reorder.',
-            keywords: 'provider order local chiptune chip bandcamp khinsider internet archive youtube yt-dlp enable disable',
+            keywords: 'provider order local chiptune chip bandcamp khinsider zophar modland internet archive soundcloud youtube yt-dlp enable disable',
             C: (m) => (
               <Row {...m} wide>
                 <ProviderList />

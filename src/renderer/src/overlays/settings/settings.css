@@ -374,6 +374,12 @@
   font-size: var(--fs-sm);
   line-height: 1.35;
 }
+.set-prov__stat {
+  margin-top: 3px;
+  color: color-mix(in srgb, var(--tone) 70%, var(--fg-2));
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
 
 /* ---------------------------------------------------------------- folders / paths */
 .set-folders {
