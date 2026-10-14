@@ -1380,7 +1380,11 @@
   background: rgb(var(--accent-rgb) / 0.26);
   transform: translateY(-1px);
 }
+.bfew__btn .g-ellipsis {
+  min-width: 0;
+}
 .bfew__btn svg {
+  flex: none;
   width: 16px;
   height: 16px;
 }

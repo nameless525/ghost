@@ -203,9 +203,9 @@ function FewResults() {
   return (
     <div className="bfew">
       <span>Not what you’re after?</span>
-      <button type="button" className="bfew__btn" onClick={() => openExternalSearch(naturalQuery(query))}>
+      <button type="button" className="bfew__btn" title={`Search ${sources}`} onClick={() => openExternalSearch(naturalQuery(query))}>
         <Telescope />
-        Search {sources} for “{naturalQuery(query)}”
+        <span className="g-ellipsis">Search the web for “{naturalQuery(query)}”</span>
       </button>
     </div>
   )
