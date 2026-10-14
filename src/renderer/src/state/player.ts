@@ -19,7 +19,8 @@ const initial: PlayerState = {
   queueIndex: -1,
   context: null,
   preview: null,
-  error: null
+  error: null,
+  voices: null
 }
 
 export const usePlayer = create<PlayerState>(() => initial)

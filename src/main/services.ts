@@ -11,7 +11,7 @@ import { openDb } from './db'
 import { DownloadManager } from './downloads'
 import { loadEngine, preloadArgsFor } from './engine/native'
 import { NullEngine } from './engine/null'
-import type { EngineBridge } from './engine/types'
+import type { ArchiveListing, EngineBridge, EngineSource } from './engine/types'
 import type { Broadcast } from './ipc'
 import { createLibrary } from './library'
 import { dataDir, paths } from './paths'
@@ -121,9 +121,16 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   const getSettings = () => settingsStore.peek()
 
   // --- catalog ---------------------------------------------------------------
+  // The catalog starts before the engine; chiptune rip albums list their archive through it.
+  let engineRef: EngineBridge | null = null
+  const inspectArchive = (source: EngineSource): Promise<ArchiveListing> => {
+    const e = engineRef
+    if (!e?.inspectArchive) return Promise.reject(new Error('The audio engine is unavailable, so chiptune rip sets can’t be opened.'))
+    return e.inspectArchive(source)
+  }
   let catalog: CatalogService
   try {
-    catalog = createCatalog({ db, broadcast, getSettings: () => settingsStore.get() })
+    catalog = createCatalog({ db, broadcast, getSettings: () => settingsStore.get(), inspectArchive })
   } catch (e) {
     console.error('[services] catalog failed to load:', e)
     catalog = unavailableCatalog(errMessage(e))
@@ -157,6 +164,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
     engine = new NullEngine(reason)
     notices.push({ id: 'startup-engine', kind: 'error', title: 'Audio engine unavailable', body: reason })
   }
+  engineRef = engine
   applyEngineSettings(engine, settingsStore.peek(), null)
 
   // --- library, player, downloads --------------------------------------------

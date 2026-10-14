@@ -1,0 +1,90 @@
+{
+ "entries": [
+  {
+   "path": "Sonic The Hedgehog - 01 - Title Screen.vgm",
+   "size": 1224
+  },
+  {
+   "path": "Sonic The Hedgehog - 02 - Act Start.vgm",
+   "size": 643
+  },
+  {
+   "path": "Sonic The Hedgehog - 03 - Green Hill Zone.vgm",
+   "size": 2721
+  },
+  {
+   "path": "Sonic The Hedgehog - 04 - Invincibility.vgm",
+   "size": 1045
+  },
+  {
+   "path": "Sonic The Hedgehog - 05 - Act Complete.vgm",
+   "size": 617
+  },
+  {
+   "path": "Sonic The Hedgehog - 06 - Bonus Zone.vgm",
+   "size": 2500
+  },
+  {
+   "path": "Sonic The Hedgehog - 07 - Chaos Emerald.vgm",
+   "size": 597
+  },
+  {
+   "path": "Sonic The Hedgehog - 08 - Dr. Robotnik.vgm",
+   "size": 1136
+  },
+  {
+   "path": "Sonic The Hedgehog - 09 - Bridge Zone.vgm",
+   "size": 1704
+  },
+  {
+   "path": "Sonic The Hedgehog - 10 - Jungle Zone.vgm",
+   "size": 1723
+  },
+  {
+   "path": "Sonic The Hedgehog - 11 - Labyrinth Zone.vgm",
+   "size": 1640
+  },
+  {
+   "path": "Sonic The Hedgehog - 12 - Scrap Brain Zone.vgm",
+   "size": 2154
+  },
+  {
+   "path": "Sonic The Hedgehog - 13 - Sky Base Zone.vgm",
+   "size": 1450
+  },
+  {
+   "path": "Sonic The Hedgehog - 14 - Ending.vgm",
+   "size": 2934
+  },
+  {
+   "path": "Sonic The Hedgehog - 15 - Death.vgm",
+   "size": 867
+  },
+  {
+   "path": "Sonic The Hedgehog - 16 - Marble Zone (Unused).vgm",
+   "size": 2760
+  },
+  {
+   "path": "Sonic The Hedgehog.txt",
+   "size": 2398
+  },
+  {
+   "path": "Sonic The Hedgehog.m3u",
+   "size": 704
+  },
+  {
+   "path": "Sonic The Hedgehog.png",
+   "size": 6431
+  }
+ ],
+ "playlists": [
+  {
+   "path": "Sonic The Hedgehog.txt",
+   "text": "***********************************************\r\n* VGM music package                           *\r\n* https://www.smspower.org/Music              *\r\n***********************************************\r\n\r\nGame name:           Sonic The Hedgehog\r\nSystem:              Sega Master System\r\nComplete music dump: Yes\r\nFM:                  No\r\n\r\nMusic author:\r\n  Yuzo Koshiro (Arragement and original music)\r\n  Masato Nakamura (Mega Drive compositions)\r\nPublisher:           Sega\r\nPackage created by:  Valley Bell\r\nPackage version:     2.11\r\n\r\n\r\nFiles, in approximate game order:\r\n\r\nName                                Length:\r\n                                    Total  Loop\r\nTitle Screen                        0:08   -\r\nAct Start                           0:02   -\r\nGreen Hill Zone                     0:53   0:38\r\nInvincibility                       0:10   0:10\r\nAct Complete                        0:05   -\r\nBonus Zone                          1:00   1:00\r\nChaos Emerald                       0:04   -\r\nDr. Robotnik                        0:12   0:12\r\nBridge Zone                         0:26   0:26\r\nJungle Zone                         0:29   0:29\r\nLabyrinth Zone                      0:29   0:29\r\nScrap Brain Zone                    0:52   0:51\r\nSky Base Zone                       0:16   0:16\r\nEnding                              1:33   -\r\nDeath                               0:04   -\r\nMarble Zone (Unused)                0:33   0:32\r\n\r\nTotal Length                        7:14   5:01\r\n\r\n\r\nNotes:\r\n\r\nAll files were logged with Kega Fusion 3.63 and\r\nwith the use of Maxim's Start-Button-Hack.\r\n\r\nMasato Nakamura made the music for the Mega\r\nDrive version; Yuzo Koshiro ported some of it\r\nand composed the rest.\r\n\r\n\r\nPackage history:\r\n2001/10/26 Version 1.00 (fx^, Maxim, and\r\n  Agustín): The oldest version I (Valley Bell) \r\n  could find.\r\n2005/01/23 Version 1.10 (Grass-eatin'me): Songs\r\n  relogged?\r\n2005/07/12 Version 1.11 (Grass-eatin'me):\r\n  Composer Masato Nakamura added.\r\n2010/10/20 Version 2.00 (Valley Bell): All\r\n  tracks relogged, too many had looping/trimming\r\n  errors. Song order changed.\r\n2015/05/29 Version 2.10 (Valley Bell): Added\r\n  unused Marble Zone track, found by Kroc. VGM\r\n  file created by Valley Bell.\r\n2026/09.27 Version 2.11 (Maxim): Repacked and\r\n  reordered by game order, renamed some tracks\r\n  slightly, removed kana track titles, fixed\r\n  some missing Nakamura credits."
+  },
+  {
+   "path": "Sonic The Hedgehog.m3u",
+   "text": "Sonic The Hedgehog - 01 - Title Screen.vgm\r\nSonic The Hedgehog - 02 - Act Start.vgm\r\nSonic The Hedgehog - 03 - Green Hill Zone.vgm\r\nSonic The Hedgehog - 04 - Invincibility.vgm\r\nSonic The Hedgehog - 05 - Act Complete.vgm\r\nSonic The Hedgehog - 06 - Bonus Zone.vgm\r\nSonic The Hedgehog - 07 - Chaos Emerald.vgm\r\nSonic The Hedgehog - 08 - Dr. Robotnik.vgm\r\nSonic The Hedgehog - 09 - Bridge Zone.vgm\r\nSonic The Hedgehog - 10 - Jungle Zone.vgm\r\nSonic The Hedgehog - 11 - Labyrinth Zone.vgm\r\nSonic The Hedgehog - 12 - Scrap Brain Zone.vgm\r\nSonic The Hedgehog - 13 - Sky Base Zone.vgm\r\nSonic The Hedgehog - 14 - Ending.vgm\r\nSonic The Hedgehog - 15 - Death.vgm\r\nSonic The Hedgehog - 16 - Marble Zone (Unused).vgm\r\n"
+  }
+ ]
+}

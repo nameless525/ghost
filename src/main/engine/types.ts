@@ -48,6 +48,19 @@ export interface EngineTrackInfo {
   channels: number
   codec: string
   bitrateKbps: number | null
+  /** Tags from the file itself (chip / tracker formats), when known. */
+  title?: string
+  artist?: string
+  album?: string
+  /** Sub-songs in the file and the one playing (0-based), for multi-song chip files. */
+  subsongCount?: number
+  subsong?: number
+  /** Loop region in source time, when the format has loop points. */
+  loopStartMs?: number
+  loopEndMs?: number
+  /** Mutable sound-chip voices (see `EngineBridge.setVoiceMask`); absent when there are none. */
+  voiceCount?: number
+  voiceNames?: string[]
 }
 
 export interface OfflineAnalysisResult {
@@ -179,6 +192,14 @@ export interface EngineBridge {
    * support (the null engine) don't have it.
    */
   inspectArchive?(source: EngineSource): Promise<ArchiveListing>
+  /**
+   * Mute sound-chip voices (libgme / libopenmpt sources): bit i mutes voice i of the trackInfo
+   * `voiceNames`; 0 unmutes all. Global: it persists across tracks until changed. Optional
+   * (engines without chip voices don't have it).
+   */
+  setVoiceMask?(mask: number): void
+  /** Mutable voices of the current track (0 when unsupported or idle). */
+  voiceCount?(): number
   /** Name of the shared-memory region the renderer maps for analysis frames. */
   analysisShmName(): string
   onEvent(cb: (e: EngineEvent) => void): void

@@ -1,0 +1,18 @@
+{
+ "entries": [
+  {
+   "path": "Madou Monogatari (MSX)(1990)(Compile).kss",
+   "size": 32544
+  },
+  {
+   "path": "Madou Monogatari (MSX)(1990)(Compile).m3u",
+   "size": 1751
+  }
+ ],
+ "playlists": [
+  {
+   "path": "Madou Monogatari (MSX)(1990)(Compile).m3u",
+   "text": "Madou Monogatari (MSX)(1990)(Compile).kss::KSS,$02,[魔導物語 OPLL]プロローグ\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$01,[魔導物語 OPLL]タイトルテーマ\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$04,[魔導物語 OPLL]シェゾの地下牢\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$0B,[魔導物語 OPLL]モンスター出現\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$06,[魔導物語 OPLL]戦闘\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$09,[魔導物語 OPLL]レベルアップ\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$0A,[魔導物語 OPLL]アイテム入手\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$05,[魔導物語 OPLL]ライラの遺跡1\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$03,[魔導物語 OPLL]ライラの遺跡2\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$07,[魔導物語 OPLL]エンディング\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$08,[魔導物語 OPLL]ゲームオーバー\r\n\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$82,[魔導物語 PSG]プロローグ\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$81,[魔導物語 PSG]タイトルテーマ\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$84,[魔導物語 PSG]シェゾの地下牢\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$8B,[魔導物語 PSG]モンスター出現\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$86,[魔導物語 PSG]戦闘\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$89,[魔導物語 PSG]レベルアップ\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$8A,[魔導物語 PSG]アイテム入手\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$85,[魔導物語 PSG]ライラの遺跡1\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$83,[魔導物語 PSG]ライラの遺跡2\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$87,[魔導物語 PSG]エンディング\r\nMadou Monogatari (MSX)(1990)(Compile).kss::KSS,$88,[魔導物語 PSG]ゲームオーバー\r\n"
+  }
+ ]
+}

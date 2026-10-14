@@ -516,9 +516,9 @@ export class CatalogRepo {
 
   /**
    * The norm_key of an existing game called `name` (its key, display name or an alternative name),
-   * or null.
+   * or null. `scanAltNames: false` skips the alternative-name scan (a table scan; bulk matching).
    */
-  findGameKey(name: string): string | null {
+  findGameKey(name: string, opts: { scanAltNames?: boolean } = {}): string | null {
     const k = gameKey(name)
     const nk = keyOf(name)
     if (!k && !nk) return null
@@ -527,6 +527,7 @@ export class CatalogRepo {
     for (const g of this.all<{ norm_key: string; name: string; alt_names: string }>(`SELECT norm_key, name, alt_names FROM games WHERE sort_name IN (?, ?) LIMIT 20`, sortKey(name), sortKey(baseTitle(name)))) {
       if (keyOf(g.name) === nk || keyOf(g.name) === k) return g.norm_key
     }
+    if (opts.scanAltNames === false) return null
     // Alternative names (IGDB alt names, other album titles): a substring prefilter, then exact keys.
     const needle = `%${name.replace(/[%_]/g, ' ').trim()}%`
     for (const g of this.all<{ norm_key: string; alt_names: string }>(`SELECT norm_key, alt_names FROM games WHERE alt_names LIKE ? ORDER BY album_count DESC LIMIT 50`, needle)) {
@@ -958,7 +959,7 @@ export class CatalogRepo {
           provider: best.provider,
           format: best.format,
           lossless: !!best.lossless,
-          bitrateKbps: best.bitrate ?? estimateKbps(best.size_bytes, r.duration_ms),
+          bitrateKbps: best.bitrate ?? (best.format === 'chip' ? null : estimateKbps(best.size_bytes, r.duration_ms)),
           confidence: best.confidence
         }
       } else {
@@ -969,7 +970,7 @@ export class CatalogRepo {
             provider: r.album_provider,
             format: best.format,
             lossless: LOSSLESS_FORMATS.has(best.format),
-            bitrateKbps: estimateKbps(best.sizeBytes, r.duration_ms),
+            bitrateKbps: best.format === 'chip' ? null : estimateKbps(best.sizeBytes, r.duration_ms),
             confidence: 1
           }
         }

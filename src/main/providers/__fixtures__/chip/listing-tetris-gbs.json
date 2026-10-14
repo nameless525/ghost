@@ -1,0 +1,170 @@
+{
+ "entries": [
+  {
+   "path": "DMG-TRA-0.gbs",
+   "size": 6987
+  },
+  {
+   "path": "DMG-TRA-1.gbs",
+   "size": 7120
+  },
+  {
+   "path": "01 Title.m3u",
+   "size": 99
+  },
+  {
+   "path": "02 A-Type Music (version 1.0).m3u",
+   "size": 122
+  },
+  {
+   "path": "03 A-Type Music (version 1.1).m3u",
+   "size": 122
+  },
+  {
+   "path": "04 B-Type Music.m3u",
+   "size": 108
+  },
+  {
+   "path": "05 C-Type Music.m3u",
+   "size": 108
+  },
+  {
+   "path": "06 Stage Clear.m3u",
+   "size": 105
+  },
+  {
+   "path": "07 Game Over.m3u",
+   "size": 103
+  },
+  {
+   "path": "08 B-Type Game - Level 9 High 0 Ending.m3u",
+   "size": 128
+  },
+  {
+   "path": "09 B-Type Game - Level 9 High 1 Ending.m3u",
+   "size": 128
+  },
+  {
+   "path": "10 B-Type Game - Level 9 High 2 Ending.m3u",
+   "size": 129
+  },
+  {
+   "path": "11 B-Type Game - Level 9 High 3 Ending.m3u",
+   "size": 129
+  },
+  {
+   "path": "12 B-Type Game - Level 9 High 4 & 5 Ending.m3u",
+   "size": 133
+  },
+  {
+   "path": "13 B-Type Game - Level 9 High 5 Ending (Part 2) & 100000 Points.m3u",
+   "size": 155
+  },
+  {
+   "path": "14 High Score.m3u",
+   "size": 106
+  },
+  {
+   "path": "15 2 Player Mode - Danger!.m3u",
+   "size": 117
+  },
+  {
+   "path": "16 2 Player Mode - Game Over.m3u",
+   "size": 120
+  },
+  {
+   "path": "17 2 Player Mode - Round Over.m3u",
+   "size": 119
+  },
+  {
+   "path": "18 Unknown Jingle #02.m3u",
+   "size": 113
+  },
+  {
+   "path": "DMG-TRA-0.m3u",
+   "size": 1306
+  },
+  {
+   "path": "DMG-TRA-1.m3u",
+   "size": 1306
+  }
+ ],
+ "playlists": [
+  {
+   "path": "01 Title.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,0,Title - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:40.009,,0:0:0"
+  },
+  {
+   "path": "02 A-Type Music (version 1.0).m3u",
+   "text": "DMG-TRA-0.gbs::GBS,1,A-Type Music (version 1.0) - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:01:17.149,,0:0:10"
+  },
+  {
+   "path": "03 A-Type Music (version 1.1).m3u",
+   "text": "DMG-TRA-1.gbs::GBS,1,A-Type Music (version 1.1) - Hirokazu Tanaka - Tetris v1.1 - ©1989-06-14 Nintendo,0:01:17.170,,0:0:10"
+  },
+  {
+   "path": "04 B-Type Music.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,2,B-Type Music - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:01:10.734,,0:0:10"
+  },
+  {
+   "path": "05 C-Type Music.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,3,C-Type Music - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:01:17.153,,0:0:10"
+  },
+  {
+   "path": "06 Stage Clear.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,6,Stage Clear - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:02.420,,0:0:0"
+  },
+  {
+   "path": "07 Game Over.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,7,Game Over - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:02.015,,0:0:0"
+  },
+  {
+   "path": "08 B-Type Game - Level 9 High 0 Ending.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,8,B-Type Game: Level 9 High 0 Ending - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:04.165,,0:0:0"
+  },
+  {
+   "path": "09 B-Type Game - Level 9 High 1 Ending.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,9,B-Type Game: Level 9 High 1 Ending - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:04.010,,0:0:0"
+  },
+  {
+   "path": "10 B-Type Game - Level 9 High 2 Ending.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,10,B-Type Game: Level 9 High 2 Ending - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:04.434,,0:0:0"
+  },
+  {
+   "path": "11 B-Type Game - Level 9 High 3 Ending.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,11,B-Type Game: Level 9 High 3 Ending - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:04.474,,0:0:0"
+  },
+  {
+   "path": "12 B-Type Game - Level 9 High 4 & 5 Ending.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,13,B-Type Game: Level 9 High 4 & 5 Ending - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:13.983,,0:0:0"
+  },
+  {
+   "path": "13 B-Type Game - Level 9 High 5 Ending (Part 2) & 100000 Points.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,14,B-Type Game: Level 9 High 5 Ending (Part 2) & 100000 Points - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:14.478,,0:0:10"
+  },
+  {
+   "path": "14 High Score.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,16,High Score - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:53.061,,0:0:10"
+  },
+  {
+   "path": "15 2 Player Mode - Danger!.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,5,2 Player Mode: Danger! - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:21.446,,0:0:10"
+  },
+  {
+   "path": "16 2 Player Mode - Game Over.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,15,2 Player Mode: Game Over - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:51.453,,0:0:10"
+  },
+  {
+   "path": "17 2 Player Mode - Round Over.m3u",
+   "text": "DMG-TRA-0.gbs::GBS,4,2 Player Mode: Round Over - Hirokazu Tanaka - Tetris v1.0 - ©1989-06-14 Nintendo,0:0:07.246,,0:0:0"
+  },
+  {
+   "path": "DMG-TRA-0.m3u",
+   "text": "# @TITLE       Tetris v1.0\r\n# @ARTIST      Nintendo\r\n# @COMPOSER    Hirokazu Tanaka\r\n# @DATE        1989-06-14\r\n# @RIPPER      Scott Worley\r\n# @TAGGER      BravaCentauri, banshiryuu\r\n\r\nDMG-TRA-0.gbs::GBS,0,Title,0:0:40.009,,0:0:0\r\nDMG-TRA-0.gbs::GBS,1,A-Type Music (version 1.0),0:01:17.149,,0:0:10\r\nDMG-TRA-0.gbs::GBS,2,B-Type Music,0:01:10.734,,0:0:10\r\nDMG-TRA-0.gbs::GBS,3,C-Type Music,0:01:17.153,,0:0:10\r\nDMG-TRA-0.gbs::GBS,6,Stage Clear,0:0:02.420,,0:0:0\r\nDMG-TRA-0.gbs::GBS,7,Game Over,0:0:02.015,,0:0:0\r\nDMG-TRA-0.gbs::GBS,8,B-Type Game: Level 9 High 0 Ending,0:0:04.165,,0:0:0\r\nDMG-TRA-0.gbs::GBS,9,B-Type Game: Level 9 High 1 Ending,0:0:04.010,,0:0:0\r\nDMG-TRA-0.gbs::GBS,10,B-Type Game: Level 9 High 2 Ending,0:0:04.434,,0:0:0\r\nDMG-TRA-0.gbs::GBS,11,B-Type Game: Level 9 High 3 Ending,0:0:04.474,,0:0:0\r\nDMG-TRA-0.gbs::GBS,13,B-Type Game: Level 9 High 4 & 5 Ending,0:0:13.983,,0:0:0\r\nDMG-TRA-0.gbs::GBS,14,B-Type Game: Level 9 High 5 Ending (Part 2)\\, 100000 Points,0:0:14.478,,0:0:10\r\nDMG-TRA-0.gbs::GBS,16,High Score,0:0:53.061,,0:0:10\r\nDMG-TRA-0.gbs::GBS,5,2 Player Mode: Danger!,0:0:21.446,,0:0:10\r\nDMG-TRA-0.gbs::GBS,15,2 Player Mode: Game Over,0:0:51.453,,0:0:10\r\nDMG-TRA-0.gbs::GBS,4,2 Player Mode: Round Over,0:0:07.246,,0:0:0\r\nDMG-TRA-0.gbs::GBS,12,Unknown Jingle #02,0:0:07.512,,0:0:0\r\n"
+  },
+  {
+   "path": "DMG-TRA-1.m3u",
+   "text": "# @TITLE       Tetris v1.1\r\n# @ARTIST      Nintendo\r\n# @COMPOSER    Hirokazu Tanaka\r\n# @DATE        1989-06-14\r\n# @RIPPER      Scott Worley\r\n# @TAGGER      BravaCentauri, banshiryuu\r\n\r\nDMG-TRA-1.gbs::GBS,0,Title,0:0:40.009,,0:0:0\r\nDMG-TRA-1.gbs::GBS,1,A-Type Music (version 1.1),0:01:17.170,,0:0:10\r\nDMG-TRA-1.gbs::GBS,2,B-Type Music,0:01:10.734,,0:0:10\r\nDMG-TRA-1.gbs::GBS,3,C-Type Music,0:01:17.153,,0:0:10\r\nDMG-TRA-1.gbs::GBS,6,Stage Clear,0:0:02.420,,0:0:0\r\nDMG-TRA-1.gbs::GBS,7,Game Over,0:0:02.015,,0:0:0\r\nDMG-TRA-1.gbs::GBS,8,B-Type Game: Level 9 High 0 Ending,0:0:04.165,,0:0:0\r\nDMG-TRA-1.gbs::GBS,9,B-Type Game: Level 9 High 1 Ending,0:0:04.010,,0:0:0\r\nDMG-TRA-1.gbs::GBS,10,B-Type Game: Level 9 High 2 Ending,0:0:04.434,,0:0:0\r\nDMG-TRA-1.gbs::GBS,11,B-Type Game: Level 9 High 3 Ending,0:0:04.474,,0:0:0\r\nDMG-TRA-1.gbs::GBS,13,B-Type Game: Level 9 High 4 & 5 Ending,0:0:13.983,,0:0:0\r\nDMG-TRA-1.gbs::GBS,14,B-Type Game: Level 9 High 5 Ending (Part 2)\\, 100000 Points,0:0:14.478,,0:0:10\r\nDMG-TRA-1.gbs::GBS,16,High Score,0:0:53.061,,0:0:10\r\nDMG-TRA-1.gbs::GBS,5,2 Player Mode: Danger!,0:0:21.446,,0:0:10\r\nDMG-TRA-1.gbs::GBS,15,2 Player Mode: Game Over,0:0:51.453,,0:0:10\r\nDMG-TRA-1.gbs::GBS,4,2 Player Mode: Round Over,0:0:07.246,,0:0:0\r\nDMG-TRA-1.gbs::GBS,12,Unknown Jingle #02,0:0:07.512,,0:0:0\r\n"
+  }
+ ]
+}

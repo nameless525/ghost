@@ -85,6 +85,8 @@ function mockArt(seed: string, a: string, b: string, w: number, h: number): stri
 interface MockTrack extends TrackView {
   bpm: number
   intensityStars: number
+  /** Sound-chip voices (chiptune rips). */
+  voices?: string[]
 }
 
 const games: Game[] = []
@@ -144,7 +146,7 @@ function buildCatalog() {
         trackCount: fa.tracks.length,
         totalMs: fa.tracks.reduce((s, t) => s + parseDur(t[1]), 0),
         formats: fa.formats,
-        provider: 'khinsider',
+        provider: fa.provider ?? 'khinsider',
         providerRef: albumId,
         addedAt: now() - Math.floor(hash(albumId) * 1e10)
       }
@@ -177,10 +179,13 @@ function buildCatalog() {
           accent: fg.accent,
           liked: false,
           downloaded: false,
-          source: { provider: 'khinsider', format: fa.formats.includes('flac') ? 'flac' : 'mp3', lossless: fa.formats.includes('flac'), bitrateKbps: fa.formats.includes('flac') ? 1011 : 320, confidence: 1 },
+          source: fa.formats.includes('chip')
+            ? { provider: fa.provider ?? 'chip', format: 'chip', lossless: false, bitrateKbps: null, confidence: 1 }
+            : { provider: 'khinsider', format: fa.formats.includes('flac') ? 'flac' : 'mp3', lossless: fa.formats.includes('flac'), bitrateKbps: fa.formats.includes('flac') ? 1011 : 320, confidence: 1 },
           analysis: { bpm, intensity: stars, lufs: -14 - h * 6 },
           bpm,
-          intensityStars: stars
+          intensityStars: stars,
+          ...(fa.voices ? { voices: fa.voices } : {})
         })
       })
     })
@@ -221,7 +226,7 @@ function haystack(g: Game): string {
 }
 
 const strip = (t: MockTrack): TrackView => {
-  const { bpm: _b, intensityStars: _i, ...rest } = t
+  const { bpm: _b, intensityStars: _i, voices: _v, ...rest } = t
   return { ...rest, liked: likes.has(t.id), downloaded: downloadedIds.has(t.id) }
 }
 
@@ -295,7 +300,8 @@ const player: PlayerState = {
   queueIndex: -1,
   context: null,
   preview: null,
-  error: null
+  error: null,
+  voices: null
 }
 let currentMock: MockTrack | null = null
 let trackSeq = 0
@@ -317,6 +323,7 @@ function loadIndex(i: number, autoplay = true) {
     player.current = null
     currentMock = null
     player.queueIndex = -1
+    player.voices = null
     pushState()
     return
   }
@@ -330,6 +337,7 @@ function loadIndex(i: number, autoplay = true) {
   player.positionMs = 0
   player.positionAt = now()
   player.error = null
+  player.voices = currentMock.voices ? { names: [...currentMock.voices], mask: 0 } : null
   player.status = 'loading'
   pushState()
   setTimeout(() => {
@@ -439,6 +447,11 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 // synthetic analysis frames
 
+const popcount = (n: number) => {
+  let c = 0
+  for (let x = n >>> 0; x; x &= x - 1) c++
+  return c
+}
 const bands = new Float32Array(96)
 const wave = new Float32Array(512)
 let smoothRms = 0
@@ -446,7 +459,10 @@ function readFrame(): AnalysisFrame | null {
   const t = currentMock
   const playing = player.status === 'playing'
   const posMs = livePos()
-  const target = playing && t ? 1 : 0
+  // Muted chip voices take their share of the level away, so the visuals answer the channel strip.
+  const v = player.voices
+  const audible = v && v.names.length ? 1 - popcount(v.mask) / v.names.length : 1
+  const target = playing && t ? 0.05 + 0.95 * audible : 0
   smoothRms += (target - smoothRms) * 0.08
   if (!t && smoothRms < 0.01) return null
   const bpm = t?.bpm ?? 120
@@ -665,7 +681,15 @@ export function installMockGhost(): void {
         pushState()
       },
       setOverlayFilter: async () => {},
-      devices: () => delay([{ id: 'default', name: 'System default', isDefault: true }])
+      devices: () => delay([{ id: 'default', name: 'System default', isDefault: true }]),
+      setVoiceMask: async (mask) => {
+        const v = player.voices
+        if (!v) return
+        const all = (1 << Math.min(v.names.length, 30)) - 1
+        player.voices = { names: v.names, mask: Number.isFinite(mask) && mask > 0 ? Math.floor(mask) & all : 0 }
+        snapshot()
+        pushState()
+      }
     },
     library: {
       playlists: {

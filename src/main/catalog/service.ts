@@ -9,9 +9,11 @@ import { isNetError, NetError } from '../net/errors'
 import type { HttpClient } from '../net/http'
 import { sharedHttp } from '../net/shared'
 import { createDefaultRegistry, type ProviderRegistry } from '../providers'
+import { CHIP_ID, ChipProvider } from '../providers/chip'
 import { LocalProvider } from '../providers/local'
 import { isIndexProvider, type IndexProvider, type ProviderAlbum } from '../providers/types'
 import type { YtDlp } from '../tools/ytdlp'
+import { ChipIndexer, type ChipIndexerDeps } from './chip'
 import { Crawler } from './crawler'
 import { AccentWorker, Enricher } from './enrich'
 import type { CatalogDeps, CatalogService } from './index'
@@ -50,6 +52,8 @@ export interface CatalogInternals {
   sourceFetch?: typeof fetch
   /** Don't scan settings.sources.localFolders. */
   disableLocalScan?: boolean
+  /** Chiptune rip index (joshw.info / vgmrips.net): `false` = never crawl; otherwise options. */
+  chip?: false | Pick<ChipIndexerDeps, 'hosts' | 'vgmrips' | 'maxPages' | 'pageDelayMs' | 'pages'>
   log?: (msg: string) => void
 }
 
@@ -83,7 +87,13 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   const repo = new CatalogRepo(deps.db, now)
   let registry: ProviderRegistry | null = internals.registry ?? null
   const getRegistry = () =>
-    (registry ??= createDefaultRegistry(internals.http ?? sharedHttp(), { db: deps.db, ytdlp: internals.ytdlp, fetch: internals.sourceFetch, log: (m) => log(`sources: ${m}`) }))
+    (registry ??= createDefaultRegistry(internals.http ?? sharedHttp(), {
+      db: deps.db,
+      ytdlp: internals.ytdlp,
+      fetch: internals.sourceFetch,
+      inspectArchive: deps.inspectArchive,
+      log: (m) => log(`sources: ${m}`)
+    }))
   const quality = () => deps.getSettings().sources.quality
   const qe = new QueryEngine(repo, quality)
   const resolver = new SourceResolver({ repo, registry: lazyRegistry(getRegistry), getSettings: deps.getSettings, now, log })
@@ -114,9 +124,19 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       }
     }, ms)
   }
+  let chipIndexer: ChipIndexer | null = null
+  let chipTimer: ReturnType<typeof setTimeout> | null = null
+  let chipForce = false
   const notify = () => {
     const indexing = !!crawler?.running
-    if (wasIndexing && !indexing) schedulePrewarm(2000)
+    if (wasIndexing && !indexing) {
+      schedulePrewarm(2000)
+      // The chiptune rip index runs once the main index is done (it matches against its games).
+      chipTimer ??= setTimeout(() => {
+        chipTimer = null
+        maybeStartChip()
+      }, 1000)
+    }
     wasIndexing = indexing
     if (pending) return
     const wait = Math.max(0, 400 - (now() - lastSent))
@@ -154,17 +174,37 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     return crawler
   }
 
+  // --- chiptune rip index (after the main crawl, lower priority) ------------------------------
+  const getChipIndexer = (): ChipIndexer | null => {
+    if (chipIndexer) return chipIndexer
+    if (internals.chip === false) return null
+    const p = getRegistry().get(CHIP_ID)
+    if (!(p instanceof ChipProvider)) return null
+    chipIndexer = new ChipIndexer({ repo, provider: p, onProgress: notify, log, now, ...(internals.chip ?? {}) })
+    return chipIndexer
+  }
+  function maybeStartChip(): void {
+    if (stopped || crawler?.running) return
+    if (deps.getSettings().sources.disabled.includes(CHIP_ID)) return
+    const c = getChipIndexer()
+    if (c?.start({ force: chipForce })) {
+      chipForce = false
+      log('chiptune rip index started')
+    }
+  }
+
   function status(): CatalogStatus {
     const c = counts()
     const cr = crawler
+    const chip = chipIndexer?.running ? chipIndexer : null
     return {
-      indexing: !!cr?.running,
+      indexing: !!cr?.running || !!chip,
       games: c.games,
       albums: c.albums,
       tracks: c.tracks,
-      progress: cr?.running ? (cr.progress ?? 0) : null,
+      progress: cr?.running ? (cr.progress ?? 0) : chip ? (chip.progress ?? 0) : null,
       lastIndexedAt: cr?.lastFinished() ?? repo.get<{ t: number | null }>(`SELECT MAX(finished_at) AS t FROM crawl_jobs WHERE status = 'done'`)?.t ?? null,
-      message: cr?.message ?? (enricher.lastError ? `Enrichment: ${enricher.lastError}` : null),
+      message: (cr?.running ? cr.message : null) ?? chip?.message ?? cr?.message ?? (enricher.lastError ? `Enrichment: ${enricher.lastError}` : null),
       enrichment: enricher.status(),
       revision: repo.revision
     }
@@ -183,6 +223,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       .getAlbum(st.provider_ref, { priority, force })
       .then((d) => {
         repo.applyAlbumDetail(albumId, d)
+        storeProviderStreams(albumId, d)
         notify()
       })
       .catch((e: unknown) => {
@@ -193,6 +234,20 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       .finally(() => detailInflight.delete(albumId))
     detailInflight.set(albumId, p)
     return p
+  }
+
+  /**
+   * Streams the provider already gave us with the album (IA files, Bandcamp URLs, a YouTube
+   * video's chapters, a chip rip set's archive entries) become sources now, so the first play
+   * doesn't need another round-trip.
+   */
+  function storeProviderStreams(albumId: number, album: ProviderAlbum): void {
+    if (!album.tracks.some((t) => t.streams?.length)) return
+    const byLocator = new Map(repo.all<{ id: number; locator: string }>(`SELECT id, locator FROM tracks WHERE album_id = ? AND removed = 0`, albumId).map((r) => [r.locator, r.id]))
+    for (const t of album.tracks) {
+      const id = byLocator.get(t.locator)
+      if (id != null && t.streams?.length) resolver.storeStreams(id, album.provider, t.streams.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
+    }
   }
 
   // Low-priority album-page fetches so groups without art fill in progressively.
@@ -347,13 +402,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     const [albumId] = repo.upsertHits([album], { initial: false })
     repo.pinAlbumToGame(albumId, opts.gameName?.trim() || guessGameName(album, hit))
     repo.applyAlbumDetail(albumId, album)
-    // Streams the provider already gave us (IA files, Bandcamp URLs, a YouTube video's chapters)
-    // become sources now, so the first play doesn't need another round-trip.
-    const byLocator = new Map(repo.all<{ id: number; locator: string }>(`SELECT id, locator FROM tracks WHERE album_id = ? AND removed = 0`, albumId).map((r) => [r.locator, r.id]))
-    for (const t of album.tracks) {
-      const id = byLocator.get(t.locator)
-      if (id != null && t.streams?.length) resolver.storeStreams(id, album.provider, t.streams.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
-    }
+    storeProviderStreams(albumId, album)
     repo.revision++
     notify()
     log(`imported ${album.provider} "${album.title}" (${album.tracks.length} tracks) as album ${albumId}`)
@@ -398,7 +447,10 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
           reseedRandom()
           const c = getCrawler()
           if (c?.start()) log('index crawl started')
-          else schedulePrewarm(3000)
+          else {
+            schedulePrewarm(3000)
+            maybeStartChip()
+          }
           notify()
         }, internals.startDelayMs ?? 1500)
       )
@@ -410,6 +462,9 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       for (const t of timers) clearTimeout(t)
       timers.length = 0
       crawler?.stop()
+      chipIndexer?.stop()
+      if (chipTimer) clearTimeout(chipTimer)
+      chipTimer = null
       enricher.stop()
       accent.stop()
       unsubscribeArt?.()
@@ -431,6 +486,9 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     async reindex() {
       const c = getCrawler()
       if (!c) throw new Error('no indexable provider')
+      // The chip index follows the main crawl (see notify), re-reading every listing.
+      chipForce = true
+      chipIndexer?.stop()
       c.start({ force: true })
       notify()
     },

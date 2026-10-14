@@ -494,6 +494,54 @@ describe('engine events', () => {
     expect(t.bc.of('notify').some((n) => n.body === 'Output device lost')).toBe(true)
   })
 
+  it('chip voices: from trackInfo, masked on request, reset on every track change', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2', 't3'])
+    await t.settle()
+    const nes = ['Square 1', 'Square 2', 'Triangle', 'Noise', 'DMC']
+    const info = (id: string, names?: string[]) =>
+      t.engine.emit({ type: 'trackInfo', id, durationMs: 90_000, sampleRate: 44100, channels: 2, codec: 'nsf', bitrateKbps: null, ...(names ? { voiceCount: names.length, voiceNames: names } : {}) })
+    expect(t.st().voices).toBeNull()
+    await t.player.setVoiceMask(1) // nothing to mute yet
+    expect(t.engine.callsOf('setVoiceMask')).toEqual([])
+    t.started()
+    info(t.uidAt(0), nes)
+    expect(t.st().voices).toEqual({ names: nes, mask: 0 })
+    await t.player.setVoiceMask(0b10100) // Triangle + DMC
+    expect(t.st().voices).toEqual({ names: nes, mask: 0b10100 })
+    expect(t.engine.lastCall('setVoiceMask')).toEqual([0b10100])
+    expect(t.bc.last('player:state')?.voices).toEqual({ names: nes, mask: 0b10100 })
+    // bits past the last voice are dropped; bad input unmutes
+    await t.player.setVoiceMask(0xff)
+    expect(t.st().voices!.mask).toBe(0b11111)
+    await t.player.setVoiceMask(Number.NaN)
+    expect(t.st().voices!.mask).toBe(0)
+    await t.player.setVoiceMask(0b1)
+    // the preloaded next track reports its voices before it plays; a gapless advance resets the mask
+    const gb = ['Square 1', 'Square 2', 'Wave', 'Noise']
+    info(t.uidAt(1), gb)
+    expect(t.st().voices!.names).toEqual(nes)
+    t.engine.finishCurrent()
+    expect(t.st().current?.id).toBe('t2')
+    expect(t.st().voices).toEqual({ names: gb, mask: 0 })
+    expect(t.engine.voiceMask).toBe(0)
+    // a track without voices (e.g. an mp3)
+    await t.player.setVoiceMask(0b11)
+    await t.player.next()
+    await t.settle()
+    expect(t.st().voices).toBeNull()
+    expect(t.engine.voiceMask).toBe(0)
+    info(t.uidAt(2))
+    expect(t.st().voices).toBeNull()
+    // a fallback source that turns out to have voices
+    info(t.uidAt(2), ['DSP 1', 'DSP 2'])
+    expect(t.st().voices).toEqual({ names: ['DSP 1', 'DSP 2'], mask: 0 })
+    // clearing the queue drops them
+    await t.player.clearQueue()
+    await t.player.removeFromQueue([t.uidAt(0)])
+    expect(t.st().voices).toBeNull()
+  })
+
   it('heartbeat broadcasts a fresh position while playing', async () => {
     const t = setup()
     await t.player.playTracks(['t1'])

@@ -21,6 +21,7 @@ import {
   ShuffleButton,
   VolumeControl
 } from '../../overlays/now-playing/controls'
+import { ChannelStrip, type ChannelStripProps } from './ChannelStrip'
 import { EnergySeekBar } from './EnergySeekBar'
 
 export const VIS_ICONS: Record<VisualizerMode, ReactNode> = {
@@ -64,12 +65,15 @@ export interface PlayHudProps {
   metaRef: (el: HTMLDivElement | null) => void
   rowRef: (el: HTMLDivElement | null) => void
   seekRef: (el: HTMLDivElement | null) => void
+  /** Keyboard changes on the chip channel strip (OSD). */
+  onAnnounce?: ChannelStripProps['onAnnounce']
 }
 
-export function PlayHud({ track, intensity, bpm, queueOpen, onToggleQueue, active, onHoverChange, metaRef, rowRef, seekRef }: PlayHudProps) {
+export function PlayHud({ track, intensity, bpm, queueOpen, onToggleQueue, active, onHoverChange, metaRef, rowRef, seekRef, onAnnounce }: PlayHudProps) {
   const upNext = usePlayer((s) => Math.max(0, s.queue.length - s.queueIndex - 1))
   return (
     <div className="pl-hud" onPointerEnter={() => onHoverChange(true)} onPointerLeave={() => onHoverChange(false)}>
+      <ChannelStrip onAnnounce={onAnnounce} />
       <div className="pl-hud__row">
         <MetaBlock ref={metaRef} track={track} intensity={intensity} bpm={bpm} />
         <div ref={rowRef} className="pl-hud__controls">

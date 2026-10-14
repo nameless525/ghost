@@ -1,0 +1,166 @@
+{
+ "entries": [
+  {
+   "path": "01 The Lost Ones (Opening).vgz",
+   "size": 33910
+  },
+  {
+   "path": "02 Mark My Words (Village).vgz",
+   "size": 18804
+  },
+  {
+   "path": "03 Spirit Hymn (Forest).vgz",
+   "size": 36910
+  },
+  {
+   "path": "04 Front Line (Combat).vgz",
+   "size": 27675
+  },
+  {
+   "path": "05 Charge (Gardner).vgz",
+   "size": 28865
+  },
+  {
+   "path": "06 A Temple (Ruins).vgz",
+   "size": 37919
+  },
+  {
+   "path": "07 God (Temple).vgz",
+   "size": 32385
+  },
+  {
+   "path": "08 Earthen Flute.vgz",
+   "size": 1237
+  },
+  {
+   "path": "09 Exciting Shop (Shop).vgz",
+   "size": 44946
+  },
+  {
+   "path": "10 Into the Castle (Castle 1).vgz",
+   "size": 36529
+  },
+  {
+   "path": "11 A Meeting with Tarsis (Underground Cemetery).vgz",
+   "size": 31925
+  },
+  {
+   "path": "12 When Grieving Ends, The Fight Begins (Mid Boss).vgz",
+   "size": 28301
+  },
+  {
+   "path": "13 Time for a Chance Meeting (Game Over).vgz",
+   "size": 13988
+  },
+  {
+   "path": "14 Burning (Castle 2).vgz",
+   "size": 50677
+  },
+  {
+   "path": "15 A Soul's Repose.vgz",
+   "size": 2381
+  },
+  {
+   "path": "16 Divine Revelation (Outer Wall).vgz",
+   "size": 37697
+  },
+  {
+   "path": "17 The Tower of Ordeals.vgz",
+   "size": 38993
+  },
+  {
+   "path": "18 The Dragon's Passing (Underground Cave).vgz",
+   "size": 14834
+  },
+  {
+   "path": "19 The Tower of the Wind.vgz",
+   "size": 70318
+  },
+  {
+   "path": "20 Underground Shrine.vgz",
+   "size": 22827
+  },
+  {
+   "path": "21 Dimensional Maze.vgz",
+   "size": 23836
+  },
+  {
+   "path": "22 The Tower of Darius.vgz",
+   "size": 28412
+  },
+  {
+   "path": "23 I Love You (The Death of a Comrade).vgz",
+   "size": 26921
+  },
+  {
+   "path": "24 Harp.vgz",
+   "size": 1707
+  },
+  {
+   "path": "25 A Time of Purity (Forna Tower).vgz",
+   "size": 27704
+  },
+  {
+   "path": "26 The Mascle Man (Ariel).vgz",
+   "size": 56974
+  },
+  {
+   "path": "27 Forna.vgz",
+   "size": 10971
+  },
+  {
+   "path": "28 The Tower of Spirits.vgz",
+   "size": 17566
+  },
+  {
+   "path": "29 The God of War.vgz",
+   "size": 19080
+  },
+  {
+   "path": "30 Dinosaur (Final Boss).vgz",
+   "size": 33692
+  },
+  {
+   "path": "31 The Weaving of Dreams (Ending 1).vgz",
+   "size": 105593
+  },
+  {
+   "path": "32 The Emblem of the Wind (Ending 2).vgz",
+   "size": 25235
+  },
+  {
+   "path": "33 Music Box.vgz",
+   "size": 2814
+  },
+  {
+   "path": "34 Siren.vgz",
+   "size": 3666
+  },
+  {
+   "path": "35 Unknown.vgz",
+   "size": 2902
+  },
+  {
+   "path": "Dinosaur.txt",
+   "size": 2860
+  },
+  {
+   "path": "Dinosaur.m3u",
+   "size": 1064
+  },
+  {
+   "path": "Dinosaur.png",
+   "size": 7980
+  }
+ ],
+ "playlists": [
+  {
+   "path": "Dinosaur.txt",
+   "text": "***********************************************\r\n* VGM music package                           *\r\n* http://vgmrips.net/                         *\r\n***********************************************\r\nGame name:           Dinosaur\r\nSystem:              FM Towns\r\nMusic hardware:      YM3438\r\n\r\nMusic author:        Mieko Ishikawa,\r\n                     Masaaki Kawai\r\nGame developer:      Nihon Falcom\r\nGame publisher:      Nihon Falcom\r\nGame release date:   1991-10\r\n\r\nPackage created by:  GTheGuardian\r\nPackage version:     1.00\r\n\r\nSong list, in approximate game order:\r\nSong name                           Length:\r\n                                    Total  Loop\r\n01 The Lost Ones (Opening)          3:05   2:38\r\n02 Mark My Words (Village)          1:17   1:17\r\n03 Spirit Hymn (Forest)             2:34   2:34\r\n04 Front Line (Combat)              1:11   1:10\r\n05 Charge! (Gardner)                1:15   1:13\r\n06 A Temple (Ruins)                 2:47   2:47\r\n07 God! (Temple)                    2:00   1:47\r\n08 Earthen Flute                    0:07   -\r\n09 Exciting Shop (Shop)             2:19   2:18\r\n10 Into the Castle (Castle 1)       1:52   1:51\r\n11 A Meeting with Tarsis\r\n   (Underground Cemetery)           1:59   1:59\r\n12 When Grieving Ends, The Fight\r\n   Begins (Mid Boss)                1:19   1:17\r\n13 Time for a Chance Meeting (Game\r\n   Over)                            1:17   1:17\r\n14 Burning! (Castle 2)              2:21   2:21\r\n15 A Soul's Repose                  0:10   -\r\n16 Divine Revelation (Outer Wall)   1:47   1:47\r\n17 The Tower of Ordeals             2:59   2:59\r\n18 The Dragon's Passing\r\n   (Underground Cave)               0:58   0:58\r\n19 The Tower of the Wind            3:48   3:47\r\n20 Underground Shrine               1:16   1:07\r\n21 Dimensional Maze                 1:13   0:54\r\n22 The Tower of Darius              1:14   1:09\r\n23 I Love You (The Death of a\r\n   Comrade)                         2:09   2:08\r\n24 Harp                             0:08   -\r\n25 A Time of Purity (Forna Tower)   1:13   1:12\r\n26 The Mascle Man (Ariel)           1:55   1:43\r\n27 Forna                            0:40   0:38\r\n28 The Tower of Spirits             0:45   0:45\r\n29 The God of War                   0:38   0:32\r\n30 Dinosaur (Final Boss)            1:32   1:30\r\n31 The Weaving of Dreams (Ending 1) 7:00   6:59\r\n32 The Emblem of the Wind (Ending\r\n   2)                               1:24   1:19\r\n33 Music Box                        0:13   -\r\n34 Siren                            0:15   0:14\r\n35 Unknown                          0:05   0:03\r\n\r\nTotal Length                      56:43 1:50:58\r\n\r\n\r\nNotes:\r\nTrack names are sourced from\r\n\"MUSIC FROM DINOSAUR\" (KICA-1030)\r\n\r\nThis pack was made using MAME 0.280 VGM mod.\r\n\r\nSize reduction (vgm_cmp):\r\n    8.29 MB -> 7.93 MB (95.7 %)\r\n\r\n\r\nPackage history:\r\n1.00 2026-05-07 GTheGuardian: Initial release.\r\n"
+  },
+  {
+   "path": "Dinosaur.m3u",
+   "text": "01 The Lost Ones (Opening).vgz\r\n02 Mark My Words (Village).vgz\r\n03 Spirit Hymn (Forest).vgz\r\n04 Front Line (Combat).vgz\r\n05 Charge (Gardner).vgz\r\n06 A Temple (Ruins).vgz\r\n07 God (Temple).vgz\r\n08 Earthen Flute.vgz\r\n09 Exciting Shop (Shop).vgz\r\n10 Into the Castle (Castle 1).vgz\r\n11 A Meeting with Tarsis (Underground Cemetery).vgz\r\n12 When Grieving Ends, The Fight Begins (Mid Boss).vgz\r\n13 Time for a Chance Meeting (Game Over).vgz\r\n14 Burning (Castle 2).vgz\r\n15 A Soul's Repose.vgz\r\n16 Divine Revelation (Outer Wall).vgz\r\n17 The Tower of Ordeals.vgz\r\n18 The Dragon's Passing (Underground Cave).vgz\r\n19 The Tower of the Wind.vgz\r\n20 Underground Shrine.vgz\r\n21 Dimensional Maze.vgz\r\n22 The Tower of Darius.vgz\r\n23 I Love You (The Death of a Comrade).vgz\r\n24 Harp.vgz\r\n25 A Time of Purity (Forna Tower).vgz\r\n26 The Mascle Man (Ariel).vgz\r\n27 Forna.vgz\r\n28 The Tower of Spirits.vgz\r\n29 The God of War.vgz\r\n30 Dinosaur (Final Boss).vgz\r\n31 The Weaving of Dreams (Ending 1).vgz\r\n32 The Emblem of the Wind (Ending 2).vgz\r\n33 Music Box.vgz\r\n34 Siren.vgz\r\n35 Unknown.vgz\r\n"
+  }
+ ]
+}

@@ -1,0 +1,274 @@
+{
+ "entries": [
+  {
+   "path": "DMG-OKJ.gbs",
+   "size": 16468
+  },
+  {
+   "path": "01 Title Screen.m3u",
+   "size": 133
+  },
+  {
+   "path": "02 What's Your Name.m3u",
+   "size": 137
+  },
+  {
+   "path": "03 A Princely Duel.m3u",
+   "size": 136
+  },
+  {
+   "path": "04 Panic!.m3u",
+   "size": 127
+  },
+  {
+   "path": "05 Port Saltwater.m3u",
+   "size": 136
+  },
+  {
+   "path": "06 The Prince's Adventure.m3u",
+   "size": 143
+  },
+  {
+   "path": "07 The Prince Has Fallen!.m3u",
+   "size": 142
+  },
+  {
+   "path": "08 Eclair Palace.m3u",
+   "size": 135
+  },
+  {
+   "path": "09 Fight!.m3u",
+   "size": 126
+  },
+  {
+   "path": "10 Victory!.m3u",
+   "size": 129
+  },
+  {
+   "path": "11 A La Mode.m3u",
+   "size": 131
+  },
+  {
+   "path": "12 Mandola's Theme.m3u",
+   "size": 137
+  },
+  {
+   "path": "13 Dungeon Theme.m3u",
+   "size": 134
+  },
+  {
+   "path": "14 Pretty Girl.m3u",
+   "size": 133
+  },
+  {
+   "path": "15 Hop Hop Springs.m3u",
+   "size": 137
+  },
+  {
+   "path": "16 Spring Hill.m3u",
+   "size": 133
+  },
+  {
+   "path": "17 Foreigner's Bazaar.m3u",
+   "size": 139
+  },
+  {
+   "path": "18 Riding the Waves.m3u",
+   "size": 137
+  },
+  {
+   "path": "19 Nantendo FunCenter.m3u",
+   "size": 140
+  },
+  {
+   "path": "20 Eskimo Village.m3u",
+   "size": 136
+  },
+  {
+   "path": "21 Pudding Town.m3u",
+   "size": 134
+  },
+  {
+   "path": "22 Dalarin's Lair.m3u",
+   "size": 136
+  },
+  {
+   "path": "23 Igari Z Summoning.m3u",
+   "size": 138
+  },
+  {
+   "path": "24 Healing Dance.m3u",
+   "size": 135
+  },
+  {
+   "path": "25 Assault.m3u",
+   "size": 129
+  },
+  {
+   "path": "26 Slay the Snake!.m3u",
+   "size": 137
+  },
+  {
+   "path": "27 A Hard-Won Victory.m3u",
+   "size": 139
+  },
+  {
+   "path": "28 Reunion.m3u",
+   "size": 129
+  },
+  {
+   "path": "29 Final Duel.m3u",
+   "size": 131
+  },
+  {
+   "path": "30 Richard's Departure.m3u",
+   "size": 141
+  },
+  {
+   "path": "31 Credits Roll.m3u",
+   "size": 134
+  },
+  {
+   "path": "32 Unknown Jingle.m3u",
+   "size": 135
+  },
+  {
+   "path": "DMG-OKJ.m3u",
+   "size": 1622
+  }
+ ],
+ "playlists": [
+  {
+   "path": "01 Title Screen.m3u",
+   "text": "DMG-OKJ.gbs::GBS,0,Title Screen - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,1:13,,10"
+  },
+  {
+   "path": "02 What's Your Name.m3u",
+   "text": "DMG-OKJ.gbs::GBS,2,What's Your Name - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:36,,10"
+  },
+  {
+   "path": "03 A Princely Duel.m3u",
+   "text": "DMG-OKJ.gbs::GBS,6,A Princely Duel - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:28,,10"
+  },
+  {
+   "path": "04 Panic!.m3u",
+   "text": "DMG-OKJ.gbs::GBS,7,Panic! - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,1:07,,10"
+  },
+  {
+   "path": "05 Port Saltwater.m3u",
+   "text": "DMG-OKJ.gbs::GBS,16,Port Saltwater - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:38,,10"
+  },
+  {
+   "path": "06 The Prince's Adventure.m3u",
+   "text": "DMG-OKJ.gbs::GBS,9,The Prince's Adventure - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,2:15,,10"
+  },
+  {
+   "path": "07 The Prince Has Fallen!.m3u",
+   "text": "DMG-OKJ.gbs::GBS,5,The Prince Has Fallen! - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:03,,1"
+  },
+  {
+   "path": "08 Eclair Palace.m3u",
+   "text": "DMG-OKJ.gbs::GBS,19,Eclair Palace - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,2:22,,10"
+  },
+  {
+   "path": "09 Fight!.m3u",
+   "text": "DMG-OKJ.gbs::GBS,4,Fight! - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:02,,5"
+  },
+  {
+   "path": "10 Victory!.m3u",
+   "text": "DMG-OKJ.gbs::GBS,36,Victory! - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:05,,1"
+  },
+  {
+   "path": "11 A La Mode.m3u",
+   "text": "DMG-OKJ.gbs::GBS,13,A La Mode - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:22,,10"
+  },
+  {
+   "path": "12 Mandola's Theme.m3u",
+   "text": "DMG-OKJ.gbs::GBS,20,Mandola's Theme - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:37,,10"
+  },
+  {
+   "path": "13 Dungeon Theme.m3u",
+   "text": "DMG-OKJ.gbs::GBS,18,Dungeon Theme - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:04,,5"
+  },
+  {
+   "path": "14 Pretty Girl.m3u",
+   "text": "DMG-OKJ.gbs::GBS,35,Pretty Girl - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:39,,10"
+  },
+  {
+   "path": "15 Hop Hop Springs.m3u",
+   "text": "DMG-OKJ.gbs::GBS,14,Hop Hop Springs - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:47,,10"
+  },
+  {
+   "path": "16 Spring Hill.m3u",
+   "text": "DMG-OKJ.gbs::GBS,15,Spring Hill - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:59,,10"
+  },
+  {
+   "path": "17 Foreigner's Bazaar.m3u",
+   "text": "DMG-OKJ.gbs::GBS,21,Foreigner's Bazaar - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,3:43,,1"
+  },
+  {
+   "path": "18 Riding the Waves.m3u",
+   "text": "DMG-OKJ.gbs::GBS,10,Riding the Waves - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:11,,5"
+  },
+  {
+   "path": "19 Nantendo FunCenter.m3u",
+   "text": "DMG-OKJ.gbs::GBS,17,Nantendo FunCenter - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:50,,10"
+  },
+  {
+   "path": "20 Eskimo Village.m3u",
+   "text": "DMG-OKJ.gbs::GBS,12,Eskimo Village - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:38,,10"
+  },
+  {
+   "path": "21 Pudding Town.m3u",
+   "text": "DMG-OKJ.gbs::GBS,11,Pudding Town - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:44,,10"
+  },
+  {
+   "path": "22 Dalarin's Lair.m3u",
+   "text": "DMG-OKJ.gbs::GBS,24,Dalarin's Lair - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:32,,10"
+  },
+  {
+   "path": "23 Igari Z Summoning.m3u",
+   "text": "DMG-OKJ.gbs::GBS,32,Igari Z Summoning - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:06,,1"
+  },
+  {
+   "path": "24 Healing Dance.m3u",
+   "text": "DMG-OKJ.gbs::GBS,23,Healing Dance - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:55,,10"
+  },
+  {
+   "path": "25 Assault.m3u",
+   "text": "DMG-OKJ.gbs::GBS,25,Assault - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:32,,10"
+  },
+  {
+   "path": "26 Slay the Snake!.m3u",
+   "text": "DMG-OKJ.gbs::GBS,22,Slay the Snake! - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,1:19,,10"
+  },
+  {
+   "path": "27 A Hard-Won Victory.m3u",
+   "text": "DMG-OKJ.gbs::GBS,27,A Hard-Won Victory - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:15,,5"
+  },
+  {
+   "path": "28 Reunion.m3u",
+   "text": "DMG-OKJ.gbs::GBS,28,Reunion - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,1:47,,10"
+  },
+  {
+   "path": "29 Final Duel.m3u",
+   "text": "DMG-OKJ.gbs::GBS,29,Final Duel - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:45,,5"
+  },
+  {
+   "path": "30 Richard's Departure.m3u",
+   "text": "DMG-OKJ.gbs::GBS,30,Richard's Departure - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:32,,10"
+  },
+  {
+   "path": "31 Credits Roll.m3u",
+   "text": "DMG-OKJ.gbs::GBS,31,Credits Roll - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,1:03,,10"
+  },
+  {
+   "path": "32 Unknown Jingle.m3u",
+   "text": "DMG-OKJ.gbs::GBS,26,Unknown Jingle - Kazumi Totaka - Kaeru no Tame ni Kane wa Naru - ©1992-09-14 Intelligent Systems\\, Nintendo,0:05,,1"
+  },
+  {
+   "path": "DMG-OKJ.m3u",
+   "text": "# @TITLE       Kaeru no Tame ni Kane wa Naru\r\n# @ARTIST      Intelligent Systems, Nintendo\r\n# @COMPOSER    Kazumi Totaka\r\n# @DATE        1992-09-14\r\n# @RIPPER      Scott Worley\r\n# @TAGGER      Knurek, banshiryuu\r\n\r\nDMG-OKJ.gbs::GBS,0,Title Screen,1:13,,10\r\nDMG-OKJ.gbs::GBS,2,What's Your Name,0:36,,10\r\nDMG-OKJ.gbs::GBS,6,A Princely Duel,0:28,,10\r\nDMG-OKJ.gbs::GBS,7,Panic!,1:07,,10\r\nDMG-OKJ.gbs::GBS,16,Port Saltwater,0:38,,10\r\nDMG-OKJ.gbs::GBS,9,The Prince's Adventure,2:15,,10\r\nDMG-OKJ.gbs::GBS,5,The Prince Has Fallen!,0:03,,1\r\nDMG-OKJ.gbs::GBS,19,Eclair Palace,2:22,,10\r\nDMG-OKJ.gbs::GBS,4,Fight!,0:02,,5\r\nDMG-OKJ.gbs::GBS,36,Victory!,0:05,,1\r\nDMG-OKJ.gbs::GBS,13,A La Mode,0:22,,10\r\nDMG-OKJ.gbs::GBS,20,Mandola's Theme,0:37,,10\r\nDMG-OKJ.gbs::GBS,18,Dungeon Theme,0:04,,5\r\nDMG-OKJ.gbs::GBS,35,Pretty Girl,0:39,,10\r\nDMG-OKJ.gbs::GBS,14,Hop Hop Springs,0:47,,10\r\nDMG-OKJ.gbs::GBS,15,Spring Hill,0:59,,10\r\nDMG-OKJ.gbs::GBS,21,Foreigner's Bazaar,3:43,,1\r\nDMG-OKJ.gbs::GBS,10,Riding the Waves,0:11,,5\r\nDMG-OKJ.gbs::GBS,17,Nantendo FunCenter,0:50,,10\r\nDMG-OKJ.gbs::GBS,12,Eskimo Village,0:38,,10\r\nDMG-OKJ.gbs::GBS,11,Pudding Town,0:44,,10\r\nDMG-OKJ.gbs::GBS,24,Dalarin's Lair,0:32,,10\r\nDMG-OKJ.gbs::GBS,32,Igari Z Summoning,0:06,,1\r\nDMG-OKJ.gbs::GBS,23,Healing Dance,0:55,,10\r\nDMG-OKJ.gbs::GBS,25,Assault,0:32,,10\r\nDMG-OKJ.gbs::GBS,22,Slay the Snake!,1:19,,10\r\nDMG-OKJ.gbs::GBS,27,A Hard-Won Victory,0:15,,5\r\nDMG-OKJ.gbs::GBS,28,Reunion,1:47,,10\r\nDMG-OKJ.gbs::GBS,29,Final Duel,0:45,,5\r\nDMG-OKJ.gbs::GBS,30,Richard's Departure,0:32,,10\r\nDMG-OKJ.gbs::GBS,31,Credits Roll,1:03,,10\r\nDMG-OKJ.gbs::GBS,26,Unknown Jingle,0:05,,1\r\n"
+  }
+ ]
+}

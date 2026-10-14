@@ -1,0 +1,206 @@
+{
+ "entries": [
+  {
+   "path": "01.Opening.m3u",
+   "size": 93
+  },
+  {
+   "path": "02.Title.m3u",
+   "size": 91
+  },
+  {
+   "path": "03.Pass Word.m3u",
+   "size": 102
+  },
+  {
+   "path": "04.Stage Select.m3u",
+   "size": 105
+  },
+  {
+   "path": "05.Game Start.m3u",
+   "size": 96
+  },
+  {
+   "path": "06.Flash Man Stage.m3u",
+   "size": 108
+  },
+  {
+   "path": "07.Wood Man Stage.m3u",
+   "size": 107
+  },
+  {
+   "path": "08.Crash Man Stage.m3u",
+   "size": 108
+  },
+  {
+   "path": "09.Heat Man Stage.m3u",
+   "size": 107
+  },
+  {
+   "path": "10.Air Man Stage.m3u",
+   "size": 107
+  },
+  {
+   "path": "11.Metal Man Stage.m3u",
+   "size": 109
+  },
+  {
+   "path": "12.Quick Man Stage.m3u",
+   "size": 109
+  },
+  {
+   "path": "13.Bubble Man Stage.m3u",
+   "size": 110
+  },
+  {
+   "path": "14.Boss.m3u",
+   "size": 98
+  },
+  {
+   "path": "15.Stage Clear.m3u",
+   "size": 98
+  },
+  {
+   "path": "16.Get Weapon.m3u",
+   "size": 104
+  },
+  {
+   "path": "17.Dr. Wily Map.m3u",
+   "size": 99
+  },
+  {
+   "path": "18.Dr. Wily Stage 1.m3u",
+   "size": 110
+  },
+  {
+   "path": "19.Dr. Wily Stage 2.m3u",
+   "size": 110
+  },
+  {
+   "path": "20.All Stage Clear.m3u",
+   "size": 102
+  },
+  {
+   "path": "21.Ending.m3u",
+   "size": 93
+  },
+  {
+   "path": "22.Credit Roll.m3u",
+   "size": 98
+  },
+  {
+   "path": "23.Game Over.m3u",
+   "size": 96
+  },
+  {
+   "path": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).m3u",
+   "size": 2591
+  },
+  {
+   "path": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf",
+   "size": 16592
+  },
+  {
+   "path": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsfe",
+   "size": 17422
+  }
+ ],
+ "playlists": [
+  {
+   "path": "01.Opening.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,1,Opening,0:41.167,,0"
+  },
+  {
+   "path": "02.Title.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,2,Title,0:42.769,,0"
+  },
+  {
+   "path": "03.Pass Word.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,3,Pass Word,0:12.833,,0:06.400"
+  },
+  {
+   "path": "04.Stage Select.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,4,Stage Select,0:12.199,,0:05.333"
+  },
+  {
+   "path": "05.Game Start.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,5,Game Start,0:06.486,,0"
+  },
+  {
+   "path": "06.Flash Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,6,Flash Man Stage,1:16.830,,0:12.799"
+  },
+  {
+   "path": "07.Wood Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,7,Wood Man Stage,1:11.864,,0:10.666"
+  },
+  {
+   "path": "08.Crash Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,8,Crash Man Stage,2:20.828,,0:12.800"
+  },
+  {
+   "path": "09.Heat Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,9,Heat Man Stage,0:51.331,,0:12.600"
+  },
+  {
+   "path": "10.Air Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,10,Air Man Stage,1:30.696,,0:12.000"
+  },
+  {
+   "path": "11.Metal Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,11,Metal Man Stage,1:16.830,,0:12.800"
+  },
+  {
+   "path": "12.Quick Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,12,Quick Man Stage,1:16.980,,0:12.250"
+  },
+  {
+   "path": "13.Bubble Man Stage.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,13,Bubble Man Stage,1:14.697,,0:10.666"
+  },
+  {
+   "path": "14.Boss.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,16,Boss,0:32.032,,0:12.800"
+  },
+  {
+   "path": "15.Stage Clear.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,21,Stage Clear,0:05.541,,0"
+  },
+  {
+   "path": "16.Get Weapon.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,23,Get Weapon,0:05.367,,0:02.667"
+  },
+  {
+   "path": "17.Dr. Wily Map.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,18,Dr. Wily Map,0:07.049,,0"
+  },
+  {
+   "path": "18.Dr. Wily Stage 1.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,14,Dr. Wily Stage 1,2:29.361,,0:10.833"
+  },
+  {
+   "path": "19.Dr. Wily Stage 2.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,15,Dr. Wily Stage 2,2:33.627,,0:12.800"
+  },
+  {
+   "path": "20.All Stage Clear.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,22,All Stage Clear,0:08.897,,0"
+  },
+  {
+   "path": "21.Ending.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,19,Ending,1:08.829,,0"
+  },
+  {
+   "path": "22.Credit Roll.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,20,Credit Roll,1:05.414,,0"
+  },
+  {
+   "path": "23.Game Over.m3u",
+   "text": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,17,Game Over,0:02.902,,0"
+  },
+  {
+   "path": "Mega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).m3u",
+   "text": "# Rockman 2\r\n# Music by Manami Matsumae, Takashi Tateishi\r\n# Copyright 1988 Capcom\r\n# Ripped by Andy0774\r\n# Playlist generated by nsfe2m3u\r\n# Tagged by Andy0774 with VirtuaNSF 1.0.8.2\r\n\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,1,Opening,0:41.167,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,2,Title,0:42.769,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,3,Pass Word,0:12.833,,0:06.400\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,4,Stage Select,0:12.199,,0:05.333\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,5,Game Start,0:06.486,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,6,Flash Man Stage,1:16.830,,0:12.799\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,7,Wood Man Stage,1:11.864,,0:10.666\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,8,Crash Man Stage,2:20.828,,0:12.800\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,9,Heat Man Stage,0:51.331,,0:12.600\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,10,Air Man Stage,1:30.696,,0:12.000\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,11,Metal Man Stage,1:16.830,,0:12.800\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,12,Quick Man Stage,1:16.980,,0:12.250\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,13,Bubble Man Stage,1:14.697,,0:10.666\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,16,Boss,0:32.032,,0:12.800\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,21,Stage Clear,0:05.541,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,23,Get Weapon,0:05.367,,0:02.667\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,18,Dr. Wily Map,0:07.049,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,14,Dr. Wily Stage 1,2:29.361,,0:10.833\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,15,Dr. Wily Stage 2,2:33.627,,0:12.800\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,22,All Stage Clear,0:08.897,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,19,Ending,1:08.829,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,20,Credit Roll,1:05.414,,0\r\nMega Man 2 [RockMan 2 - Dr. Wily no Nazo] (1988-12-24)(Capcom).nsf::NSF,17,Game Over,0:02.902,,0"
+  }
+ ]
+}

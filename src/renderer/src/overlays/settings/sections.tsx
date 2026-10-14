@@ -662,6 +662,7 @@ const SHORTCUTS: { keys: string[]; label: string; text?: string }[] = [
   { keys: ['Mod+O'], label: 'Settings' },
   { keys: ['F6'], label: 'Music controller' },
   { keys: ['Alt+J'], label: 'Original / romanized titles' },
+  { keys: ['1', 'Alt+1', '0'], label: 'Chiptunes on Play: mute / solo a channel (1–9), all on' },
   { keys: ['Mod+Shift+F'], label: 'FPS meter' }
 ]
 

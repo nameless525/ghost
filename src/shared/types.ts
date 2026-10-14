@@ -229,6 +229,11 @@ export interface PlayerState {
   context: PlayContext | null
   preview: { track: TrackView; startedAt: number } | null
   error: string | null
+  /**
+   * Mutable sound-chip voices of the current source (chiptune rips: "Square 1", "Triangle", "Noise",
+   * …), or null when it has none. Bit i of `mask` set = voice i is muted. Resets to 0 on track change.
+   */
+  voices: { names: string[]; mask: number } | null
 }
 
 export interface AudioDevice {

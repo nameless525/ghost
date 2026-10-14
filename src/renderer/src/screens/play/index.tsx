@@ -6,6 +6,7 @@
 //  · the game's hero art behind, far less blurred/dimmed than Browse (restored on exit)
 //  · GPU visualizer (radial / skyline / scope; V cycles) with osu!-style kiai time
 //  · energy-graph seek bar, auto-hiding controls (2 s idle; the cursor hides too), queue drawer
+//  · chiptunes: a "Channels" strip of sound-chip voices (click mute, ⌥-click solo; 1–9 / ⌥1–9 / 0)
 //  · keys: Space · ←/→ ±5 s (Shift ±15 s) · ↑/↓ volume · L like · V visualizer · Q queue · M mute · Esc back
 import { FastForward, Rewind } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
@@ -512,6 +513,7 @@ export default function PlayScreen(props: PlayScreenProps) {
           metaRef={setMeta}
           rowRef={setRow}
           seekRef={setSeek}
+          onAnnounce={(o) => osd.current?.show(o)}
         />
       )}
 

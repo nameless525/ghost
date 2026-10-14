@@ -20,7 +20,7 @@ import type {
   TrackView
 } from '../../shared/types'
 import type { CatalogService, ResolvedSource } from '../catalog'
-import type { EngineBridge, EngineEvent, EnginePlaybackState, EngineSource, EngineTrack, OfflineAnalysisResult } from '../engine/types'
+import type { EngineBridge, EngineEvent, EnginePlaybackState, EngineSource, EngineTrack, EngineTrackInfo, OfflineAnalysisResult } from '../engine/types'
 import { sliderToDb } from '../engine/types'
 import type { Broadcast } from '../ipc'
 import type { SessionData, SessionStore } from './session'
@@ -188,6 +188,10 @@ export class Player implements PlayerAPI {
   private streakNotice = ''
   private uidTrack = new BoundedMap<string, ID>(512)
   private infoDuration = new BoundedMap<string, number>(64)
+  /** Chip voice names per engine id, from trackInfo (absent = the source has no mutable voices). */
+  private infoVoices = new BoundedMap<string, string[]>(64)
+  /** The engine's (global) voice mask as we last set it. */
+  private engineMask = 0
   private account: PlayAccount | null = null
   private lastNotice = new Map<string, number>()
 
@@ -221,7 +225,8 @@ export class Player implements PlayerAPI {
       queueIndex: -1,
       context: null,
       preview: null,
-      error: null
+      error: null,
+      voices: null
     }
     const hb = deps.heartbeatMs ?? 1000
     if (hb > 0) {
@@ -270,7 +275,9 @@ export class Player implements PlayerAPI {
   /** A fresh PlayerState snapshot. */
   snapshot(): PlayerState {
     this.refreshPosition()
-    return { ...this.s, current: this.item()?.track ?? null, queue: [...this.s.queue] }
+    const current = this.item()?.track ?? null
+    const v = current ? this.s.voices : null
+    return { ...this.s, current, queue: [...this.s.queue], voices: v ? { names: [...v.names], mask: v.mask } : null }
   }
 
   private changed(): void {
@@ -476,6 +483,16 @@ export class Player implements PlayerAPI {
     this.s.currentAnalysis = analysis
     this.s.durationMs = this.infoDuration.get(item.uid) ?? item.track.durationMs ?? null
     this.s.error = null
+    // A new track starts with every voice audible (the engine's mask is global).
+    const names = this.infoVoices.get(item.uid)
+    this.s.voices = names ? { names, mask: 0 } : null
+    this.resetVoiceMask()
+  }
+
+  private resetVoiceMask(): void {
+    if (this.engineMask === 0) return
+    this.engineMask = 0
+    this.safe(() => this.engine.setVoiceMask?.(0))
   }
 
   private loadIndex(i: number, autoplay: boolean, startMs = 0): Promise<void> {
@@ -706,7 +723,7 @@ export class Player implements PlayerAPI {
         case 'ended':
           return this.onEnded(e.id)
         case 'trackInfo':
-          return this.onTrackInfo(e.id, e.durationMs)
+          return this.onTrackInfo(e)
         case 'buffering':
           return this.onBuffering(e.id, e.buffering)
         case 'error':
@@ -755,13 +772,24 @@ export class Player implements PlayerAPI {
     this.changed()
   }
 
-  private onTrackInfo(id: string, durationMs: number | null): void {
+  private onTrackInfo(info: EngineTrackInfo): void {
+    const { id, durationMs } = info
     if (durationMs && durationMs > 0) this.infoDuration.set(id, durationMs)
-    if (this.cur?.id === id && durationMs && durationMs > 0) {
+    const count = Math.max(0, Math.floor(info.voiceCount ?? 0))
+    const names = count > 0 ? Array.from({ length: count }, (_, i) => info.voiceNames?.[i]?.trim() || `Voice ${i + 1}`) : null
+    if (names) this.infoVoices.set(id, names)
+    else this.infoVoices.delete(id)
+    if (this.cur?.id !== id) return
+    if (durationMs && durationMs > 0) {
       this.s.durationMs = durationMs
       this.failStreak.clear()
-      this.changed()
     }
+    const prev = this.s.voices
+    if (!names) this.s.voices = null
+    else if (!prev || prev.names.length !== names.length || prev.names.some((n, i) => n !== names[i])) this.s.voices = { names, mask: 0 }
+    // A fallback source without (or with different) voices must not inherit a stale mask.
+    if (!this.s.voices || this.s.voices.mask === 0) this.resetVoiceMask()
+    this.changed()
   }
 
   private onAdvanced(id: string): void {
@@ -1306,6 +1334,8 @@ export class Player implements PlayerAPI {
       this.safe(() => this.engine.stop())
       this.s.queueIndex = -1
       this.s.currentAnalysis = null
+      this.s.voices = null
+      this.resetVoiceMask()
       this.s.durationMs = null
       this.s.positionMs = 0
       this.s.context = null
@@ -1459,6 +1489,19 @@ export class Player implements PlayerAPI {
 
   async setOverlayFilter(active: boolean): Promise<void> {
     this.safe(() => this.engine.setOverlayFilter(!!active))
+  }
+
+  async setVoiceMask(mask: number): Promise<void> {
+    const v = this.s.voices
+    if (!v || !this.item()) return
+    const n = Math.min(v.names.length, 31)
+    const all = n >= 31 ? 0x7fffffff : (1 << n) - 1
+    const m = Number.isFinite(mask) && mask > 0 ? Math.floor(mask) & all : 0
+    if (m === v.mask && m === this.engineMask) return
+    this.s.voices = { names: v.names, mask: m }
+    this.engineMask = m
+    this.safe(() => this.engine.setVoiceMask?.(m))
+    this.changed()
   }
 
   async devices(): Promise<AudioDevice[]> {

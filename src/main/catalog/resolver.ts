@@ -51,6 +51,8 @@ interface SourceRow {
   needs_refresh: number
   clip_start_ms: number | null
   clip_end_ms: number | null
+  archive_entry: string | null
+  subsong: number | null
 }
 
 export interface StoredStream {
@@ -157,14 +159,17 @@ export class SourceResolver {
         const headers = info.source.kind === 'http' && info.source.headers ? JSON.stringify(info.source.headers) : null
         const clipStart = info.source.clipStartMs ?? null
         const clipEnd = info.source.clipEndMs ?? null
-        const bitrate = info.bitrateKbps ?? estimateKbps(info.sizeBytes, durationMs)
+        const entry = info.source.archiveEntry ?? null
+        const subsong = info.source.subsong ?? null
+        // A chip file's size says nothing about its bitrate (it's a program, not audio).
+        const bitrate = info.bitrateKbps ?? (info.format === 'chip' ? null : estimateKbps(info.sizeBytes, durationMs))
         const ex = existing.get(key)
         if (ex) {
           // Expiring URLs (YouTube, Bandcamp) change on every re-resolve: the same locator is the same target.
-          const sameTarget = ex.path === path && (ex.url === url || (ex.locator === locator && info.expiresAt != null))
+          const sameTarget = ex.path === path && ex.archive_entry === entry && ex.subsong === subsong && (ex.url === url || (ex.locator === locator && info.expiresAt != null))
           repo.run(
             `UPDATE sources SET locator = ?, url = ?, path = ?, headers = ?, format = ?, bitrate = ?, lossless = ?, duration_ms = ?, size_bytes = ?,
-               confidence = ?, verified_at = ?, expires_at = ?, failures = ?, needs_refresh = 0, clip_start_ms = ?, clip_end_ms = ? WHERE id = ?`,
+               confidence = ?, verified_at = ?, expires_at = ?, failures = ?, needs_refresh = 0, clip_start_ms = ?, clip_end_ms = ?, archive_entry = ?, subsong = ? WHERE id = ?`,
             locator,
             url,
             path,
@@ -180,12 +185,14 @@ export class SourceResolver {
             sameTarget ? ex.failures : 0,
             clipStart,
             clipEnd,
+            entry,
+            subsong,
             ex.id
           )
         } else {
           repo.run(
-            `INSERT INTO sources (track_id, provider, locator, cache_key, url, path, headers, format, bitrate, lossless, duration_ms, size_bytes, confidence, verified_at, expires_at, clip_start_ms, clip_end_ms)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO sources (track_id, provider, locator, cache_key, url, path, headers, format, bitrate, lossless, duration_ms, size_bytes, confidence, verified_at, expires_at, clip_start_ms, clip_end_ms, archive_entry, subsong)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             trackId,
             provider,
             locator,
@@ -202,7 +209,9 @@ export class SourceResolver {
             now,
             info.expiresAt,
             clipStart,
-            clipEnd
+            clipEnd,
+            entry,
+            subsong
           )
         }
       }
@@ -345,6 +354,13 @@ function engineSource(r: SourceRow): EngineSource {
     source.clipStartMs = r.clip_start_ms
     source.clipEndMs = r.clip_end_ms
   }
+  if (r.archive_entry) {
+    source.archiveEntry = r.archive_entry
+    // The entry's own extension says what it is (the URL is the .7z / .zip).
+    const ext = /\.([a-z0-9]{1,6})$/i.exec(r.archive_entry)?.[1]?.toLowerCase()
+    if (ext) source.formatHint = ext
+  }
+  if (r.subsong != null) source.subsong = r.subsong
   return source
 }
 

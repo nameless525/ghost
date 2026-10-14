@@ -80,6 +80,8 @@ export interface PlayerAPI {
   /** Muffle the music (low-pass + duck) while a modal overlay is open. */
   setOverlayFilter(active: boolean): Promise<void>
   devices(): Promise<AudioDevice[]>
+  /** Mute sound-chip voices of the current track: bit i mutes `PlayerState.voices.names[i]`; 0 unmutes all. */
+  setVoiceMask(mask: number): Promise<void>
 }
 
 export interface PlaylistsAPI {
@@ -191,6 +193,7 @@ export const API_METHODS = [
   'player.stopPreview',
   'player.setOverlayFilter',
   'player.devices',
+  'player.setVoiceMask',
   'library.playlists.list',
   'library.playlists.get',
   'library.playlists.create',

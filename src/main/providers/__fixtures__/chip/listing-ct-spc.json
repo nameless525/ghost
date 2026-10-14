@@ -1,0 +1,382 @@
+{
+ "entries": [
+  {
+   "path": "info.txt",
+   "size": 2085
+  },
+  {
+   "path": "101 Presentiment.spc",
+   "size": 66144
+  },
+  {
+   "path": "102 Chrono Trigger (Looped).spc",
+   "size": 66152
+  },
+  {
+   "path": "102 Chrono Trigger.spc",
+   "size": 66144
+  },
+  {
+   "path": "103 Morning Sunlight.spc",
+   "size": 66144
+  },
+  {
+   "path": "104 Peaceful Days.spc",
+   "size": 66152
+  },
+  {
+   "path": "105 Memories of Green.spc",
+   "size": 66152
+  },
+  {
+   "path": "106 Guardia Millennial Fair.spc",
+   "size": 66152
+  },
+  {
+   "path": "107 Gato's Song.spc",
+   "size": 66216
+  },
+  {
+   "path": "108 A Strange Happening.spc",
+   "size": 66216
+  },
+  {
+   "path": "109 Wind Scene.spc",
+   "size": 66152
+  },
+  {
+   "path": "110 Goodnight.spc",
+   "size": 66144
+  },
+  {
+   "path": "111 Secret of the Forest.spc",
+   "size": 66216
+  },
+  {
+   "path": "112 Battle 1.spc",
+   "size": 66152
+  },
+  {
+   "path": "113 Courage and Pride.spc",
+   "size": 66152
+  },
+  {
+   "path": "114 Huh_!.spc",
+   "size": 66144
+  },
+  {
+   "path": "115 Manoria Cathedral.spc",
+   "size": 66308
+  },
+  {
+   "path": "116 A Prayer to the Road that Leads.spc",
+   "size": 66144
+  },
+  {
+   "path": "117 Silent Light.spc",
+   "size": 66268
+  },
+  {
+   "path": "118 Boss Battle 1.spc",
+   "size": 66152
+  },
+  {
+   "path": "119 Frog's Theme.spc",
+   "size": 66152
+  },
+  {
+   "path": "120 Fanfare 1.spc",
+   "size": 66216
+  },
+  {
+   "path": "121 Kingdom Trial.spc",
+   "size": 66152
+  },
+  {
+   "path": "122 The Hidden Truth (Looped).spc",
+   "size": 66152
+  },
+  {
+   "path": "122 The Hidden Truth.spc",
+   "size": 66144
+  },
+  {
+   "path": "123 A Shot of Crisis.spc",
+   "size": 66152
+  },
+  {
+   "path": "201 Ruined World.spc",
+   "size": 66152
+  },
+  {
+   "path": "202 Mystery of the Past.spc",
+   "size": 66144
+  },
+  {
+   "path": "203 Lab 16's Ruin.spc",
+   "size": 66220
+  },
+  {
+   "path": "204 People Without Hope (Variant 1).spc",
+   "size": 66336
+  },
+  {
+   "path": "204 People Without Hope (Variant 2).spc",
+   "size": 66336
+  },
+  {
+   "path": "204 People Without Hope.spc",
+   "size": 66336
+  },
+  {
+   "path": "205 Lavos' Theme (Extended).spc",
+   "size": 66152
+  },
+  {
+   "path": "205 Lavos' Theme.spc",
+   "size": 66152
+  },
+  {
+   "path": "206 The Day the World Revived.spc",
+   "size": 66216
+  },
+  {
+   "path": "207 Robo Gang Johnny.spc",
+   "size": 66152
+  },
+  {
+   "path": "208 Bike Chase.spc",
+   "size": 66152
+  },
+  {
+   "path": "209 Robo's Theme.spc",
+   "size": 66152
+  },
+  {
+   "path": "210 Remains of the Factory.spc",
+   "size": 66216
+  },
+  {
+   "path": "211 Battle 2.spc",
+   "size": 66152
+  },
+  {
+   "path": "212 Fanfare 2.spc",
+   "size": 66144
+  },
+  {
+   "path": "213 Brink of Time.spc",
+   "size": 66152
+  },
+  {
+   "path": "214 Delightful Spekkio.spc",
+   "size": 66220
+  },
+  {
+   "path": "215 Fanfare 3.spc",
+   "size": 66144
+  },
+  {
+   "path": "216 Underground Sewer (No Water).spc",
+   "size": 66152
+  },
+  {
+   "path": "216 Underground Sewer.spc",
+   "size": 66212
+  },
+  {
+   "path": "217 Boss Battle 2.spc",
+   "size": 66152
+  },
+  {
+   "path": "218 Primitive Mountain.spc",
+   "size": 66248
+  },
+  {
+   "path": "219 Ayla's Theme.spc",
+   "size": 66152
+  },
+  {
+   "path": "220 Rhythm of Wind, Sky and Earth.spc",
+   "size": 66152
+  },
+  {
+   "path": "221 Burn! Bobonga!.spc",
+   "size": 66220
+  },
+  {
+   "path": "222 Magus' Castle.spc",
+   "size": 66144
+  },
+  {
+   "path": "223 Confusing Melody.spc",
+   "size": 66152
+  },
+  {
+   "path": "224 Battle with Magus.spc",
+   "size": 66152
+  },
+  {
+   "path": "301 Singing Mountain.spc",
+   "size": 66152
+  },
+  {
+   "path": "302 Tyran Castle.spc",
+   "size": 66216
+  },
+  {
+   "path": "303 At the Bottom of Night.spc",
+   "size": 66152
+  },
+  {
+   "path": "304 Corridors of Time.spc",
+   "size": 66152
+  },
+  {
+   "path": "305 Zeal Palace.spc",
+   "size": 66152
+  },
+  {
+   "path": "306 Schala's Theme.spc",
+   "size": 66152
+  },
+  {
+   "path": "307 Sealed Door.spc",
+   "size": 66220
+  },
+  {
+   "path": "308 Undersea Palace.spc",
+   "size": 66228
+  },
+  {
+   "path": "309 Far Off Promise.spc",
+   "size": 66152
+  },
+  {
+   "path": "310 Wings That Cross Time.spc",
+   "size": 66152
+  },
+  {
+   "path": "311 Black Omen.spc",
+   "size": 66152
+  },
+  {
+   "path": "312 Determination.spc",
+   "size": 66144
+  },
+  {
+   "path": "313 World Revolution.spc",
+   "size": 66152
+  },
+  {
+   "path": "314 Last Battle.spc",
+   "size": 66152
+  },
+  {
+   "path": "315 First Festival of Stars.spc",
+   "size": 66152
+  },
+  {
+   "path": "316 Epilogue ~ To Good Friends.spc",
+   "size": 66152
+  },
+  {
+   "path": "317 To Far Away Times.spc",
+   "size": 66144
+  },
+  {
+   "path": "999 Blackbird (Inside).spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Blackbird (Outside).spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Breath of Lavos.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Earthquake.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Fall of Zeal.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Lavos Stirs (Faster).spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Lavos Stirs.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Leene's Bell.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Mystic Chanting.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Ocean Waves.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Ozzie Laugh.spc",
+   "size": 66080
+  },
+  {
+   "path": "999 Ozzie Scream.spc",
+   "size": 66080
+  },
+  {
+   "path": "999 Prison Tower.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Quiet Beach.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Rain and Flowing Water.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Rat-a-Tat-Tat It's... Mitsuda.spc",
+   "size": 66080
+  },
+  {
+   "path": "999 Strong Wind.spc",
+   "size": 66144
+  },
+  {
+   "path": "999 Time Vortex.spc",
+   "size": 66144
+  },
+  {
+   "path": "999 Truce Canyon.spc",
+   "size": 66088
+  },
+  {
+   "path": "999 Tsunami.spc",
+   "size": 66080
+  },
+  {
+   "path": "999 Unknown Fanfare.spc",
+   "size": 66084
+  },
+  {
+   "path": "999 Voice of Lavos.spc",
+   "size": 66136
+  }
+ ],
+ "playlists": [
+  {
+   "path": "info.txt",
+   "text": "Chrono Trigger\r\nDumped by: YK\r\nID666 tags by: YK\r\nDownloaded from: http://snesmusic.org\r\n\r\n\r\n-Update 2:\r\n* Couple problematic tracks redumped, including the final battle.\r\n  We've gotten several reports that the redump was somehow screwy,\r\n  but I can't be 100% certain it's been fixed, as I noticed no\r\n  problem on my end...\r\n* A couple missing variants added.\r\n* Ambiences cleaned up. Several non-music tracks have been removed.\r\n\r\n-Update:\r\n\r\n* Complete redump by YK. Several songs had fade ins or the first few \r\n  seconds clipped. These issues have all been resolved.\r\n* All SPCs completely retimed to reflect the redump fixes.\r\n* One new song: An unknown fanfare evidently only present in the Japanese\r\n  version. I (YK) did not dump this one, and I do not know who did, \r\n  unfortunately.\r\n* Three additional variants: \"Underground Sewer\" without the water effects\r\n  (played in Ozzie's Fort), \"Magus' Castle\" with flying bat sounds, and the\r\n  ending bit of \"The Hidden Truth\".\r\n* A gigantic number of ambient tracks have been added. Too many to list.\r\n* The variants found only in the pre-release have been removed, and included\r\n  in the standalone dump of the *entire* pre-release soundtrack.\r\n* Tracknames use the American version's names when possible, but with the \r\n  Japanese trackname noted in the comments tag. \"People Without Hope\" was \r\n  chosen over \"People Who Threw Away the Will to Live\", as the latter was too\r\n  long, and the former conveys the message exactly the same in fewer words.\r\n  I've also seen the track referred to by this name in several places.\r\n* The comments tags also list where the songs are used. Most people should \r\n  know all this, but it's nice nevertheless.\r\n* It's not a mistake on my part that the OST info (sans disc and track numbers)\r\n  were left in \"Time Vortex\", \"Strong Wind\", and \"Voice of Lavos\". These ambient\r\n  tracks were all included in some form on the OST, simply not as standalone \r\n  tracks, so I felt this bit belonged.\r\n\r\nOriginal dumpers: Datschge, Killo Zapit, Skylark, TheFreak, YK\r\nOriginal taggers: Datschge\r\n"
+  }
+ ]
+}

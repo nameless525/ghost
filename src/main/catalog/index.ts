@@ -4,7 +4,7 @@ import type { CatalogAPI } from '../../shared/api'
 import type { Album, AudioFormat, Game, ID, Settings, TrackAnalysis, TrackView } from '../../shared/types'
 import type { DB } from '../db'
 import type { Broadcast } from '../ipc'
-import type { EngineSource, OfflineAnalysisResult } from '../engine/types'
+import type { ArchiveListing, EngineSource, OfflineAnalysisResult } from '../engine/types'
 
 export interface ResolvedSource {
   provider: string
@@ -43,6 +43,11 @@ export interface CatalogDeps {
   db: DB
   broadcast: Broadcast
   getSettings: () => Settings
+  /**
+   * The engine's archive lister (`EngineBridge.inspectArchive`): chiptune rip albums are built from
+   * their archive's listing. Without it those albums can't be opened.
+   */
+  inspectArchive?: (source: EngineSource) => Promise<ArchiveListing>
 }
 
 export { createCatalogService as createCatalog } from './service'

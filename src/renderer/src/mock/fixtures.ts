@@ -6,8 +6,11 @@ export interface FixtureAlbum {
   kind: 'ost' | 'gamerip' | 'arrange' | 'remix'
   year: number
   composers: string[]
-  formats: ('mp3' | 'flac')[]
+  formats: ('mp3' | 'flac' | 'chip')[]
   tracks: [string, string][]
+  /** Chiptune rips: the provider ('chip') and the sound-chip voices the mock player reports. */
+  provider?: string
+  voices?: string[]
 }
 
 export interface FixtureGame {
@@ -301,6 +304,51 @@ export const FIXTURE_GAMES: FixtureGame[] = [
           ['IceCap Zone Act 1', '2:46'],
           ['Launch Base Zone Act 1', '2:10'],
           ['Boss', '1:13']
+        ]
+      },
+      {
+        title: 'Sonic the Hedgehog 3 (Genesis VGM rip)',
+        kind: 'gamerip',
+        year: 1994,
+        composers: ['Jun Senoue', 'Howard Drossin'],
+        formats: ['chip'],
+        provider: 'chip',
+        voices: ['FM 1', 'FM 2', 'FM 3', 'FM 4', 'FM 5', 'FM 6', 'PCM', 'PSG'],
+        tracks: [
+          ['Angel Island Zone Act 1', '2:24'],
+          ['Hydrocity Zone Act 2', '2:41'],
+          ['Carnival Night Zone Act 1', '2:37'],
+          ['IceCap Zone Act 1', '3:12']
+        ]
+      }
+    ]
+  },
+  {
+    name: 'Mega Man 2',
+    original: 'ロックマン2 Dr.ワイリーの謎',
+    year: 1988,
+    platforms: ['NES'],
+    franchise: 'Mega Man',
+    accent: '#4aa8ff',
+    accent2: '#1b1a5e',
+    albums: [
+      {
+        title: 'Mega Man 2 (NES NSF rip)',
+        kind: 'gamerip',
+        year: 1988,
+        composers: ['Manami Matsumae', 'Takashi Tateishi'],
+        formats: ['chip'],
+        provider: 'chip',
+        voices: ['Square 1', 'Square 2', 'Triangle', 'Noise', 'DMC'],
+        tracks: [
+          ['Title', '0:53'],
+          ['Stage Select', '0:18'],
+          ['Flash Man Stage', '1:30'],
+          ['Wood Man Stage', '1:23'],
+          ['Air Man Stage', '1:43'],
+          ['Quick Man Stage', '1:29'],
+          ['Dr. Wily Stage 1', '2:40'],
+          ['Ending', '1:09']
         ]
       }
     ]

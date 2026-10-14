@@ -148,10 +148,13 @@ export class QueryEngine {
     const textPos = level === 'album' ? albumPos : trackPos
     const textNeg = level === 'album' ? albumNeg : trackNeg
 
+    /** A multi-word query: a lone letter/digit in it is a word ("mega man 2"), not a title initial. */
+    const multiWord = p.terms.length + p.excludes.length > 1
     /**
      * Route one text term. ≥3 characters: an FTS phrase. 2 non-CJK characters: an indexed
      * word-prefix phrase (docs are space-padded, so " ff" matches words starting with "ff").
-     * 1 character: game/album title starts with it (index range). Short CJK: LIKE on plain tables.
+     * 1 character: alone, game/album title starts with it (index range); among other words, that
+     * whole word (" 2 "). Short CJK: LIKE on plain tables.
      */
     const term = (raw: string, negate: boolean, col: 'any' | 'game' | 'composers' | 'franchise', onTrack: boolean) => {
       const t = ftsFold(raw)
@@ -162,6 +165,7 @@ export class QueryEngine {
       const colPrefix = col === 'any' ? '' : `{${col}} : `
       if (n >= 3) return void (negate ? neg : pos).push(colPrefix + phrase(t))
       if (n === 2 && !CJK.test(t)) return void (negate ? neg : pos).push(colPrefix + phrase(' ' + t))
+      if (n === 1 && !CJK.test(t) && multiWord && col === 'any') return void (negate ? neg : pos).push(phrase(' ' + t + ' '))
       // Short fallbacks on plain tables.
       const not = negate ? 'NOT ' : ''
       if (col === 'composers') {

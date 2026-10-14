@@ -232,7 +232,10 @@ const ADDED_COLUMNS: [string, string, string][] = [
   ['albums', 'game_key', 'TEXT'],
   // Play only [clip_start_ms, clip_end_ms) of the stream (a chapter of a full-OST video).
   ['sources', 'clip_start_ms', 'INTEGER'],
-  ['sources', 'clip_end_ms', 'INTEGER']
+  ['sources', 'clip_end_ms', 'INTEGER'],
+  // A song inside an archive (chiptune rip sets): the entry path and the 0-based sub-song.
+  ['sources', 'archive_entry', 'TEXT'],
+  ['sources', 'subsong', 'INTEGER']
 ]
 
 export function ensureCatalogSchema(db: DB): void {

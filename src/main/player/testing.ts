@@ -152,6 +152,14 @@ export class FakeEngine implements EngineBridge {
   cancelDownload(downloadId: string) {
     this.rec('cancelDownload', downloadId)
   }
+  voiceMask = 0
+  setVoiceMask(mask: number) {
+    this.rec('setVoiceMask', mask)
+    this.voiceMask = mask
+  }
+  voiceCount() {
+    return 0
+  }
   analysisShmName() {
     return ''
   }

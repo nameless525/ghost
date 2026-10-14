@@ -1,0 +1,82 @@
+{
+ "entries": [
+  {
+   "path": "01 Title.vgz",
+   "size": 29317
+  },
+  {
+   "path": "02 Opening.vgz",
+   "size": 19578
+  },
+  {
+   "path": "03 Stage 1, Final Stage.vgz",
+   "size": 25901
+  },
+  {
+   "path": "04 Stage 2.vgz",
+   "size": 49430
+  },
+  {
+   "path": "05 Stage 3.vgz",
+   "size": 22474
+  },
+  {
+   "path": "06 Stage 4.vgz",
+   "size": 24347
+  },
+  {
+   "path": "07 Boss Battle.vgz",
+   "size": 23767
+  },
+  {
+   "path": "08 Stage Clear.vgz",
+   "size": 12952
+  },
+  {
+   "path": "09 Ending.vgz",
+   "size": 26780
+  },
+  {
+   "path": "10 Game Over.vgz",
+   "size": 1451
+  },
+  {
+   "path": "11 Jingle 1.vgz",
+   "size": 11615
+  },
+  {
+   "path": "12 Jingle 2.vgz",
+   "size": 1499
+  },
+  {
+   "path": "Journey to Silius.txt",
+   "size": 1652
+  },
+  {
+   "path": "Journey to Silius.m3u",
+   "size": 214
+  },
+  {
+   "path": "Journey to Silius (E, A).png",
+   "size": 2307
+  },
+  {
+   "path": "Journey to Silius (U).png",
+   "size": 2449
+  },
+  {
+   "path": "Raf World.png",
+   "size": 2179
+  }
+ ],
+ "playlists": [
+  {
+   "path": "Journey to Silius.txt",
+   "text": "***********************************************\r\n* VGM music package                           *\r\n* http://vgmrips.net/                         *\r\n***********************************************\r\nGame name:           Journey to Silius\r\n                     (U, E, A) / Raf World (J)\r\nSystem:              Nintendo Entertainment\r\n                     System / Family Computer\r\nMusic hardware:      NES APU (N2A03)\r\n\r\nMusic author:        Naoki Kodaka\r\nGame developer:      Tokai Engineering\r\nGame publisher:      Sunsoft (U, E, J) /\r\n                     Mattel (A)\r\nGame release date:   1990-08-10\r\n\r\nPackage created by:  2ch-H\r\nPackage version:     1.00\r\n\r\nSong list, in approximate game order:\r\nSong name                           Length:\r\n                                    Total  Loop\r\n01 Title                            1:18   1:17\r\n02 Opening                          1:07   -\r\n03 Stage 1, Final Stage             1:07   0:56\r\n04 Stage 2                          3:42   3:24\r\n05 Stage 3                          0:51   0:51\r\n06 Stage 4                          1:11   0:51\r\n07 Boss Battle                      0:42   0:38\r\n08 Stage Clear                      0:05   -\r\n09 Ending                           1:23   -\r\n10 Game Over                        0:07   -\r\n11 Jingle 1                         0:03   -\r\n12 Jingle 2                         0:03   -\r\n\r\nTotal Length                       11:39  19:37\r\n\r\n\r\nNotes:\r\nTrack Names are used in\r\n Rom Cassette Disc In SUNSOFT.\r\n\r\nThis pack was made using MESS0148 VGM mod.\r\n\r\nSize reduction (vgm_cmp):\r\n    1.81 MB -> 842 KB  (45.4 %)\r\n\r\n\r\nPackage history:\r\n1.00 2015-06-15 2ch-H: Initial release.\r\n"
+  },
+  {
+   "path": "Journey to Silius.m3u",
+   "text": "01 Title.vgz\r\n02 Opening.vgz\r\n03 Stage 1, Final Stage.vgz\r\n04 Stage 2.vgz\r\n05 Stage 3.vgz\r\n06 Stage 4.vgz\r\n07 Boss Battle.vgz\r\n08 Stage Clear.vgz\r\n09 Ending.vgz\r\n10 Game Over.vgz\r\n11 Jingle 1.vgz\r\n12 Jingle 2.vgz\r\n"
+  }
+ ]
+}

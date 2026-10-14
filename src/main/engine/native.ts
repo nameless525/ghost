@@ -165,6 +165,12 @@ class NativeEngine implements EngineBridge {
   inspectArchive(source: EngineSource): Promise<ArchiveListing> {
     return this.native.inspectArchive(source)
   }
+  setVoiceMask(mask: number): void {
+    this.native.setVoiceMask(Number.isFinite(mask) && mask > 0 ? Math.floor(mask) : 0)
+  }
+  voiceCount(): number {
+    return this.native.voiceCount()
+  }
   cancelDownload(downloadId: string): void {
     this.native.cancelDownload(downloadId)
   }

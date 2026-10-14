@@ -38,7 +38,14 @@ export const DEFAULT_HOST_POLICIES: Record<string, HostPolicy> = {
   'downloads.khinsider.com': { concurrency: 2, spacingMs: 250 },
   'api.igdb.com': { concurrency: 2, spacingMs: 260 },
   'id.twitch.tv': { concurrency: 1, spacingMs: 1000 },
-  'www.steamgriddb.com': { concurrency: 1, spacingMs: 300 }
+  'www.steamgriddb.com': { concurrency: 1, spacingMs: 300 },
+  // Chiptune rip archives: listing pages only (archives go through the engine), gently.
+  'nsf.joshw.info': { concurrency: 1, spacingMs: 1500 },
+  'spc.joshw.info': { concurrency: 1, spacingMs: 1500 },
+  'gbs.joshw.info': { concurrency: 1, spacingMs: 1500 },
+  'hes.joshw.info': { concurrency: 1, spacingMs: 1500 },
+  'kss.joshw.info': { concurrency: 1, spacingMs: 1500 },
+  'vgmrips.net': { concurrency: 2, spacingMs: 1000 }
 }
 const FALLBACK_POLICY: HostPolicy = { concurrency: 4, spacingMs: 0 }
 

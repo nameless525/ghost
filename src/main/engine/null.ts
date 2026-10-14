@@ -92,6 +92,10 @@ export class NullEngine implements EngineBridge {
     this.emit({ type: 'download', downloadId, status: 'error', bytes: 0, totalBytes: null, error: `Audio engine unavailable: ${this.reason}` })
   }
   cancelDownload() {}
+  setVoiceMask() {}
+  voiceCount() {
+    return 0
+  }
   analysisShmName() {
     return ''
   }
