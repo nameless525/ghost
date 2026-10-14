@@ -8,12 +8,14 @@ import { installMockGhost } from './mock'
 import { initPlayerStore } from './state/player'
 import { initSettingsStore } from './state/settings'
 import { initFramePacing } from './motion/pacing'
+import { startRendererPerf } from './lib/perf'
 import App from './App'
 
 if (import.meta.env.GHOST_WEB_MOCK || !window.ghost) installMockGhost()
 initPlayerStore()
 initSettingsStore()
 initFramePacing()
+startRendererPerf()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

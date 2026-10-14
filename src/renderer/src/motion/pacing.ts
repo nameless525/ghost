@@ -16,7 +16,11 @@ let lastInput = performance.now()
 let focused = typeof document !== 'undefined' ? document.hasFocus() : true
 let started = false
 
+/** Debug/profiling override (window.__ghostPacing.override = fps | null). */
+let override: number | null = null
+
 function decide(): number {
+  if (override !== null) return override
   const playing = usePlayer.getState().status === 'playing'
   const interacting = performance.now() - lastInput < ACTIVE_MS
   if (focused && (interacting || playing)) return Infinity
@@ -75,5 +79,17 @@ export function initFramePacing(): void {
   window.setInterval(apply, 1000)
   apply()
   // Debug handle (devtools / scripts/cdp.mjs): frame rate, cap and pacing inputs.
-  ;(window as unknown as { __ghostPacing: unknown }).__ghostPacing = { ticker, get focused() { return focused }, get idleMs() { return performance.now() - lastInput } }
+  ;(window as unknown as { __ghostPacing: unknown }).__ghostPacing = {
+    ticker,
+    get focused() {
+      return focused
+    },
+    get idleMs() {
+      return performance.now() - lastInput
+    },
+    set override(v: number | null) {
+      override = v
+      apply()
+    }
+  }
 }

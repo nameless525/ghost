@@ -24,6 +24,8 @@ ipcRenderer.on(IPC_EVENT, (_e, name: string, payload: unknown) => {
 
 const api = {
   ...buildApi(),
+  /** Debug: main-process perf stats (not part of GhostAPI). */
+  __perf: (reset?: boolean) => ipcRenderer.invoke('ghost:perf', reset),
   analysis: createAnalysisReader(),
   on(event: GhostEventName, cb: (payload: unknown) => void) {
     let set = listeners.get(event)

@@ -1,7 +1,8 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { registerIpc, broadcast } from './ipc'
+import { perfStats, startMainPerf } from './perf'
 import { createServices, type ServicesHandle } from './services'
 import { handleArtProtocol, registerArtScheme } from './net/art-protocol'
 
@@ -47,11 +48,15 @@ function createWindow(preloadArgs: string[]): BrowserWindow {
   return win
 }
 
+startMainPerf()
+
 app.whenReady().then(async () => {
   handleArtProtocol()
   if (!app.isPackaged && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources/icon.png'))
   handle = await createServices(broadcast)
   registerIpc(handle.services)
+  // Debug: main-process stall / slow-SQL stats for profiling (scripts/cdp.mjs eval).
+  ipcMain.handle('ghost:perf', (_e, reset?: boolean) => perfStats(!!reset))
   createWindow(handle.preloadArgs)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(handle!.preloadArgs)
