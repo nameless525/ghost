@@ -92,8 +92,25 @@ const albums: Album[] = []
 const tracks: MockTrack[] = []
 const fixtureByGame = new Map<string, FixtureGame>()
 
+/** `?mockScale=N` pads the catalog with synthetic games, for virtualisation/perf work. */
+function scaledFixtures(): FixtureGame[] {
+  const n = Number(new URLSearchParams(location.search).get('mockScale') || 0)
+  if (!n || n <= FIXTURE_GAMES.length) return FIXTURE_GAMES
+  const A = ['Crystal', 'Neon', 'Silent', 'Iron', 'Lunar', 'Hollow', 'Eternal', 'Pixel', 'Shadow', 'Starlight', 'Sky', 'Ember', 'Frozen', 'Arcane', 'Wild', 'Final']
+  const B = ['Quest', 'Saga', 'Odyssey', 'Legends', 'Tactics', 'Drift', 'Knights', 'Frontier', 'Dungeon', 'Racer', 'Chronicle', 'Requiem', 'Heroes', 'Horizon', 'Echoes', 'Dreams']
+  const out = [...FIXTURE_GAMES]
+  const colors = ['#ff6b6b', '#4dd4ff', '#b48cff', '#7cff9e', '#ffd166', '#ff8fd1', '#6ee7ff', '#c3ff6b']
+  for (let i = out.length; i < n; i++) {
+    const h = hash('scale' + i)
+    const name = `${A[i % A.length]} ${B[Math.floor(i / A.length) % B.length]}${i >= A.length * B.length ? ' ' + (Math.floor(i / (A.length * B.length)) + 1) : ''}`
+    const tracks: [string, string][] = Array.from({ length: 8 }, (_, k) => [`${['Theme', 'Battle', 'Town', 'Field', 'Boss', 'Ending', 'Dungeon', 'Credits'][k]} ${k + 1}`, `${2 + Math.floor(hash(name + k) * 3)}:${String(Math.floor(hash(name + 'k' + k) * 59)).padStart(2, '0')}`])
+    out.push({ name, year: 1985 + Math.floor(h * 40), platforms: [['SNES', 'PS1', 'Genesis', 'Switch', 'Windows', 'GBA'][i % 6]], accent: colors[i % colors.length], accent2: '#120c20', albums: [{ title: `${name} Original Soundtrack`, kind: 'ost', year: 1985 + Math.floor(h * 40), composers: ['Composer ' + ((i % 37) + 1)], formats: ['mp3'], tracks }] })
+  }
+  return out
+}
+
 function buildCatalog() {
-  FIXTURE_GAMES.forEach((fg, gi) => {
+  scaledFixtures().forEach((fg, gi) => {
     const gameId = `g${gi + 1}`
     fixtureByGame.set(gameId, fg)
     const game: Game = {
@@ -171,21 +188,36 @@ function buildCatalog() {
 }
 
 function hydrateArt() {
-  // Generated lazily because canvas needs a document.
+  // Generated lazily because canvas needs a document. Synthetic (mockScale) games reuse a
+  // small pool of generated images so startup stays fast.
   for (const g of games) {
     const fg = fixtureByGame.get(g.id)!
-    g.cover = mockArt(g.id, fg.accent, fg.accent2, 512, 512)
-    g.hero = mockArt(g.id + 'hero', fg.accent, fg.accent2, 1600, 900)
+    const seed = Number(g.id.slice(1)) > FIXTURE_GAMES.length ? `pool${Number(g.id.slice(1)) % 24}` : g.id
+    g.cover = mockArt(seed, fg.accent, fg.accent2, 512, 512)
+    g.hero = mockArt(seed + 'hero', fg.accent, fg.accent2, 1600, 900)
   }
   for (const a of albums) {
     const fg = fixtureByGame.get(a.gameId!)!
-    a.cover = mockArt(a.id, fg.accent2, fg.accent, 512, 512)
+    const gn = Number(a.gameId!.slice(1))
+    a.cover = gn > FIXTURE_GAMES.length ? games[gn - 1].cover : mockArt(a.id, fg.accent2, fg.accent, 512, 512)
   }
+  const gameById = new Map(games.map((g) => [g.id, g]))
+  const albumById = new Map(albums.map((a) => [a.id, a]))
   for (const t of tracks) {
-    const g = games.find((x) => x.id === t.gameId)!
-    t.cover = albums.find((a) => a.id === t.albumId)!.cover
-    t.hero = g.hero
+    t.cover = albumById.get(t.albumId)!.cover
+    t.hero = gameById.get(t.gameId!)!.hero
   }
+}
+
+let haystacks: Map<string, string> | null = null
+function haystack(g: Game): string {
+  if (!haystacks) {
+    const parts = new Map<string, string[]>(games.map((x) => [x.id, [x.name, ...x.altNames, x.franchise ?? '', ...x.platforms]]))
+    for (const a of albums) parts.get(a.gameId!)?.push(a.title, ...a.composers)
+    for (const t of tracks) parts.get(t.gameId!)?.push(t.title)
+    haystacks = new Map([...parts].map(([id, p]) => [id, p.join(' ').toLowerCase()]))
+  }
+  return haystacks.get(g.id) ?? ''
 }
 
 const strip = (t: MockTrack): TrackView => {
@@ -197,16 +229,7 @@ function matches(text: string, g: Game): boolean {
   const q = text.trim().toLowerCase()
   if (!q) return true
   const free = q.split(/\s+/).filter((w) => !/[=<>]/.test(w))
-  const hay = [
-    g.name,
-    ...g.altNames,
-    g.franchise ?? '',
-    ...g.platforms,
-    ...albums.filter((a) => a.gameId === g.id).flatMap((a) => [a.title, ...a.composers]),
-    ...tracks.filter((t) => t.gameId === g.id).map((t) => t.title)
-  ]
-    .join(' ')
-    .toLowerCase()
+  const hay = haystack(g)
   return free.every((w) => hay.includes(w))
 }
 
@@ -532,6 +555,7 @@ export function installMockGhost(): void {
           const h = hash(id)
           tracks.push({ id, albumId, disc: 1, number: i + 1, title: `Track ${i + 1}`, titleOriginal: null, durationMs: 120000 + Math.round(h * 120000), composers: [], albumTitle: hit.title, albumKind: 'ost', gameId, gameName: name, year: null, platforms: [], cover: albums[albums.length - 1].cover, hero: games[games.length - 1].hero, accent, liked: false, downloaded: false, source: { provider: hit.provider, format: 'm4a', lossless: false, bitrateKbps: 128, confidence: 0.8 }, analysis: { bpm: 120, intensity: 1 + h * 5, lufs: -14 }, bpm: Math.round(90 + h * 60), intensityStars: Math.round((1 + h * 5) * 100) / 100 })
         }
+        haystacks = null
         catalogStatus.games = games.length
         catalogStatus.albums = albums.length
         catalogStatus.revision = (catalogStatus.revision ?? 0) + 1
