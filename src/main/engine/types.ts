@@ -4,16 +4,27 @@
 //
 // Contract between the engine workstream and the player workstream: change additively.
 
+/** Optional addressing inside a source, shared by both kinds. */
+export interface EngineSourceExtras {
+  /** Play only [clipStartMs, clipEndMs) of the stream (e.g. one chapter of a full-OST video). */
+  clipStartMs?: number
+  clipEndMs?: number
+  /** Sub-song index for multi-song chiptune files (NSF, GBS, HES, KSS, …). 0-based. */
+  subsong?: number
+  /** Path of the entry to play inside an archive source (.zip / .7z rip sets). */
+  archiveEntry?: string
+}
+
 export type EngineSource =
-  | {
+  | ({
       kind: 'http'
       url: string
       headers?: Record<string, string>
       /** Stable key for the on-disk stream cache (e.g. 'khinsider:<album>/<file>'). */
       cacheKey: string
       formatHint?: string
-    }
-  | { kind: 'file'; path: string; formatHint?: string }
+    } & EngineSourceExtras)
+  | ({ kind: 'file'; path: string; formatHint?: string } & EngineSourceExtras)
 
 export interface EngineTrack {
   /** Opaque id chosen by the main process (we use the queue item uid). */
