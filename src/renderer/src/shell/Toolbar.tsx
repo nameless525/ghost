@@ -209,7 +209,8 @@ function Clock() {
     t = window.setTimeout(tick, 60000 - (Date.now() % 60000) + 20)
     return () => window.clearTimeout(t)
   }, [])
-  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  // 'numeric' hours: "3:27 PM" rather than "03:27 PM" (24-hour locales still get "15:27")
+  const time = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
   const date = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
   return (
     <Tooltip content={date}>

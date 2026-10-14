@@ -7,7 +7,7 @@ import { sfx } from '../../sound'
 import { SearchInput, type SearchInputHandle } from '../../ui/SearchInput'
 import { cx } from '../../ui/util'
 
-export const QUERY_EXAMPLES: { query: string; label: string }[] = [
+const QUERY_EXAMPLES: { query: string; label: string }[] = [
   { query: 'platform=snes intensity>5', label: 'SNES bangers' },
   { query: 'composer=uematsu', label: 'Uematsu' },
   { query: 'liked=true', label: 'Everything liked' },
@@ -18,7 +18,7 @@ export const QUERY_EXAMPLES: { query: string; label: string }[] = [
 ]
 
 /** Highlighted mirror of `text`: every character is reproduced exactly, wrapped in token spans. */
-export function highlightQuery(text: string, parsed?: ParsedSearch): ReactNode {
+function highlightQuery(text: string, parsed?: ParsedSearch): ReactNode {
   const p = parsed ?? parseSearch(text)
   const out: ReactNode[] = []
   let pos = 0
@@ -41,7 +41,7 @@ export function QueryText({ query, className }: { query: string; className?: str
 }
 
 /** A short human summary of the parsed filters: chips like "platform = snes". */
-export function QuerySummary({ parsed }: { parsed: ParsedSearch }) {
+function QuerySummary({ parsed }: { parsed: ParsedSearch }) {
   if (parsed.empty && !parsed.errors.length) return null
   return (
     <div className="lx-qsum">

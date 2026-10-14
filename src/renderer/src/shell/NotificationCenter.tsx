@@ -48,7 +48,7 @@ export default function NotificationCenter(_props: OverlayProps) {
                 <CoverArt src={n.image} size={36} radius={8} />
               ) : (
                 <span className="g-toast__glyph">
-                  {n.kind === 'success' ? <CircleCheck /> : n.kind === 'error' ? <CircleAlert /> : n.kind === 'progress' ? <LoaderCircle /> : <Info />}
+                  {n.kind === 'success' ? <CircleCheck /> : n.kind === 'error' ? <CircleAlert /> : n.kind === 'progress' ? <LoaderCircle className={cx((n.progress ?? 0) < 1 && 'g-toast__spin')} /> : <Info />}
                 </span>
               )}
             </div>

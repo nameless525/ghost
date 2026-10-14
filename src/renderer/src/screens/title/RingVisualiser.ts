@@ -43,8 +43,9 @@ export class RingVisualiser {
   /**
    * @param radius inner radius (css px) where bars start
    * @param rgb bar colour
+   * @param notch 0..1: shorten the bars at the bottom of the ring, where the wordmark sits
    */
-  draw(dt: number, now: number, f: AnalysisFrame | null, radius: number, rgb: readonly number[], kiai: number, pulse: number, playing: boolean): void {
+  draw(dt: number, now: number, f: AnalysisFrame | null, radius: number, rgb: readonly number[], kiai: number, pulse: number, playing: boolean, notch = 0): void {
     const { ctx, size, dpr } = this
     if (!size) return
     const decay = Math.exp(-dt / 150)
@@ -94,11 +95,13 @@ export class RingVisualiser {
     for (let side = -1; side <= 1; side += 2) {
       for (let j = 0; j < PER_SIDE; j++) {
         const shimmer = this.idle * radius * (0.012 + 0.012 * (1 + Math.sin(t * 1.6 + j * 0.45 + (side > 0 ? 0 : 2.1))))
-        const len = amp[j] * maxLen + shimmer
-        if (len < 0.4) continue
         const theta = -Math.PI / 2 + side * (j + 0.5) * step + this.rot
         const cx = Math.cos(theta)
         const cy = Math.sin(theta)
+        // a soft dip around the bottom (cy → 1) keeps the bars out of the wordmark
+        const dip = notch > 0 && cy > 0 ? notch * 0.75 * cy ** 6 : 0
+        const len = amp[j] * maxLen * (1 - dip) + shimmer
+        if (len < 0.4) continue
         const r0 = radius
         const r1 = radius + len
         const nx = -cy * hw

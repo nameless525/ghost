@@ -214,7 +214,8 @@ function PromptBody({ o, onDone }: { o: PromptOptions; onDone: (v: string | null
   }
   return (
     <>
-      <div className="g-dialog__body" style={{ paddingTop: 2 }}>
+      {/* indented under the title like every other dialog body (the prompt always has an icon) */}
+      <div className="g-dialog__body g-dialog__body--indented" style={{ paddingTop: 2 }}>
         {o.body && <div style={{ marginBottom: 10 }}>{o.body}</div>}
         <label className="g-field">
           {o.label && <span className="g-field__label">{o.label}</span>}

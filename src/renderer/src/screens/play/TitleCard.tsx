@@ -1,6 +1,6 @@
 // The big title card shown when the Play screen opens (and on every track change): cover,
 // title, game, album, composers and stats. It covers the buffering time, then the screen
-// FLIPs its cover/title/game into the compact HUD block (see glideCardToMeta in index.tsx).
+// FLIPs its cover/title/game into the compact HUD block (see glide() in index.tsx).
 // Elements tagged data-flip="cover|title|game" travel; data-fade ones just leave.
 import { forwardRef } from 'react'
 import type { PlayStatus, TrackView } from '@shared/types'
@@ -59,7 +59,9 @@ export const TitleCard = forwardRef<HTMLDivElement, TitleCardProps>(function Tit
             {track.gameName ?? track.albumTitle}
           </div>
           <div className="pl-card__album" data-fade>
-            {track.albumTitle}
+            <span className="pl-card__album-name" title={track.albumTitle}>
+              {track.albumTitle}
+            </span>
             {year && <span className="pl-card__year">{year}</span>}
             {track.platforms.length > 0 && <span className="pl-card__year">{track.platforms.join(' · ')}</span>}
           </div>

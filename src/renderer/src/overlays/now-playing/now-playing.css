@@ -143,6 +143,7 @@
   margin-top: 5px;
 }
 .np-chip {
+  flex: none;
   display: inline-flex;
   align-items: center;
   height: 18px;

@@ -39,7 +39,8 @@
 .np-queue__now {
   position: relative;
   height: 52px;
-  margin: 0 10px 6px;
+  /* right: the list's padding plus its stable 10px scrollbar gutter, so the columns line up */
+  margin: 0 20px 6px 10px;
 }
 .np-queue__scroll {
   position: relative;
@@ -187,7 +188,8 @@
     background-color var(--dur-hover);
 }
 .np-q-row:hover .np-q-row__actions .g-icon-btn,
-.np-q-row:focus-visible .np-q-row__actions .g-icon-btn {
+.np-q-row:focus-visible .np-q-row__actions .g-icon-btn,
+.np-q-row__actions .g-icon-btn:focus-visible {
   opacity: 1;
 }
 .np-q-row__grip {

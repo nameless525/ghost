@@ -35,7 +35,6 @@ import './now-playing.css'
 /** Props: open, phase ('entering' | 'open' | 'exiting' | 'closed'), close(), hue. */
 export type NowPlayingOverlayProps = OverlayProps
 
-
 const STATUS_LABEL: Record<string, string> = {
   playing: 'Now playing',
   paused: 'Paused',
@@ -96,7 +95,12 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
   }
 
   const art = artUrl(current.hero ?? current.cover, { w: 460 })
-  const sub = [current.gameName, current.albumTitle].filter(Boolean).join(' · ')
+  // "Game · Game: The Original Soundtrack" says it twice: the album alone when it names the game
+  const game = current.gameName
+  const album = current.albumTitle
+  const sub = game && album && !album.toLowerCase().includes(game.toLowerCase()) ? `${game} · ${album}` : album || game || ''
+  // the context is news only when it isn't the album already on the line below
+  const ctx = context && context.title.trim().toLowerCase() !== album.trim().toLowerCase() ? context.title : null
 
   return (
     <div className="np-root">
@@ -112,7 +116,7 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
           <div className="np-hero__text">
             <div className="np-hero__eyebrow g-caps">
               <span className={cx('np-hero__status', playing && 'np-hero__status--live')}>{STATUS_LABEL[status] ?? 'Now playing'}</span>
-              {context && <span className="np-hero__ctx g-ellipsis">{context.title}</span>}
+              {ctx && <span className="np-hero__ctx g-ellipsis">{ctx}</span>}
             </div>
             <Marquee className="np-hero__title" speed={34} paused={!open || !playing} pauseOnHover>
               {current.title}

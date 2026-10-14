@@ -1228,8 +1228,10 @@
 /* =========================================================================
  * Badges
  * ========================================================================= */
+/* badges never shrink: squeezed in a flex row next to long text, the ★ used to collapse away */
 .g-intensity {
   --ic: #4290fb;
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -1247,6 +1249,7 @@
   transition: box-shadow 200ms var(--ease-out-quint);
 }
 .g-intensity svg {
+  flex: none;
   width: 11px;
   height: 11px;
   fill: currentColor;
@@ -1284,6 +1287,7 @@
 
 .g-source {
   --sc: var(--fg-2);
+  flex: none;
   display: inline-flex;
   align-items: center;
   height: 18px;
@@ -1391,8 +1395,12 @@
 .g-marquee__item {
   flex: none;
 }
+/* The left fade sits in a gutter outside the text box (negative margin + padding, same content
+   width), so at rest the first glyph is crisp and only text scrolling away fades out. */
 .g-marquee--overflow {
-  mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 18px), transparent 100%);
+  margin-left: -8px;
+  padding-left: 8px;
+  mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 18px), transparent 100%);
 }
 .g-marquee--overflow .g-marquee__track {
   animation: g-marquee var(--mq-dur, 10s) linear infinite;

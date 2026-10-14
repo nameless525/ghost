@@ -397,7 +397,10 @@ function QueueRowView({
         </span>
       </span>
       <span className="np-q-row__dur tnum">{t.durationMs ? formatTime(t.durationMs) : ''}</span>
-      {!pinned && !overlay && (
+      {pinned || overlay ? (
+        // keeps the duration column aligned with the list rows
+        <span className="np-q-row__actions" aria-hidden />
+      ) : (
         <span className="np-q-row__actions">
           {!current && (
             <IconButton

@@ -4,7 +4,9 @@
 import { forwardRef, useEffect, useRef, type Ref } from 'react'
 import { GHOST_BODY_PATH } from '../../ui/GhostMark'
 
-const RING_TEXT = 'GAME HAVEN OST  ✦  STREAM ANY SOUNDTRACK  ✦  '
+// SVG text collapses runs of spaces and trims the trailing one, which jammed the last ✦ against
+// "GAME" where the ring closes: single spaces, and a no-break space for the seam.
+const RING_TEXT = 'GAME HAVEN OST ✦ STREAM ANY SOUNDTRACK ✦\u00a0'
 
 export interface GhostLogoProps {
   /** Receives the rotating text ring (rotate it while playing). */

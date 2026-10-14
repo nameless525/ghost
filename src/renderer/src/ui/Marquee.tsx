@@ -28,7 +28,9 @@ export function Marquee({ children, speed = 36, gap = 48, pauseOnHover, paused, 
     const f = first.current
     if (!r || !f) return
     const measure = () => {
-      const over = f.scrollWidth - r.clientWidth
+      // an overflowing marquee pads its left edge for the fade gutter (see ui.css): measure the text box
+      const gutter = parseFloat(getComputedStyle(r).paddingLeft) || 0
+      const over = f.scrollWidth - (r.clientWidth - gutter)
       setOverflow(over > 2 ? f.scrollWidth : 0)
     }
     measure()

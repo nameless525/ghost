@@ -672,6 +672,12 @@
 .tl-head .tl-c--len {
   justify-items: end;
 }
+/* the row cell rules below (#, album, length) set their own size and colour: the header keeps
+   its small caps for every column */
+.tl-head .tl-c {
+  color: inherit;
+  font-size: inherit;
+}
 .tl-body {
   position: relative;
   margin-top: 6px;
@@ -1024,9 +1030,14 @@
   height: 16px;
   fill: currentColor;
 }
-.lib-hist__row:hover .lib-hist__play {
+.lib-hist__row:hover .lib-hist__play,
+.lib-hist__play:focus-visible {
   opacity: 1;
   transform: none;
+}
+/* the row's only tab stop is its (hover-revealed) play button: light the row for keyboard users */
+.lib-hist__row:has(.lib-hist__play:focus-visible) {
+  background: rgb(255 255 255 / 0.045);
 }
 .lib-hist__title {
   display: flex;
@@ -1202,6 +1213,8 @@
 }
 .lx-qex__chip .lx-qtext {
   font-size: var(--fs-xs);
+  /* the token tints bleed 2px each side: keep a visible gap between filters */
+  word-spacing: 0.3em;
 }
 .lx-qex__chip:hover {
   background: rgb(255 255 255 / 0.08);

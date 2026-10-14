@@ -148,6 +148,7 @@ export default function TitleScreen(props: ScreenProps) {
     let angle = 0
     let speed = 0
     let drift = 0
+    let notch = expandedRef.current ? 0 : 1
     const rgb = [0, 0, 0]
     const release = beat.retain()
     const off = ticker.add((dt, now) => {
@@ -176,7 +177,9 @@ export default function TitleScreen(props: ScreenProps) {
         rgb[0] = 255 - (255 - a[0]) * 0.35
         rgb[1] = 255 - (255 - a[1]) * 0.35
         rgb[2] = 255 - (255 - a[2]) * 0.35
-        vis.draw(dt, now, frame(), sizeRef.current / 2 + 5, rgb, beat.kiai, beat.pulse, playing)
+        // the wordmark under the logo shows only while the menu is collapsed
+        notch = damp(notch, expandedRef.current ? 0 : 1, 300, dt)
+        vis.draw(dt, now, frame(), sizeRef.current / 2 + 5, rgb, beat.kiai, beat.pulse, playing, notch)
       }
     }, TickPriority.normal)
     return () => {

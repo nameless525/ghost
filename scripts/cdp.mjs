@@ -8,6 +8,7 @@
 //   node scripts/cdp.mjs click <x> <y>                 click at CSS px
 //   node scripts/cdp.mjs wheel <x> <y> <dy>            mouse wheel at CSS px (dy > 0 scrolls down)
 //   node scripts/cdp.mjs logs                          print buffered console errors (installs hook)
+//   node scripts/cdp.mjs viewport <w> <h> [secs]       emulate a smaller window while it runs (background it)
 import { writeFileSync } from 'node:fs'
 
 const port = process.env.CDP_PORT || 9223
@@ -68,6 +69,18 @@ if (cmd === 'eval') {
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
   await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy })
   console.log('wheel', x, y, dy)
+} else if (cmd === 'viewport') {
+  // Emulated overrides only live as long as this DevTools session: hold it open (run it in the
+  // background; other commands see the emulated size), Ctrl-C or the timeout restores the window.
+  const [w, h, secs = 600] = args.map(Number)
+  await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 0, mobile: false })
+  console.log('viewport', w, h, `for ${secs}s`)
+  await new Promise((r) => {
+    const t = setTimeout(r, secs * 1000)
+    process.once('SIGINT', () => (clearTimeout(t), r()))
+    process.once('SIGTERM', () => (clearTimeout(t), r()))
+  })
+  await send('Emulation.clearDeviceMetricsOverride')
 } else if (cmd === 'logs') {
   const r = await send('Runtime.evaluate', {
     returnByValue: true,
