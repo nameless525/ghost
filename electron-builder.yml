@@ -1,0 +1,33 @@
+appId: dev.ghost.app
+productName: GHOST
+copyright: GHOST — Game Haven OST (private build)
+directories:
+  output: release/${version}
+  buildResources: resources/build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - "**/*.node"
+extraResources:
+  - from: native/dist/ghost.node
+    to: native/ghost.node
+mac:
+  category: public.app-category.music
+  target:
+    - target: dmg
+      arch: [arm64]
+  icon: resources/build/icon.icns
+  # Private build: ad-hoc signed, not notarized.
+  identity: null
+  extendInfo:
+    NSMicrophoneUsageDescription: GHOST does not use the microphone.
+linux:
+  category: Audio
+  target: [AppImage]
+  icon: resources/build/icons
+win:
+  target: [nsis]
+  icon: resources/build/icon.ico
+nsis:
+  oneClick: true

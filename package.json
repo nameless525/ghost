@@ -2,7 +2,7 @@
   "name": "ghost",
   "productName": "GHOST",
   "version": "0.1.0",
-  "description": "GHOST — Game Haven OST. Stream any video game soundtrack.",
+  "description": "GHOST \u2014 Game Haven OST. Stream any video game soundtrack.",
   "main": "./out/main/index.js",
   "type": "module",
   "private": true,
@@ -14,7 +14,9 @@
     "build:native": "node scripts/build-native.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "add-dep": "node scripts/add-dep.mjs"
+    "add-dep": "node scripts/add-dep.mjs",
+    "dist": "npm run build:native && electron-vite build && electron-builder",
+    "dist:dir": "npm run build:native && electron-vite build && electron-builder --dir"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -25,6 +27,7 @@
     "cheerio": "^1.2.0",
     "lucide-react": "^1.57.0",
     "motion": "^14.2.0",
+    "music-metadata": "^12.2.0",
     "nanoid": "^6.0.2",
     "pixi.js": "^8.22.0",
     "react": "^19.3.0",
@@ -38,6 +41,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.7",
