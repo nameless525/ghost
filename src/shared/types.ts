@@ -188,6 +188,30 @@ export interface CatalogStatus {
    * enrichment). Refetch the visible page when it moves. Optional for older mocks.
    */
   revision?: number
+  /** Every indexed source and what its crawl is doing (catalog activity UI). Optional for older mocks. */
+  sources?: SourceIndexStatus[]
+  /** A source is being added for the first time (one-time setup) rather than refreshed. */
+  setup?: boolean
+  /** Rough time left for everything queued or running (ms), when it can be estimated. */
+  etaMs?: number | null
+}
+
+/** One indexed source's crawl, for the catalog activity UI. */
+export interface SourceIndexStatus {
+  id: string
+  name: string
+  /** waiting: queued behind other crawls; running; idle: index current; off: source disabled. */
+  state: 'waiting' | 'running' | 'idle' | 'off'
+  /** The queued / running crawl is this source's first complete read (one-time setup). */
+  initial: boolean
+  /** 0..1 while running. */
+  progress: number | null
+  /** Where the crawl is ("PS1 3/7"). */
+  detail: string | null
+  etaMs: number | null
+  lastIndexedAt: number | null
+  /** How often the source is re-read in the background. */
+  refreshEveryMs: number
 }
 
 /** One catalog source in Settings → Sources: how much of the catalog it contributes. */

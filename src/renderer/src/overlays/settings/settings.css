@@ -1021,3 +1021,8 @@
   text-align: center;
   padding: 8px 0 0;
 }
+
+/* per-source crawl state under the catalog tiles (rows styled by browse.css .ca-*) */
+.set-cat__sources {
+  margin: 12px 0 4px;
+}

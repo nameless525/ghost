@@ -826,6 +826,15 @@ export class CatalogRepo {
    * connection) never wait long for the lock.
    */
   async reclusterAll(yieldFn: () => Promise<void> = writerPause): Promise<void> {
+    // Crawls of several sources can end together: one full pass at a time, the later one sees all
+    // of the earlier one's writes.
+    const run = this.reclusterQueue.then(() => this.reclusterOnce(yieldFn))
+    this.reclusterQueue = run.catch(() => {})
+    return run
+  }
+  private reclusterQueue: Promise<void> = Promise.resolve()
+
+  private async reclusterOnce(yieldFn: () => Promise<void>): Promise<void> {
     const slice = timeSlicer(yieldFn)
     type Row = { id: number; title: string; kind: AlbumKind; game_id: number | null; game_key: string | null }
     const rows: Row[] = []

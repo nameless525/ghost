@@ -317,32 +317,67 @@ describe('several index sources', () => {
     } as never
   }
 
-  it('crawls the main source first, then each other source once; re-index re-reads all of them', async () => {
+  it('crawls KHInsider first, then the other sources together (after-others ones last); notices and status say it is one-time setup', async () => {
     const calls: string[] = []
+    const notes: { id: string; kind: string; title: string }[] = []
+    const statuses: CatalogStatus[] = []
     const settings: Settings = defaultSettings('/tmp/ghost-dl')
-    const primary = fakeIndex('main', [['Chrono Trigger OST', 'Hollow Knight OST'], ['Ys OST']], calls)
+    const main = fakeIndex('khinsider', [['Chrono Trigger OST', 'Hollow Knight OST'], ['Ys OST']], calls)
     const extra = fakeIndex('extra', [['Chrono Trigger (Gamerip)', 'Mother 3 (Gamerip)', '?Hollow Knight (NSF cover)', '?My Chiptune Album']], calls)
+    const other = fakeIndex('other', [['Ys (Arranged)'], ['Ys II OST']], calls)
+    const late = Object.assign(fakeIndex('late', [['?Mother 3 (NSF)', '?Unknown Tune']], calls), { indexAfterOthers: true })
     const muted = fakeIndex('muted', [['Never Crawled']], calls)
     const svc = createCatalogService(
-      { db: memoryDb(), broadcast: (() => {}) as never, getSettings: () => ({ ...settings, sources: { ...settings.sources, disabled: ['muted'] } }) },
-      { registry: new ProviderRegistry().register(primary).register(extra).register(muted), startDelayMs: 0, crawlPageDelayMs: 0, disableEnrichment: true, chip: false, log: () => {} }
+      {
+        db: memoryDb(),
+        broadcast: ((e: string, p: unknown) => {
+          if (e === 'notify') notes.push(p as never)
+          if (e === 'catalog:status') statuses.push(p as CatalogStatus)
+        }) as never,
+        getSettings: () => ({ ...settings, sources: { ...settings.sources, disabled: ['muted'] } })
+      },
+      { registry: new ProviderRegistry().register(extra).register(main).register(other).register(late).register(muted), startDelayMs: 0, crawlPageDelayMs: 0, disableEnrichment: true, chip: false, log: () => {} }
     )
     svc.start()
-    await until(() => calls.includes('extra:1'))
+    await until(() => calls.includes('late:1'))
     await until(async () => !(await svc.status()).indexing)
-    expect(calls).toEqual(['main:1', 'main:2', 'extra:1'])
+    // KHInsider alone first; then extra + other interleaved (together); 'late' after both
+    expect(calls.slice(0, 2)).toEqual(['khinsider:1', 'khinsider:2'])
+    expect(new Set(calls.slice(2, 5))).toEqual(new Set(['extra:1', 'other:1', 'other:2']))
+    expect(calls.at(-1)).toBe('late:1')
+    expect(calls).not.toContain('muted:1')
     const games = await svc.browse({ text: '', group: 'game', sort: 'title', offset: 0, limit: 10 })
-    // the second source's Chrono Trigger rip joins the existing game; Mother 3 is new
+    // the second source's Chrono Trigger rip joins the existing game; "late" only kept Mother 3 (known)
     expect(games.groups.map((g) => [g.title, g.albumCount])).toEqual([
       ['Chrono Trigger', 2],
       ['Hollow Knight', 2],
-      ['Mother 3', 1],
-      ['Ys', 1]
+      ['Mother 3', 2],
+      ['Ys', 2],
+      ['Ys II', 1]
     ])
+    // one "setting up" notice, updated in place to "ready"
+    await until(() => notes.length >= 2)
+    expect(notes.map((n) => [n.id, n.kind])).toEqual([
+      ['catalog-setup', 'info'],
+      ['catalog-setup', 'success']
+    ])
+    // status listed the sources with their state while it ran
+    const mid = statuses.find((x) => x.sources?.some((y) => y.id === 'extra' && y.state === 'running'))!
+    expect(mid.setup).toBe(true)
+    expect(mid.sources!.find((y) => y.id === 'khinsider')!.state).toBe('idle')
+    expect(mid.sources!.find((y) => y.id === 'muted')!.state).toBe('off')
+    expect((await svc.status()).sources!.every((y) => y.state === 'idle' || y.state === 'off')).toBe(true)
+
+    // re-index: everything re-read, in the same order; a refresh, not a setup
     calls.length = 0
+    notes.length = 0
     await svc.reindex()
-    await until(() => calls.includes('extra:1'))
-    expect(calls).toEqual(['main:1', 'main:2', 'extra:1'])
+    await until(() => calls.includes('late:1'))
+    await until(async () => !(await svc.status()).indexing)
+    expect(calls.slice(0, 2)).toEqual(['khinsider:1', 'khinsider:2'])
+    expect(calls.at(-1)).toBe('late:1')
+    await new Promise((r) => setTimeout(r, 1200))
+    expect(notes).toEqual([])
     svc.stop()
-  })
+  }, 20_000)
 })

@@ -1081,13 +1081,42 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  margin-right: -8px;
+  padding: 0 8px;
+  border-radius: 12px;
   color: var(--fg-2);
+  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  transition: background-color var(--dur-hover) var(--ease-out-quint);
+}
+.bs__indexing:hover,
+.bs__indexing[aria-expanded='true'] {
+  background: rgb(var(--accent-rgb) / 0.12);
+  color: var(--fg-1);
 }
 .bs__indexing b {
   color: var(--accent-hi);
 }
+.bs__setup {
+  color: var(--accent-hi);
+  font-weight: var(--fw-semibold);
+}
+.bs__names {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bs__eta {
+  color: var(--fg-3);
+}
+.bs__sep {
+  margin: 0 -2px;
+  color: var(--fg-4);
+}
+
 .bs__pulse {
   width: 7px;
   height: 7px;

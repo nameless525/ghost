@@ -38,6 +38,7 @@ import { Toggle } from '../../ui/Toggle'
 import { cx } from '../../ui/util'
 import { leavingStyle, relativeTime, useAnimatedList, useNow } from '../library/common'
 import { Highlight, patchSettings, Row, SearchContext, SecretField, SettingSlider } from './controls'
+import { ActivityNote, SourceActivityList } from '../../screens/browse/CatalogActivity'
 import { ProviderList } from './ProviderList'
 
 export type SectionId = 'audio' | 'sources' | 'library' | 'interface' | 'integrations' | 'catalog' | 'about'
@@ -612,6 +613,12 @@ function CatalogPanel() {
           </div>
         ))}
       </div>
+      {st?.sources && st.sources.length > 0 && (
+        <div className="set-cat__sources">
+          <SourceActivityList sources={st.sources.filter((x) => x.state !== 'off')} />
+          {indexing && <ActivityNote status={st} />}
+        </div>
+      )}
       <div className={cx('set-cat__progress', indexing && 'set-cat__progress--on')}>
         <div className="set-cat__progress-inner">
           <div className="set-cat__progress-row">

@@ -1,0 +1,114 @@
+/* Catalog activity: the popover from Browse's status line, and the per-source rows Settings reuses. */
+.ca-pop {
+  width: 380px;
+  max-height: none;
+  padding: 14px 14px 12px;
+  animation: g-pop-in 160ms var(--ease-out-quint) both;
+}
+.ca-pop__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.ca-pop__title {
+  color: var(--fg-0);
+  font-weight: var(--fw-bold);
+}
+.ca-pop__eta {
+  color: var(--accent-hi);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+.ca-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ca-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.03);
+}
+.ca-row--running {
+  background: rgb(var(--accent-rgb) / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.25);
+}
+.ca-row--off {
+  opacity: 0.55;
+}
+.ca-row__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--fg-3);
+}
+.ca-row--running .ca-row__icon {
+  color: var(--accent-hi);
+}
+.ca-row--idle .ca-row__icon {
+  color: var(--success);
+}
+.ca-row__icon svg {
+  width: 15px;
+  height: 15px;
+}
+.ca-spin {
+  animation: ca-spin 1.4s linear infinite;
+}
+@keyframes ca-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ca-row__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ca-row__name {
+  color: var(--fg-1);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+}
+.ca-row__state {
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+.ca-row__bar {
+  position: relative;
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.08);
+  overflow: hidden;
+}
+.ca-row__fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  background: var(--accent);
+  transition: transform 600ms var(--ease-out-quint);
+}
+.ca-note {
+  margin: 10px 2px 0;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.ca-note b {
+  color: var(--fg-1);
+}

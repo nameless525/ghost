@@ -49,7 +49,7 @@ export const ZOPHAR_FILES_BASE = 'https://fi.zophar.net/soundfiles'
 /** Rows per platform listing page. */
 export const ZOPHAR_PAGE_SIZE = 200
 export const ZOPHAR_INDEX_REFRESH_MS = 14 * DAY
-export const ZOPHAR_PAGE_DELAY_MS = 1500
+export const ZOPHAR_PAGE_DELAY_MS = 1000
 
 /** First path segments under /music/ that are not platforms. */
 const NON_PLATFORM_SLUGS = new Set(['letter', 'developer', 'publisher', 'year', 'popular', 'search'])
@@ -585,6 +585,7 @@ export class ZopharProvider implements IndexProvider {
   readonly indexRefreshMs = ZOPHAR_INDEX_REFRESH_MS
   /** A small hobby site: one listing page every ~1.5 s (≈120 pages, about 4 minutes). */
   readonly indexPageDelayMs = ZOPHAR_PAGE_DELAY_MS
+  readonly indexEstimateMs = 3 * 60_000
 
   constructor(private http: HttpClient) {}
 

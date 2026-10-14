@@ -45,6 +45,12 @@ export class Crawler {
   running = false
   progress: number | null = null
   message: string | null = null
+  /** The running (or last) job is this source's first complete read, not a periodic refresh. */
+  initial = false
+  /** Where the running crawl is ("PS1 3/7"). */
+  detail: string | null = null
+  /** Rough time left for the running crawl, from its page rate (null until a few pages are in). */
+  etaMs: number | null = null
   private abort: AbortController | null = null
   private now: () => number
 
@@ -75,6 +81,24 @@ export class Crawler {
     return last == null || this.now() - last > maxAgeMs
   }
 
+  /** How often this source is re-read. */
+  get refreshEveryMs(): number {
+    return this.deps.provider.indexRefreshMs ?? INDEX_MAX_AGE_MS
+  }
+
+  /** Whether start() would crawl: an interrupted job to resume, a forced re-read, or a stale index. */
+  wants(force = false): boolean {
+    if (this.running) return false
+    if (this.deps.repo.get(`SELECT 1 AS x FROM crawl_jobs WHERE provider = ? AND status = 'running' LIMIT 1`, this.deps.provider.id)) return true
+    return force || this.isStale()
+  }
+
+  /** Whether the next crawl would be this source's first complete read. */
+  wouldBeInitial(): boolean {
+    const job = this.deps.repo.get<{ initial: number }>(`SELECT initial FROM crawl_jobs WHERE provider = ? AND status = 'running' ORDER BY id DESC LIMIT 1`, this.deps.provider.id)
+    return job ? job.initial === 1 : this.lastFinished() == null
+  }
+
   /** Start (or resume) a crawl. Returns false if one is running or nothing needs doing. */
   start(opts: { force?: boolean } = {}): boolean {
     if (this.running) return false
@@ -90,6 +114,9 @@ export class Crawler {
     this.running = true
     this.abort = new AbortController()
     this.progress = 0
+    this.initial = job.initial === 1
+    this.detail = null
+    this.etaMs = null
     this.message = `${this.verb(job)}…`
     this.deps.onProgress()
     void this.run(job, this.abort.signal)
@@ -100,6 +127,8 @@ export class Crawler {
       .finally(() => {
         this.running = false
         this.progress = null
+        this.detail = null
+        this.etaMs = null
         this.abort = null
         this.deps.onProgress()
       })
@@ -158,6 +187,8 @@ export class Crawler {
     const pageRow = (section: string, page: number) =>
       repo.get<{ total_pages: number | null; fetched_at: number | null }>(`SELECT total_pages, fetched_at FROM crawl_pages WHERE job_id = ? AND section = ? AND page = ?`, job.id, section, page)
 
+    const runStart = this.now()
+    let fetched = 0
     for (const section of sections) {
       let page = 1
       let failures = 0
@@ -226,7 +257,12 @@ export class Crawler {
           totalPages = res.totalPages
           const est = this.estimate(job.id, sections)
           this.progress = Math.min(0.99, est.done / est.total)
-          this.message = `${this.verb(job)}… ${section.label} ${page}/${Math.min(totalPages, this.cap(section))}`
+          fetched++
+          const elapsed = this.now() - runStart
+          // Page rate of this run (resumed pages don't count); judged after a few pages.
+          this.etaMs = fetched >= 3 && elapsed > 0 ? Math.round(((est.total - est.done) * elapsed) / fetched) : null
+          this.detail = `${section.label} ${page}/${Math.min(totalPages, this.cap(section))}`
+          this.message = `${this.verb(job)}… ${this.detail}`
           this.deps.onProgress()
           if (this.deps.pageDelayMs) await this.wait(this.deps.pageDelayMs, signal)
         }
@@ -235,6 +271,8 @@ export class Crawler {
       }
     }
     if (signal.aborted) return
+    this.etaMs = null
+    this.detail = 'grouping into games'
     this.message = 'Grouping albums into games…'
     this.deps.onProgress()
     await repo.reclusterAll()

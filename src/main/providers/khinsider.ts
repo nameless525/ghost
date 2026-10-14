@@ -603,6 +603,9 @@ export class KhinsiderProvider implements IndexProvider {
 
   constructor(private http: HttpClient) {}
 
+  /** A full first read of the index (for the setup time estimate). */
+  readonly indexEstimateMs = 7 * 60_000
+
   indexSections(): IndexSection[] {
     return [
       { key: 'latest', label: 'Latest additions', maxPages: KH_LATEST_PAGES },

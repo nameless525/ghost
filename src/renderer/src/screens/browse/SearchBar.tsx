@@ -1,13 +1,16 @@
 // Top-right filter control (osu!lazer's song-select filter): syntax-highlighted search,
 // result count, group + sort selectors and a slim catalog-indexing progress line.
 import { Calendar, CalendarClock, DiscAlbum, Dices, Gamepad2, History, Layers, MicVocal, Monitor, Star, Timer, Type } from 'lucide-react'
-import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode, type Ref } from 'react'
-import type { GroupBy, SortBy } from '@shared/types'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
+import type { CatalogStatus, GroupBy, SortBy } from '@shared/types'
 import { parseSearch } from '@shared/search'
+import { sfx } from '../../sound'
 import { SearchInput, type SearchInputHandle } from '../../ui/SearchInput'
 import { Select, type SelectOption } from '../../ui/Select'
 import { Tooltip } from '../../ui/Tooltip'
 import { cx } from '../../ui/util'
+import { formatEtaShort } from './activity'
+import { CatalogActivityPopover } from './CatalogActivity'
 import { browseModel } from './model'
 import { applyQuery, setSearchText } from './query'
 import { GROUP_LABELS, GROUP_NOUNS, SORT_LABELS, useBrowse } from './store'
@@ -109,12 +112,8 @@ export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHan
             <div className="bs__status">
               {error ? (
                 <span className="bs__error">{error}</span>
-              ) : indexing ? (
-                <span className="bs__indexing">
-                  <span className="bs__pulse" />
-                  {status?.message ?? 'Indexing catalog'}
-                  {progress != null && <b className="tnum">{Math.round(progress * 100)}%</b>}
-                </span>
+              ) : indexing && status ? (
+                <IndexingStatus status={status} />
               ) : parsed.filters.length ? (
                 <FilterSummary count={parsed.filters.length} />
               ) : (
@@ -126,6 +125,46 @@ export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHan
         <IndexingLine active={indexing} progress={progress} />
       </div>
     </div>
+  )
+}
+
+/**
+ * "One-time setup · Zophar's Domain and Internet Archive · 42% · about 3 min left" (first-time
+ * crawls) or a quieter "Refreshing KHInsider · 57%". Opens the per-source activity popover.
+ */
+function IndexingStatus({ status }: { status: CatalogStatus }) {
+  const [open, setOpen] = useState(false)
+  const btn = useRef<HTMLButtonElement>(null)
+  const running = (status.sources ?? []).filter((s) => s.state === 'running').map((s) => s.name)
+  const names = running.length <= 2 ? running.join(' and ') : `${running.length} sources`
+  const pct = status.progress != null ? Math.round(status.progress * 100) : null
+  return (
+    <>
+      <button
+        ref={btn}
+        type="button"
+        className={cx('bs__indexing', status.setup && 'bs__indexing--setup')}
+        aria-expanded={open}
+        title={status.message ?? undefined}
+        onClick={() => {
+          sfx.play(open ? 'collapse' : 'expand', { volume: 0.45 })
+          setOpen((o) => !o)
+        }}
+      >
+        <span className="bs__pulse" />
+        {status.setup ? <span className="bs__setup">One-time setup</span> : 'Refreshing'}
+        {names && status.setup && <span className="bs__sep">·</span>}
+        {names && <span className="bs__names">{names}</span>}
+        {pct != null && <b className="tnum">{pct}%</b>}
+        {status.etaMs != null && (
+          <>
+            <span className="bs__sep">·</span>
+            <span className="bs__eta tnum">{formatEtaShort(status.etaMs)} left</span>
+          </>
+        )}
+      </button>
+      {open && btn.current && <CatalogActivityPopover status={status} anchor={btn.current} onClose={() => setOpen(false)} />}
+    </>
   )
 }
 

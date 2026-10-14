@@ -5,12 +5,13 @@ import { CSS } from '@dnd-kit/utilities'
 import { Archive, AudioWaveform, Cloud, Cpu, Disc3, GripVertical, HardDrive, Landmark, LibraryBig, TvMinimalPlay } from 'lucide-react'
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { withKnownSources } from '@shared/defaults'
-import type { SourceStat } from '@shared/types'
+import type { CatalogStatus, SourceIndexStatus, SourceStat } from '@shared/types'
 import { ghost } from '../../ghost'
 import { sfx } from '../../sound'
 import { useSettings } from '../../state/settings'
 import { Toggle } from '../../ui/Toggle'
 import { cx } from '../../ui/util'
+import { formatEta, formatEvery } from '../../screens/browse/activity'
 import { relativeTime } from '../library/common'
 import { Highlight, patchSettings } from './controls'
 
@@ -27,21 +28,29 @@ export const PROVIDERS: Record<string, { name: string; icon: ReactNode; descript
 }
 
 /** Albums per source and index freshness (refreshed while the catalog indexes). */
-function useSourceStats(): Map<string, SourceStat> {
+/** Albums per source (refreshed while the catalog indexes) plus each crawl's live state. */
+function useSourceStats(): { stats: Map<string, SourceStat>; live: Map<string, SourceIndexStatus> } {
   const [stats, setStats] = useState<Map<string, SourceStat>>(new Map())
+  const [live, setLive] = useState<Map<string, SourceIndexStatus>>(new Map())
   useEffect(() => {
-    let live = true
+    let alive = true
     let last = 0
     let timer = 0
     const load = () => {
       last = Date.now()
       void ghost()
         .catalog.sources()
-        .then((list) => live && setStats(new Map(list.map((x) => [x.id, x]))))
+        .then((list) => alive && setStats(new Map(list.map((x) => [x.id, x]))))
         .catch(() => {})
     }
     load()
-    const off = ghost().on('catalog:status', () => {
+    const onStatus = (st: CatalogStatus) => setLive(new Map((st.sources ?? []).map((x) => [x.id, x])))
+    void ghost()
+      .catalog.status()
+      .then((st) => alive && onStatus(st))
+      .catch(() => {})
+    const off = ghost().on('catalog:status', (st) => {
+      onStatus(st)
       if (timer) return
       timer = window.setTimeout(() => {
         timer = 0
@@ -49,19 +58,26 @@ function useSourceStats(): Map<string, SourceStat> {
       }, Math.max(0, 4000 - (Date.now() - last)))
     })
     return () => {
-      live = false
+      alive = false
       window.clearTimeout(timer)
       off()
     }
   }, [])
-  return stats
+  return { stats, live }
 }
 
-function statLine(id: string, st: SourceStat | undefined): string | null {
+function statLine(id: string, st: SourceStat | undefined, run: SourceIndexStatus | undefined): string | null {
+  const albums = st?.albums ? `${st.albums.toLocaleString()} albums` : null
+  if (run?.state === 'running') {
+    const what = run.initial ? 'Adding for the first time' : 'Refreshing'
+    const pct = run.progress != null ? ` ${Math.round(run.progress * 100)}%` : ''
+    return [albums, `${what}…${pct}`, run.etaMs != null ? `${formatEta(run.etaMs)} left` : null].filter(Boolean).join(' · ')
+  }
+  if (run?.state === 'waiting') return [albums, run.initial ? 'Waiting to be added' : 'Refresh queued'].filter(Boolean).join(' · ')
   if (!st) return null
-  if (st.indexing) return st.albums ? `${st.albums.toLocaleString()} albums · indexing…` : 'Indexing…'
   if (!st.albums) return id === 'local' ? null : id === 'youtube' || id === 'soundcloud' || id === 'bandcamp' ? 'Searched on demand' : null
-  return `${st.albums.toLocaleString()} albums${st.lastIndexedAt ? ` · indexed ${relativeTime(st.lastIndexedAt)}` : ''}`
+  const when = st.lastIndexedAt ? `indexed ${relativeTime(st.lastIndexedAt)}` : null
+  return [albums, when, run ? `refreshes ${formatEvery(run.refreshEveryMs)}` : null].filter(Boolean).join(' · ')
 }
 
 const lockY: Modifier = ({ transform }) => ({ ...transform, x: 0 })
@@ -75,7 +91,7 @@ export function ProviderList() {
   const order = effectiveOrder(useSettings((s) => s.sources.order))
   const disabled = useSettings((s) => s.sources.disabled)
   const [active, setActive] = useState<string | null>(null)
-  const stats = useSourceStats()
+  const { stats, live } = useSourceStats()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }))
 
   const onDragEnd = (e: DragEndEvent) => {
@@ -108,7 +124,7 @@ export function ProviderList() {
       <SortableContext items={order} strategy={verticalListSortingStrategy}>
         <ol className="set-prov">
           {order.map((id, i) => (
-            <ProviderRow key={id} id={id} rank={i + 1} stat={statLine(id, stats.get(id))} enabled={!disabled.includes(id)} lastEnabled={enabledCount === 1 && !disabled.includes(id)} dragging={active === id} onToggle={toggle} />
+            <ProviderRow key={id} id={id} rank={i + 1} stat={statLine(id, stats.get(id), live.get(id))} enabled={!disabled.includes(id)} lastEnabled={enabledCount === 1 && !disabled.includes(id)} dragging={active === id} onToggle={toggle} />
           ))}
         </ol>
       </SortableContext>

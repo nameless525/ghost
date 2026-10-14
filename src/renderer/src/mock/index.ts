@@ -537,7 +537,15 @@ export function installMockGhost(): void {
     progress: null,
     lastIndexedAt: now(),
     message: null,
-    enrichment: { igdb: false, steamGridDb: false }
+    enrichment: { igdb: false, steamGridDb: false },
+    sources: [
+      { id: 'khinsider', name: 'KHInsider', state: 'idle', initial: false, progress: null, detail: null, etaMs: null, lastIndexedAt: now() - 2 * 86_400_000, refreshEveryMs: 7 * 86_400_000 },
+      { id: 'zophar', name: 'Zophar’s Domain', state: 'idle', initial: false, progress: null, detail: null, etaMs: null, lastIndexedAt: now() - 5 * 86_400_000, refreshEveryMs: 14 * 86_400_000 },
+      { id: 'modland', name: 'Modland', state: 'idle', initial: false, progress: null, detail: null, etaMs: null, lastIndexedAt: now() - 86_400_000, refreshEveryMs: 3 * 86_400_000 },
+      { id: 'archive', name: 'Internet Archive', state: 'idle', initial: false, progress: null, detail: null, etaMs: null, lastIndexedAt: now() - 3 * 86_400_000, refreshEveryMs: 7 * 86_400_000 }
+    ],
+    setup: false,
+    etaMs: null
   }
 
   const sortGroups = (gs: Game[], sort: BrowseQuery['sort']) => {

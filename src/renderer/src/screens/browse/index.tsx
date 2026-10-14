@@ -33,6 +33,7 @@ import { activeCarousel, Carousel } from './carousel'
 import { ExternalSearch, ExternalSearchDialog, useExternalSourceNames, type Phase } from './ExternalSearch'
 import { Footer } from './Footer'
 import { InfoWedge } from './InfoWedge'
+import { formatEta } from './activity'
 import { browseModel } from './model'
 import { openExternalSearch, setSearchText } from './query'
 import { SearchBar } from './SearchBar'
@@ -176,8 +177,12 @@ function EmptyState() {
         </>
       ) : (
         <>
-          <h2 className="be__title">{status?.indexing ? 'Building your catalog…' : 'Your catalog is empty'}</h2>
-          <p className="be__sub">{status?.indexing ? (status.message ?? 'Indexing soundtrack sources. Games appear here as they’re found.') : 'Re-index your sources from Settings, or search the web for a soundtrack.'}</p>
+          <h2 className="be__title">{status?.indexing ? 'Setting up your catalog…' : 'Your catalog is empty'}</h2>
+          <p className="be__sub">
+            {status?.indexing
+              ? `A one-time setup${status.etaMs != null ? ` (${formatEta(status.etaMs)} left)` : ''}: games appear here as they’re found, and afterwards sources refresh quietly in the background.`
+              : 'Re-index your sources from Settings, or search the web for a soundtrack.'}
+          </p>
         </>
       )}
     </div>

@@ -954,6 +954,9 @@ export class ModlandProvider implements IndexProvider {
   /** The crawl only re-reads the in-memory index; it's worth repeating when the download is due. */
   readonly indexRefreshMs = MODLAND_INDEX_MAX_AGE_MS
   readonly indexPageDelayMs = 0
+  /** Named NSF folders are kept only for known games: let Zophar's / IA's games land first. */
+  readonly indexAfterOthers = true
+  readonly indexEstimateMs = 15_000
 
   private index: ModlandIndex | null = null
   private loading: Promise<ModlandIndex> | null = null

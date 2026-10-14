@@ -857,6 +857,9 @@ export class ArchiveProvider implements IndexProvider {
     return value
   }
 
+  /** A full first read of the index (for the setup time estimate). */
+  readonly indexEstimateMs = 45_000
+
   indexSections(): IndexSection[] {
     return this.collections.map((c) => ({ key: c.key, label: c.label }))
   }

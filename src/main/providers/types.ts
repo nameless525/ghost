@@ -167,6 +167,13 @@ export interface IndexProvider extends Provider {
   indexRefreshMs?: number
   /** Pause between index pages on top of the host limiter (default 750 ms; 0 for local/in-memory pages). */
   indexPageDelayMs?: number
+  /**
+   * Crawl after the other secondary sources instead of alongside them (its hits match against
+   * games the others add, e.g. Modland's `onlyForKnownGame`).
+   */
+  indexAfterOthers?: boolean
+  /** Rough length of a full first crawl (for "about N min left" before the crawl has a page rate). */
+  indexEstimateMs?: number
 }
 
 export function isIndexProvider(p: Provider): p is IndexProvider {
