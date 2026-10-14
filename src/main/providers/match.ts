@@ -279,7 +279,9 @@ export function cleanTrackTitle(raw: string, ctx: CleanTitleContext = {}): strin
     strip(/^0\d{1,2}\s+/u)
     if (ctx.numbered) strip(/^\d{1,3}\s+/u)
   }
-  // Wrapping quotes.
+  // Wrapping quotes, or brackets left alone once a name was stripped ("Chrono Trigger (Chronos Theme)").
+  const b = s !== original && /^[([【]([^()[\]【】]+)[)\]】]$/u.exec(s)
+  if (b && /[\p{L}\p{N}]/u.test(b[1])) s = b[1].trim()
   const q = /^["“'‘「『](.+)["”'’」』]$/u.exec(s)
   if (q && /[\p{L}\p{N}]/u.test(q[1])) s = q[1].trim()
   s = s.replace(/^[\s\-–—:|~/•·]+|[\s\-–—:|~/•·]+$/gu, '').trim()

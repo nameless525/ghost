@@ -102,6 +102,8 @@ describe('match: title cleanup', () => {
     expect(cleanTrackTitle('Chrono Trigger Music - Corridors of Time', { names: ['Chrono Trigger'] })).toBe('Corridors of Time')
     expect(cleanTrackTitle('Corridors of Time [Official Music Video]')).toBe('Corridors of Time')
     expect(cleanTrackTitle('Corridors of Time - OST')).toBe('Corridors of Time')
+    expect(cleanTrackTitle('Chrono Trigger (Chronos Theme)', { names: ['Chrono Trigger'] })).toBe('Chronos Theme')
+    expect(cleanTrackTitle('(Untitled)')).toBe('(Untitled)')
     expect(cleanTrackTitle('Crossroads (Hollow Knight OST)', { names })).toBe('Crossroads')
     expect(cleanTrackTitle('[Hollow Knight] Greenpath', { names })).toBe('Greenpath')
     expect(cleanTrackTitle('Hollow Knight: Soul Sanctum | Official Soundtrack', { names })).toBe('Soul Sanctum')
