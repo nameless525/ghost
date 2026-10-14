@@ -1405,6 +1405,15 @@
   padding: 26px 0;
   color: var(--fg-2);
 }
+.bx__more {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+}
 .bx__msg {
   display: flex;
   align-items: center;

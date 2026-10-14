@@ -1,7 +1,7 @@
 // "Can't find it?": search the web sources (YouTube, SoundCloud, Internet Archive, Bandcamp) for album-like results and
 // import one into the catalog. Used inline by the empty state and inside a dialog from the footer.
 import { Check, Download, ExternalLink, Landmark, Telescope } from 'lucide-react'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { withKnownSources } from '@shared/defaults'
 import type { AlbumDetail, ExternalAlbumHit, ExternalProviderId } from '@shared/types'
 import { ghost } from '../../ghost'
@@ -27,15 +27,23 @@ const PROVIDERS: Record<ExternalProviderId, { name: string; hue: string }> = {
   soundcloud: { name: 'SoundCloud', hue: 'var(--warning)' }
 }
 
-/** The enabled web sources in priority order, as "YouTube, SoundCloud, Internet Archive and Bandcamp". */
-export function useExternalSourceNames(): string {
-  const order = useSettings((s) => s.sources.order)
-  const disabled = useSettings((s) => s.sources.disabled)
-  const names = withKnownSources(order)
-    .filter((id): id is ExternalProviderId => id in PROVIDERS && !disabled.includes(id))
-    .map((id) => PROVIDERS[id].name)
+/** "A, B and C". */
+function listNames(ids: ExternalProviderId[]): string {
+  const names = ids.map((id) => PROVIDERS[id].name)
   if (!names.length) return 'the web'
   return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+/** The enabled web sources in priority order. */
+function useExternalSources(): ExternalProviderId[] {
+  const order = useSettings((s) => s.sources.order)
+  const disabled = useSettings((s) => s.sources.disabled)
+  return useMemo(() => withKnownSources(order).filter((id): id is ExternalProviderId => id in PROVIDERS && !disabled.includes(id)), [order, disabled])
+}
+
+/** The enabled web sources in priority order, as "Bandcamp, Internet Archive, YouTube and SoundCloud". */
+export function useExternalSourceNames(): string {
+  return listNames(useExternalSources())
 }
 
 /** Generic provider glyphs (drawn here; no brand assets). */
@@ -79,29 +87,51 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
   onPhaseRef.current = onPhase
   useEffect(() => onPhaseRef.current?.(phase), [phase])
   const [hits, setHits] = useState<ExternalAlbumHit[]>([])
+  /** Sources still searching (results from the others are already listed). */
+  const [pending, setPending] = useState<ExternalProviderId[]>([])
   const [error, setError] = useState<string | null>(null)
   const [importing, setImporting] = useState<string | null>(null)
   const [imported, setImported] = useState<Set<string>>(new Set())
   const list = useRef<HTMLDivElement>(null)
+  const shown = useRef(new Set<string>())
   const seq = useRef(0)
   const q = query.trim()
-  const sources = useExternalSourceNames()
+  const ids = useExternalSources()
+  const sources = listNames(ids)
 
+  // Each source is asked on its own so fast ones (Internet Archive, ~1 s) list before slow ones
+  // (YouTube / SoundCloud via yt-dlp, 6–10 s); results merge by score as they land.
   const run = async () => {
     if (!q) return
     const my = ++seq.current
     setPhase('loading')
     setError(null)
-    try {
-      const res = await ghost().catalog.searchExternal(q)
-      if (my !== seq.current) return
-      setHits(res.sort((a, b) => b.score - a.score))
-      setPhase('done')
-    } catch (err) {
-      if (my !== seq.current) return
-      setError(err instanceof Error ? err.message : String(err))
+    setHits([])
+    shown.current.clear()
+    setPending(ids)
+    const errors: string[] = []
+    let found = 0
+    await Promise.all(
+      ids.map((id) =>
+        ghost()
+          .catalog.searchExternal(q, [id])
+          .then((res) => {
+            if (my !== seq.current || !res.length) return
+            found += res.length
+            setHits((h) => {
+              const seen = new Set(h.map((x) => x.provider + x.ref))
+              return [...h, ...res.filter((x) => !seen.has(x.provider + x.ref))].sort((a, b) => b.score - a.score)
+            })
+          })
+          .catch((err) => errors.push(err instanceof Error ? err.message : String(err)))
+          .finally(() => my === seq.current && setPending((p) => p.filter((x) => x !== id)))
+      )
+    )
+    if (my !== seq.current) return
+    if (!found && errors.length === ids.length) {
+      setError(errors[0] ?? 'every source failed')
       setPhase('error')
-    }
+    } else setPhase('done')
   }
 
   useEffect(() => {
@@ -110,13 +140,21 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
       seq.current++
       setPhase('idle')
       setHits([])
+      setPending([])
     }
   }, [q, auto]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Slide in only the rows that just arrived.
   useEffect(() => {
-    if (phase !== 'done' || !list.current) return
-    void stagger(Array.from(list.current.children), (t) => t.set({ opacity: 0, x: 26 }).fadeIn(260, 'outQuad').moveToX(0, 520, 'outQuint'), 45)
-  }, [phase, hits])
+    if (!list.current) return
+    const fresh = Array.from(list.current.children).filter((el) => {
+      const k = (el as HTMLElement).dataset.key ?? ''
+      if (shown.current.has(k)) return false
+      shown.current.add(k)
+      return true
+    })
+    if (fresh.length) void stagger(fresh, (t) => t.set({ opacity: 0, x: 26 }).fadeIn(260, 'outQuad').moveToX(0, 520, 'outQuint'), 45)
+  }, [hits])
 
   const doImport = async (hit: ExternalAlbumHit) => {
     if (importing) return
@@ -145,10 +183,10 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
 
   return (
     <div className={cx('bx', compact && 'bx--compact')}>
-      {phase === 'loading' && (
+      {phase === 'loading' && hits.length === 0 && (
         <div className="bx__loading">
           <LoadingRing size={34} />
-          <span>Searching {sources}…</span>
+          <span>Searching {listNames(pending)}…</span>
         </div>
       )}
       {phase === 'error' && (
@@ -165,13 +203,13 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
           Nothing album-like out there for “{q}” either.
         </div>
       )}
-      {phase === 'done' && hits.length > 0 && (
+      {hits.length > 0 && (
         <div className="bx__list" ref={list}>
           {hits.map((h) => {
             const p = PROVIDERS[h.provider]
             const done = imported.has(h.ref)
             return (
-              <div key={h.provider + h.ref} className="bx-hit" style={{ '--ph': p.hue } as CSSProperties}>
+              <div key={h.provider + h.ref} data-key={h.provider + h.ref} className="bx-hit" style={{ '--ph': p.hue } as CSSProperties}>
                 <div className="bx-hit__art">
                   <CoverArt src={h.cover} size={52} radius={8} hue={null} />
                   <span className="bx-prov" title={p.name}>
@@ -208,6 +246,12 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
               </div>
             )
           })}
+        </div>
+      )}
+      {hits.length > 0 && pending.length > 0 && (
+        <div className="bx__more">
+          <LoadingRing size={16} />
+          <span>Still searching {listNames(pending)}…</span>
         </div>
       )}
     </div>
