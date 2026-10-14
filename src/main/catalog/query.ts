@@ -25,10 +25,11 @@ export interface Compiled {
   /** No filters at all (fast path). */
   empty: boolean
   /**
-   * FTS expressions for "strong" matches: every free-text word as a whole word of the game name
-   * (or one of its aliases), then of the game or album name. Those rank ahead of substring-only
-   * matches ("botw" → Breath of the Wild before "Robot Wars"; "mother 3" → Mother 3 before
-   * Cave Story's "(Mother 3)" album). Null without free text.
+   * FTS expressions for "strong" matches: every free-text word as a whole word of the game name or
+   * one of its aliases (game grouping), or of the game or album name (album grouping). Those rank
+   * ahead of substring-only matches ("botw" → Breath of the Wild before "Robot Wars"; "mother 3" →
+   * Mother 3 before Cave Story's "(Mother 3)" album). One tier: each costs an FTS pass over the
+   * whole index. Null without free text.
    */
   strong: { game: string; any: string } | null
 }
@@ -388,11 +389,9 @@ export class QueryEngine {
         : c.strong
           ? this.repo.all<GameGroupRow>(
               `SELECT ${cols} FROM games g ${f.sql}
-               ORDER BY (g.id IN (SELECT a.game_id FROM albums a WHERE a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?))) DESC,
-                        (g.id IN (SELECT a.game_id FROM albums a WHERE a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?))) DESC, ${gameOrder(sort)} LIMIT ? OFFSET ?`,
+               ORDER BY (g.id IN (SELECT a.game_id FROM albums a WHERE a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?))) DESC, ${gameOrder(sort)} LIMIT ? OFFSET ?`,
               ...f.params,
               c.strong.game,
-              c.strong.any,
               limit,
               offset
             )
@@ -415,9 +414,9 @@ export class QueryEngine {
           )
         : this.repo.all<AlbumGroupRow>(
             `SELECT ${cols} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where}
-             ORDER BY ${c.strong ? '(a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?)) DESC, (a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?)) DESC, ' : ''}${albumOrder(sort)} LIMIT ? OFFSET ?`,
+             ORDER BY ${c.strong ? '(a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?)) DESC, ' : ''}${albumOrder(sort)} LIMIT ? OFFSET ?`,
             ...c.params,
-            ...(c.strong ? [c.strong.game, c.strong.any] : []),
+            ...(c.strong ? [c.strong.any] : []),
             limit,
             offset
           )
