@@ -152,6 +152,30 @@ export interface ArchiveListing {
   playlists: { path: string; text: string }[]
 }
 
+/** `EngineBridge.stats()`: audio robustness counters since the last reset. */
+export interface EngineStats {
+  /** The playing track ran out of decoded audio mid-playback (audible dropout / rebuffering). */
+  underruns: number
+  /** Device-reported overloads (CoreAudio processor overload). */
+  xruns: number
+  /** Output (device) callbacks rendered. */
+  callbacks: number
+  /** Callbacks that took more than half of their buffer period. */
+  callbackOverBudget: number
+  /** Callbacks that started more than 1.5 buffer periods after the previous one. */
+  callbackGaps: number
+  callbackMaxUs: number
+  callbackAvgUs: number
+  /** Device buffer period (µs). */
+  callbackPeriodUs: number
+  /** Least decoded audio buffered ahead of the playing track (ms); null until something played. */
+  lowWaterMs: number | null
+  /** Times the playing track had less than 500 ms decoded ahead. */
+  lowWaterEvents: number
+  /** CPU time per thread class (engine threads, the device IO thread, the art pool). */
+  threads: { name: string; count: number; cpuMs: number }[]
+}
+
 export interface EngineConfig {
   cacheDir: string
   cacheMaxBytes: number
@@ -200,6 +224,11 @@ export interface EngineBridge {
   setVoiceMask?(mask: number): void
   /** Mutable voices of the current track (0 when unsupported or idle). */
   voiceCount?(): number
+  /**
+   * Playback health counters and engine CPU per thread class (see `EngineStats`). Counters
+   * accumulate until read with `reset = true`. Optional: the null engine has none.
+   */
+  stats?(reset?: boolean): EngineStats
   /** Name of the shared-memory region the renderer maps for analysis frames. */
   analysisShmName(): string
   onEvent(cb: (e: EngineEvent) => void): void

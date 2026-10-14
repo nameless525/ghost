@@ -1,6 +1,17 @@
 // Vibrant accent colour from cover art (DESIGN §7.1: "the accent colour comes from the current
-// game's art (a vibrant swatch)"). Pure pixel math so it can be unit-tested; decoding is done by
-// Electron's nativeImage in art-protocol.ts.
+// game's art (a vibrant swatch)").
+//
+// In the app the accent is computed natively, off the main thread, by the art pipeline
+// (native/crates/ghost-art, `accent.rs` is a line-for-line port of `extractAccent` below; its
+// tests pin the same outputs) while the cover is being decoded anyway (see art-protocol.ts).
+// This TS version is the reference implementation: pure pixel math, unit-tested, never fed by
+// Electron's nativeImage.
+
+/** `[r, g, b]` (0–255) → '#rrggbb'; null passes through. */
+export function accentHex(rgb: readonly [number, number, number] | null | undefined): string | null {
+  if (!rgb) return null
+  return `#${rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('')}`
+}
 
 function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   const max = Math.max(r, g, b)
@@ -32,7 +43,7 @@ const hex = (v: number) =>
 
 /**
  * Pick a vibrant, mid-light colour from raw pixels.
- * @param pixels 4 bytes per pixel; `order` says where R/G/B sit (nativeImage.toBitmap() is BGRA).
+ * @param pixels 4 bytes per pixel; `order` says where R/G/B sit (BGRA for Skia-style bitmaps).
  * @returns '#rrggbb', or null for greyscale / near-monochrome art.
  */
 export function extractAccent(pixels: Uint8Array, order: 'rgba' | 'bgra' = 'bgra'): string | null {

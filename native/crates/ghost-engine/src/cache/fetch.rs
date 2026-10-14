@@ -24,6 +24,8 @@ struct Job {
 }
 
 pub(super) fn run(entry: Arc<Entry>) {
+    // Playback reads block on this thread's progress (cold starts, seeks past the cached range).
+    crate::util::set_audio_feed_priority();
     let Some(mgr) = entry.manager() else {
         entry.state.lock().fetcher_running = false;
         return;

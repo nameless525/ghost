@@ -1,25 +1,62 @@
-// `ghost-art://` protocol: serves remote artwork through Chromium's network stack with an
-// on-disk cache and permissive CORS so the renderer can use it as WebGL textures.
+// `ghost-art://` protocol: serves remote artwork with an on-disk cache and permissive CORS so the
+// renderer can use it as WebGL textures.
 //
-//   ghost-art://img/?u=<encodeURIComponent(https url)>[&w=<max width px>]
+//   ghost-art://img/?u=<encodeURIComponent(https url)>[&w=<width px>]
 //
-// Cache: <userData>/art/<sha1[0..2]>/<sha1> (bytes) + <sha1>.json (content type, source url, size).
-// Images larger than 1600 px or 1.5 MB are downscaled once on the way in (KHInsider scans can be
-// 3000 px PNGs). `w` requests an extra resized variant (cached separately).
+// Nothing here blocks the main thread (on macOS it also delivers window input): decoding,
+// resizing, re-encoding and the accent colour run in the native art pipeline (`processArt`,
+// native/crates/ghost-art on a small Rust thread pool), all disk I/O is async, and Electron's
+// nativeImage is never used.
+//
+// Sizes: every image the renderer receives is capped. Without `w` it gets the base image, at most
+// 1600 px wide (KHInsider scans can be 3000+ px PNGs). `w` snaps up to a bucket (ART_BUCKETS) so
+// each cover has at most a handful of variants on disk. Nothing is ever upscaled. Small enough
+// originals (≤ 1600 px, ≤ 1.5 MB) are kept byte-for-byte.
+//
+// Cache: <userData>/art/<sha1[0..2]>/<sha1> (bytes) + <sha1>.json (ArtMeta). Base: sha1(url);
+// variant: sha1(`${url}#w=${bucket}`). The base meta also stores the cover's accent colour, so
+// accents of cached covers never need another decode.
+//
+// Network: Chromium's stack (`net.fetch`, Cloudflare-friendly) with `cache: 'no-store'`: this
+// cache is the only one (Chromium's HTTP cache used to hold a second copy of every cover), and
+// requests go through the shared per-host limiter so politeness limits hold app-wide.
 import { protocol } from 'electron'
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { artAccentOf, artPipelineAvailable, processArt } from '../engine/native'
 import { paths } from '../paths'
-import { extractAccent } from './accent'
-import { isNetError, NetError } from './errors'
+import { accentHex } from './accent'
+import { blockedMessage, isNetError, NetError } from './errors'
+import { detectBlock, GHOST_USER_AGENT, type FetchLike } from './http'
 import { sharedHttp } from './shared'
 
 export const ART_SCHEME = 'ghost-art'
 
-const MAX_SIDE = 1600
-const MAX_UNTOUCHED_BYTES = 1_500_000
+/** Widths (px) a `w` request snaps up to. The largest is also the cap for un-sized requests. */
+export const ART_BUCKETS = [128, 256, 512, 768, 1024, 1600] as const
+const BASE_MAX_WIDTH = 1600
+/** Height cap relative to the width cap (guards against absurd strips; covers never get near). */
+const MAX_ASPECT = 2
+/** Originals within the size caps and at most this big are served byte-for-byte. */
+const PASSTHROUGH_MAX_BYTES = 1_500_000
+const JPEG_QUALITY = 85
+/** Bump when the meaning of cached files changes; older entries are re-processed lazily. */
+const META_VERSION = 2
 const CORS = { 'access-control-allow-origin': '*' }
+
+/** The bucket a requested width snaps to (smallest bucket ≥ w; the largest for anything bigger). */
+export function artBucket(w: number): number {
+  for (const b of ART_BUCKETS) if (w <= b) return b
+  return BASE_MAX_WIDTH
+}
+
+/** Bucket for a `w` request, or undefined when that is just the base image. */
+function variantFor(w: number | undefined): number | undefined {
+  if (w === undefined || !Number.isFinite(w) || w <= 0) return undefined
+  const b = artBucket(w)
+  return b >= BASE_MAX_WIDTH ? undefined : b
+}
 
 /** Must run before app 'ready'. */
 export function registerArtScheme(): void {
@@ -37,7 +74,7 @@ export function handleArtProtocol(): void {
       const u = new URL(req.url)
       target = u.searchParams.get('u')
       const wp = Number(u.searchParams.get('w'))
-      w = Number.isFinite(wp) && wp > 0 ? Math.max(32, Math.min(2048, Math.round(wp))) : undefined
+      w = Number.isFinite(wp) && wp > 0 ? wp : undefined
     } catch {
       /* fall through */
     }
@@ -56,23 +93,41 @@ export function handleArtProtocol(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Cache
+// Listeners
 
-type Listener = (url: string, bytes: Buffer, contentType: string) => void
-const listeners = new Set<Listener>()
+type FetchedListener = (url: string, bytes: Buffer, contentType: string) => void
+type AccentListener = (url: string, accentHex: string | null) => void
+const fetchedListeners = new Set<FetchedListener>()
+const accentListeners = new Set<AccentListener>()
 
 /** Notified (asynchronously) whenever an image is fetched from the network for the first time. */
-export function onArtFetched(fn: Listener): () => void {
-  listeners.add(fn)
-  return () => listeners.delete(fn)
+export function onArtFetched(fn: FetchedListener): () => void {
+  fetchedListeners.add(fn)
+  return () => fetchedListeners.delete(fn)
 }
 
+/**
+ * Notified (asynchronously) whenever an image is fetched from the network for the first time,
+ * with its accent colour ('#rrggbb', or null for greyscale art), computed off-thread while the
+ * image was being processed anyway. Plain data, so it can be forwarded to a worker as is.
+ */
+export function onArtAccent(fn: AccentListener): () => void {
+  accentListeners.add(fn)
+  return () => accentListeners.delete(fn)
+}
+
+// ---------------------------------------------------------------------------
+// Cache
+
 let dirOverride: string | null = null
+let defaultDir: string | null = null
 /** Use a different cache directory (smoke tests). */
 export function setArtDir(dir: string | null): void {
   dirOverride = dir
+  madeDirs.clear()
 }
-const artDir = () => dirOverride ?? paths.art()
+// paths.art() does a synchronous mkdir: resolve it once.
+const artDir = () => dirOverride ?? (defaultDir ??= paths.art())
 
 function sha1(s: string): string {
   return createHash('sha1').update(s).digest('hex')
@@ -84,30 +139,71 @@ function cachePaths(url: string, w?: number) {
   return { d, data: join(d, h), meta: join(d, `${h}.json`) }
 }
 
+interface ArtMeta {
+  /** META_VERSION when written by this pipeline (absent in older entries). */
+  v?: number
+  type: string
+  url: string
+  /** Variant bucket, or null for the base image. */
+  w: number | null
+  width: number | null
+  height: number | null
+  /** Base images: '#rrggbb', or null for greyscale art. Absent = not computed yet. */
+  accent?: string | null
+  at: number
+}
+
 export interface ArtBytes {
   bytes: Buffer
   type: string
 }
 
-export async function readCachedArt(url: string, w?: number): Promise<ArtBytes | null> {
-  const p = cachePaths(url, w)
+interface CachedArt extends ArtBytes {
+  meta: ArtMeta
+}
+
+async function readMeta(path: string, url: string): Promise<ArtMeta | null> {
   try {
-    const [meta, bytes] = await Promise.all([readFile(p.meta, 'utf8'), readFile(p.data)])
-    const m = JSON.parse(meta) as { type: string; url: string }
-    if (m.url !== url) return null
-    return { bytes, type: m.type }
+    const m = JSON.parse(await readFile(path, 'utf8')) as ArtMeta
+    return m.url === url ? m : null
   } catch {
     return null
   }
 }
 
-async function writeCachedArt(url: string, w: number | undefined, art: ArtBytes, size: { width: number; height: number } | null): Promise<void> {
+async function readCached(url: string, w?: number): Promise<CachedArt | null> {
   const p = cachePaths(url, w)
-  await mkdir(p.d, { recursive: true })
-  const tmp = `${p.data}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
-  await writeFile(tmp, art.bytes)
-  await rename(tmp, p.data)
-  await writeFile(p.meta, JSON.stringify({ type: art.type, url, w: w ?? null, width: size?.width ?? null, height: size?.height ?? null, at: Date.now() }))
+  const [meta, bytes] = await Promise.all([readMeta(p.meta, url), readFile(p.data).catch(() => null)])
+  return meta && bytes ? { bytes, type: meta.type, meta } : null
+}
+
+/** Cached image bytes (`w` = exact variant bucket), or null. */
+export async function readCachedArt(url: string, w?: number): Promise<ArtBytes | null> {
+  const c = await readCached(url, variantFor(w))
+  return c ? { bytes: c.bytes, type: c.type } : null
+}
+
+const madeDirs = new Set<string>()
+
+async function writeAtomic(path: string, data: string | Buffer): Promise<void> {
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+  try {
+    await writeFile(tmp, data)
+    await rename(tmp, path)
+  } catch (e) {
+    await rm(tmp, { force: true }).catch(() => {})
+    throw e
+  }
+}
+
+async function writeCached(url: string, w: number | undefined, bytes: Buffer, meta: ArtMeta): Promise<void> {
+  const p = cachePaths(url, w)
+  if (!madeDirs.has(p.d)) {
+    await mkdir(p.d, { recursive: true })
+    madeDirs.add(p.d)
+  }
+  await writeAtomic(p.data, bytes)
+  await writeAtomic(p.meta, JSON.stringify(meta))
 }
 
 function sniffType(bytes: Buffer, header: string | null): string | null {
@@ -121,21 +217,75 @@ function sniffType(bytes: Buffer, header: string | null): string | null {
   return h.startsWith('image/') ? h : null
 }
 
-async function shrink(art: ArtBytes, maxSide: number, force: boolean): Promise<{ art: ArtBytes; size: { width: number; height: number } | null }> {
-  if (!/jpeg|png|webp/.test(art.type)) return { art, size: null }
-  const { nativeImage } = await import('electron')
-  const img = nativeImage.createFromBuffer(art.bytes)
-  if (img.isEmpty()) return { art, size: null }
-  const size = img.getSize()
-  const longest = Math.max(size.width, size.height)
-  if (!force && longest <= maxSide && art.bytes.length <= MAX_UNTOUCHED_BYTES) return { art, size }
-  const scale = Math.min(1, maxSide / longest)
-  const out = scale < 1 ? img.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: 'better' }) : img
-  const png = art.type === 'image/png'
-  const bytes = png ? out.toPNG() : out.toJPEG(88)
-  // Keep the original if re-encoding didn't help.
-  if (scale === 1 && bytes.length >= art.bytes.length) return { art, size }
-  return { art: { bytes, type: png ? 'image/png' : 'image/jpeg' }, size: out.getSize() }
+// ---------------------------------------------------------------------------
+// Network
+
+let fetchImpl: FetchLike = async (url, init) => {
+  const { net } = await import('electron')
+  return net.fetch(url, init as Parameters<typeof net.fetch>[1])
+}
+
+/** Replace the fetch used for art (smoke tests); null restores Electron's `net.fetch`. */
+export function setArtFetch(f: FetchLike | null): void {
+  fetchImpl =
+    f ??
+    (async (url, init) => {
+      const { net } = await import('electron')
+      return net.fetch(url, init as Parameters<typeof net.fetch>[1])
+    })
+}
+
+const BLOCK_PAUSE_MS = 60_000
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+async function fetchOnce(url: string, host: string, timeoutMs: number): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const http = sharedHttp()
+  if (http.blockedUntil(host)) throw new NetError('blocked', blockedMessage(host), { url })
+  const timeout = AbortSignal.timeout(timeoutMs)
+  let res: Response
+  try {
+    res = await fetchImpl(url, {
+      headers: { 'User-Agent': GHOST_USER_AGENT, Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5' },
+      signal: timeout,
+      redirect: 'follow',
+      // Our disk cache is the cache: keep Chromium's HTTP cache out of it.
+      cache: 'no-store'
+    })
+  } catch (e) {
+    if (timeout.aborted) throw new NetError('timeout', `timed out fetching ${url}`, { url })
+    throw new NetError('network', `network error fetching ${url}: ${(e as Error).message}`, { url, cause: e })
+  }
+  const type = res.headers.get('content-type')
+  if (type?.includes('text/html')) {
+    const body = await res.text()
+    if (detectBlock(res.status, res.headers, body)) {
+      http.limiter(host).pause(BLOCK_PAUSE_MS)
+      throw new NetError('blocked', blockedMessage(host), { status: res.status, url })
+    }
+  }
+  if (res.status === 404 || res.status === 410) throw new NetError('not_found', `not found: ${url}`, { status: res.status, url })
+  if (res.status === 429) {
+    const ra = Number(res.headers.get('retry-after'))
+    http.limiter(host).pause(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000)
+    throw new NetError('http', `rate limited by ${host}`, { status: 429, url, retryable: true })
+  }
+  if (!res.ok) throw new NetError('http', `HTTP ${res.status} from ${url}`, { status: res.status, url })
+  return { bytes: Buffer.from(await res.arrayBuffer()), contentType: type }
+}
+
+/** GET through the shared per-host limiter, with retries and backoff. */
+async function fetchBytes(url: string, retries: number): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const host = new URL(url).host
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await sharedHttp()
+        .limiter(host)
+        .schedule(() => fetchOnce(url, host, 25_000), 1)
+    } catch (e) {
+      if (!(e instanceof NetError) || !e.retryable || attempt >= retries) throw e
+      await sleep(400 * Math.pow(3, attempt) * (0.8 + Math.random() * 0.4))
+    }
+  }
 }
 
 /** KHInsider full-size scans occasionally 404 while their /thumbs/ copy exists. */
@@ -144,51 +294,158 @@ function fallbackUrl(url: string): string | null {
   return m ? `${m[1]}thumbs/${m[2]}` : null
 }
 
-const inflight = new Map<string, Promise<ArtBytes>>()
+async function fetchArt(url: string): Promise<{ bytes: Buffer; contentType: string | null }> {
+  try {
+    return await fetchBytes(url, 2)
+  } catch (e) {
+    const fb = isNetError(e, 'not_found') ? fallbackUrl(url) : null
+    if (!fb) throw e
+    return fetchBytes(fb, 1)
+  }
+}
 
-/** Cached image bytes for a URL (fetching through Chromium's network stack on a miss). */
-export function getArt(url: string, w?: number): Promise<ArtBytes> {
-  const key = w ? `${url}#w=${w}` : url
+// ---------------------------------------------------------------------------
+// Pipeline
+
+const inflight = new Map<string, Promise<CachedArt>>()
+
+/** Cached image bytes for a URL, capped (fetched and processed off-thread on a miss). `w` snaps to a bucket. */
+export async function getArt(url: string, w?: number): Promise<ArtBytes> {
+  const a = await load(url, variantFor(w))
+  return { bytes: a.bytes, type: a.type }
+}
+
+function load(url: string, bucket: number | undefined): Promise<CachedArt> {
+  const key = bucket ? `${url}#w=${bucket}` : url
   const existing = inflight.get(key)
   if (existing) return existing
-  const p = (async (): Promise<ArtBytes> => {
-    const cached = await readCachedArt(url, w)
-    if (cached) return cached
-    if (w) {
-      const base = await getArt(url)
-      const { art, size } = await shrink(base, w, true)
-      await writeCachedArt(url, w, art, size).catch(() => {})
-      return art
-    }
-    let res
-    try {
-      res = await sharedHttp().fetchBytes(url, { priority: 1, retries: 2, timeoutMs: 25_000 })
-    } catch (e) {
-      const fb = isNetError(e, 'not_found') ? fallbackUrl(url) : null
-      if (!fb) throw e
-      res = await sharedHttp().fetchBytes(fb, { priority: 1, retries: 1, timeoutMs: 25_000 })
-    }
-    const type = sniffType(res.bytes, res.contentType)
-    if (!type) throw new NetError('parse', `not an image: ${url}`, { url })
-    const { art, size } = await shrink({ bytes: res.bytes, type }, MAX_SIDE, false)
-    await writeCachedArt(url, undefined, art, size).catch(() => {})
-    for (const l of listeners) setImmediate(() => l(url, art.bytes, art.type))
-    return art
-  })().finally(() => inflight.delete(key))
+  const p = (bucket ? loadVariant(url, bucket) : loadBase(url)).finally(() => inflight.delete(key))
   inflight.set(key, p)
   return p
 }
 
-/** Accent colour for a cover (from given bytes or the art cache). */
-export async function artAccent(url: string, bytes?: Buffer): Promise<string | null> {
-  const buf = bytes ?? (await readCachedArt(url))?.bytes
-  if (!buf) return null
-  const { nativeImage } = await import('electron')
-  const img = nativeImage.createFromBuffer(buf)
-  if (img.isEmpty()) return null
-  const small = img.resize({ width: 48, height: 48, quality: 'good' })
-  return extractAccent(small.toBitmap(), 'bgra')
+/** Older entries are fine when their size is known and within the caps (they lack an accent). */
+function baseIsCurrent(m: ArtMeta): boolean {
+  if (m.v === META_VERSION) return true
+  return m.width != null && m.height != null && m.width <= BASE_MAX_WIDTH && m.height <= BASE_MAX_WIDTH * MAX_ASPECT
 }
+
+async function loadBase(url: string): Promise<CachedArt> {
+  const cached = await readCached(url)
+  // (Without the native pipeline there is nothing better to make of an older entry.)
+  if (cached && (baseIsCurrent(cached.meta) || !artPipelineAvailable())) return cached
+  // An older entry of unknown / oversized dimensions (e.g. an untouched GIF): re-process once.
+  if (cached) return storeBase(url, cached.bytes, cached.type, false)
+  const res = await fetchArt(url)
+  const type = sniffType(res.bytes, res.contentType)
+  if (!type) throw new NetError('parse', `not an image: ${url}`, { url })
+  return storeBase(url, res.bytes, type, true)
+}
+
+async function storeBase(url: string, original: Buffer, type: string, fetched: boolean): Promise<CachedArt> {
+  const meta: ArtMeta = { v: META_VERSION, type, url, w: null, width: null, height: null, at: Date.now() }
+  let bytes = original
+  try {
+    const r = await processArt(original, {
+      maxWidth: BASE_MAX_WIDTH,
+      maxHeight: BASE_MAX_WIDTH * MAX_ASPECT,
+      quality: JPEG_QUALITY,
+      passthroughMaxBytes: PASSTHROUGH_MAX_BYTES,
+      accent: true
+    })
+    if (r.width > 0) {
+      bytes = r.data
+      meta.type = r.mime
+      meta.width = r.width
+      meta.height = r.height
+      meta.accent = accentHex(r.accent)
+    } else {
+      // No native pipeline (addon missing): stored as is, unversioned, so a later run with the
+      // addon caps it.
+      delete meta.v
+    }
+  } catch {
+    // Undecodable here (AVIF, SVG, corrupt): keep the original; Chromium may still manage.
+    meta.accent = null
+  }
+  await writeCached(url, undefined, bytes, meta).catch(() => {})
+  if (meta.accent !== undefined) rememberAccent(url, meta.accent)
+  if (fetched) {
+    for (const l of fetchedListeners) setImmediate(() => l(url, bytes, meta.type))
+    if (meta.accent !== undefined) {
+      const hex = meta.accent
+      for (const l of accentListeners) setImmediate(() => l(url, hex))
+    }
+  }
+  return { bytes, type: meta.type, meta }
+}
+
+async function loadVariant(url: string, bucket: number): Promise<CachedArt> {
+  const cached = await readCached(url, bucket)
+  if (cached && cached.meta.v === META_VERSION) return cached
+  const base = await load(url, undefined)
+  // Already narrow enough (or of unknown size): the base is the answer, no extra file.
+  if (base.meta.width == null || base.meta.width <= bucket) return base
+  try {
+    const r = await processArt(base.bytes, { maxWidth: bucket, maxHeight: bucket * MAX_ASPECT, quality: JPEG_QUALITY, accent: false })
+    if (r.width <= 0) return base
+    const meta: ArtMeta = { v: META_VERSION, type: r.mime, url, w: bucket, width: r.width, height: r.height, at: Date.now() }
+    await writeCached(url, bucket, r.data, meta).catch(() => {})
+    return { bytes: r.data, type: r.mime, meta }
+  } catch {
+    return base
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Accents
+
+const accentMemo = new Map<string, string | null>()
+const accentInflight = new Map<string, Promise<string | null>>()
+
+function rememberAccent(url: string, hex: string | null): void {
+  if (accentMemo.size >= 5000) accentMemo.clear()
+  accentMemo.set(url, hex)
+}
+
+/**
+ * Accent colour ('#rrggbb') for a cover, or null (greyscale art / not cached / undecodable).
+ * Free for covers fetched by this protocol (computed while processing them); older cache entries
+ * are decoded once, off-thread, and the result is stored in their meta.
+ */
+export function artAccent(url: string, bytes?: Buffer): Promise<string | null> {
+  const known = accentMemo.get(url)
+  if (known !== undefined) return Promise.resolve(known)
+  const existing = accentInflight.get(url)
+  if (existing) return existing
+  const p = computeAccent(url, bytes).finally(() => accentInflight.delete(url))
+  accentInflight.set(url, p)
+  return p
+}
+
+async function computeAccent(url: string, bytes?: Buffer): Promise<string | null> {
+  const p = cachePaths(url)
+  const meta = await readMeta(p.meta, url)
+  if (meta && meta.accent !== undefined) {
+    rememberAccent(url, meta.accent)
+    return meta.accent
+  }
+  if (!artPipelineAvailable()) return null
+  const buf = bytes ?? (meta ? await readFile(p.data).catch(() => null) : null)
+  if (!buf) return null
+  let hex: string | null = null
+  try {
+    hex = accentHex(await artAccentOf(buf))
+  } catch {
+    hex = null
+  }
+  rememberAccent(url, hex)
+  if (meta) await writeAtomic(p.meta, JSON.stringify({ ...meta, accent: hex } satisfies ArtMeta)).catch(() => {})
+  return hex
+}
+
+// ---------------------------------------------------------------------------
+// Housekeeping
 
 /** Delete least-recently-written art until the cache is under `maxBytes`. */
 export async function trimArtCache(maxBytes = 2 * 1024 ** 3): Promise<{ files: number; bytes: number; removed: number }> {
@@ -208,16 +465,14 @@ export async function trimArtCache(maxBytes = 2 * 1024 ** 3): Promise<{ files: n
     } catch {
       continue
     }
-    for (const n of names) {
-      if (n.endsWith('.json') || n.endsWith('.tmp')) continue
-      try {
-        const s = await stat(join(root, d, n))
-        files.push({ path: join(root, d, n), size: s.size, mtime: s.mtimeMs })
-        total += s.size
-      } catch {
-        /* raced */
-      }
-    }
+    const data = names.filter((n) => !n.endsWith('.json') && !n.endsWith('.tmp'))
+    const stats = await Promise.all(data.map((n) => stat(join(root, d, n)).catch(() => null)))
+    data.forEach((n, i) => {
+      const s = stats[i]
+      if (!s) return // raced
+      files.push({ path: join(root, d, n), size: s.size, mtime: s.mtimeMs })
+      total += s.size
+    })
   }
   let removed = 0
   if (total > maxBytes) {

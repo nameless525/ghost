@@ -1,0 +1,13 @@
+[package]
+name = "ghost-art"
+description = "Cover-art pipeline for GHOST: decode (JPEG/PNG/WebP/GIF), SIMD resize, JPEG/PNG encode and accent-colour extraction"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Decoders only (zune-jpeg for JPEG, png, image-webp, gif); encoders below are explicit.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+fast_image_resize = "6.1"
+jpeg-encoder = "0.7"

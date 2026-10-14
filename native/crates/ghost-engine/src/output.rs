@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
@@ -14,6 +14,7 @@ use crossbeam_channel::Sender;
 
 use crate::clock::Clock;
 use crate::mixer::{Mixer, MAX_BLOCK};
+use crate::stats::Stats;
 use crate::util::epoch_us;
 use crate::DeviceInfo;
 
@@ -76,7 +77,7 @@ pub fn choose_device(id: Option<&str>) -> Result<DeviceChoice, String> {
 }
 
 /// Start a stream on `choice`, moving `mixer` into the callback.
-pub fn start(choice: DeviceChoice, mixer: Box<Mixer>, clock: Arc<Clock>, err: Arc<AtomicU32>) -> Result<OutputStream, String> {
+pub fn start(choice: DeviceChoice, mixer: Box<Mixer>, clock: Arc<Clock>, err: Arc<AtomicU32>, stats: Arc<Stats>) -> Result<OutputStream, String> {
     let DeviceChoice { device, config, id, name } = choice;
     let rate = config.sample_rate();
     let channels = config.channels();
@@ -88,10 +89,10 @@ pub fn start(choice: DeviceChoice, mixer: Box<Mixer>, clock: Arc<Clock>, err: Ar
     };
     let stream_config = cpal::StreamConfig { channels, sample_rate: rate, buffer_size };
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build::<f32>(&device, stream_config, mixer, clock, err),
-        cpal::SampleFormat::I16 => build::<i16>(&device, stream_config, mixer, clock, err),
-        cpal::SampleFormat::I32 => build::<i32>(&device, stream_config, mixer, clock, err),
-        cpal::SampleFormat::U16 => build::<u16>(&device, stream_config, mixer, clock, err),
+        cpal::SampleFormat::F32 => build::<f32>(&device, stream_config, mixer, clock, err, stats),
+        cpal::SampleFormat::I16 => build::<i16>(&device, stream_config, mixer, clock, err, stats),
+        cpal::SampleFormat::I32 => build::<i32>(&device, stream_config, mixer, clock, err, stats),
+        cpal::SampleFormat::U16 => build::<u16>(&device, stream_config, mixer, clock, err, stats),
         other => return Err(format!("unsupported sample format {other:?}")),
     }
     .map_err(|e| format!("build stream: {e}"))?;
@@ -105,6 +106,7 @@ fn build<T>(
     mut mixer: Box<Mixer>,
     clock: Arc<Clock>,
     err: Arc<AtomicU32>,
+    stats: Arc<Stats>,
 ) -> Result<cpal::Stream, cpal::Error>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
@@ -113,9 +115,17 @@ where
     let rate = config.sample_rate.max(1) as u64;
     let mut scratch = vec![0.0f32; MAX_BLOCK * 2];
     let silence = T::from_sample(0.0f32);
+    let err_stats = stats.clone();
+    let mut registered = false;
+    let mut prev_start: Option<Instant> = None;
     device.build_output_stream::<T, _, _>(
         config,
         move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
+            let started = Instant::now();
+            if !registered {
+                // CPU accounting for the device's IO thread (never blocks; retried if busy).
+                registered = crate::stats::try_register_foreign_thread("ghost-audio-out");
+            }
             let ts = info.timestamp();
             let lat_us = ts.playback.checked_duration_since(ts.callback).map(|d| d.as_micros() as u64).unwrap_or(0);
             clock.latency_us.store(lat_us, Ordering::Relaxed);
@@ -140,10 +150,17 @@ where
                 }
                 off += n;
             }
+            let took = started.elapsed().as_nanos() as u64;
+            let period = frames as u64 * 1_000_000_000 / rate;
+            stats.record_callback(took, period, prev_start.map(|p| started.duration_since(p).as_nanos() as u64));
+            prev_start = Some(started);
         },
         move |e: cpal::Error| {
             let flag = match e.kind() {
-                cpal::ErrorKind::Xrun => ERR_XRUN,
+                cpal::ErrorKind::Xrun => {
+                    Stats::add(&err_stats.xruns, 1);
+                    ERR_XRUN
+                }
                 _ => ERR_REBUILD,
             };
             err.fetch_or(flag, Ordering::Relaxed);

@@ -592,3 +592,50 @@ impl ToNapiValue for JsEvent {
         Ok(o.raw())
     }
 }
+
+/// `GhostEngine.stats()` result (see `ghost_engine::StatsSnapshot`).
+#[napi(object, use_nullable = true)]
+pub struct JsEngineStats {
+    /// The playing track ran out of decoded audio mid-playback (dropout / rebuffer).
+    pub underruns: f64,
+    /// Device-reported overloads (CoreAudio processor overload).
+    pub xruns: f64,
+    pub callbacks: f64,
+    /// Output callbacks that took more than half their buffer period.
+    pub callback_over_budget: f64,
+    /// Output callbacks that started more than 1.5 buffer periods after the previous one.
+    pub callback_gaps: f64,
+    pub callback_max_us: f64,
+    pub callback_avg_us: f64,
+    pub callback_period_us: f64,
+    /// Least decoded audio buffered ahead of the playing track (ms), null until something played.
+    pub low_water_ms: Option<f64>,
+    /// Times the playing track had less than 500 ms decoded ahead.
+    pub low_water_events: f64,
+    pub threads: Vec<JsThreadCpu>,
+}
+
+#[napi(object)]
+pub struct JsThreadCpu {
+    pub name: String,
+    pub count: u32,
+    pub cpu_ms: f64,
+}
+
+impl From<ghost_engine::StatsSnapshot> for JsEngineStats {
+    fn from(s: ghost_engine::StatsSnapshot) -> Self {
+        JsEngineStats {
+            underruns: s.underruns as f64,
+            xruns: s.xruns as f64,
+            callbacks: s.callbacks as f64,
+            callback_over_budget: s.callback_over_budget as f64,
+            callback_gaps: s.callback_gaps as f64,
+            callback_max_us: s.callback_max_us,
+            callback_avg_us: s.callback_avg_us,
+            callback_period_us: s.callback_period_us,
+            low_water_ms: s.low_water_ms,
+            low_water_events: s.low_water_events as f64,
+            threads: s.threads.into_iter().map(|t| JsThreadCpu { name: t.name, count: t.count, cpu_ms: t.cpu_ms }).collect(),
+        }
+    }
+}

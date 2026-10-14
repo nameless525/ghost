@@ -20,6 +20,7 @@ use crate::clock::{Clock, Segment};
 use crate::dsp::limiter::Limiter;
 use crate::dsp::overlay::OverlayFilter;
 use crate::dsp::{Curve, DbRamp, Fader, Ramp};
+use crate::stats::{Stats, LOW_WATER_SEC};
 use crate::voice::{Bus, Voice};
 
 /// Largest block rendered in one pass (bigger callbacks are split).
@@ -40,6 +41,9 @@ pub const PREFILL_SEC: f32 = 0.2;
 pub const REBUFFER_SEC: f32 = 0.75;
 pub const LIMITER_CEILING_DB: f32 = -1.0;
 pub const LIMITER_LOOKAHEAD_MS: f32 = 1.5;
+/// Keep feeding the analysis tap this long after the mixer went idle (so visuals decay to
+/// silence), then stop: nothing to analyse while idle, and the analysis thread can sleep.
+pub const TAP_IDLE_HOLD_SEC: f32 = 1.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transition {
@@ -204,6 +208,12 @@ pub struct Mixer {
     rebuffer: usize,
     micro: u32,
     switch_fade: u32,
+
+    stats: Arc<Stats>,
+    low_water: usize,
+    /// Frames rendered since the mixer was last active (tap gating).
+    idle_frames: u64,
+    tap_hold: u64,
 }
 
 pub struct MixerParts {
@@ -259,8 +269,17 @@ impl Mixer {
             rebuffer: (REBUFFER_SEC * r) as usize,
             micro: (MICRO_FADE_SEC * r) as u32,
             switch_fade: (SWITCH_FADE_SEC * r) as u32,
+            stats: Arc::new(Stats::new()),
+            low_water: (LOW_WATER_SEC * r) as usize,
+            idle_frames: 0,
+            tap_hold: (TAP_IDLE_HOLD_SEC * r) as u64,
         });
         MixerParts { mixer, link: MixerLink { cmd: cmd_tx, events: ev_rx, garbage: garbage_rx }, tap: tap_rx }
+    }
+
+    /// Report underruns / low-water marks into `stats` (the engine's shared counters).
+    pub fn set_stats(&mut self, stats: Arc<Stats>) {
+        self.stats = stats;
     }
 
     /// Output delay added by the mixer itself (limiter look-ahead), in frames.
@@ -468,6 +487,7 @@ impl Mixer {
 
         if self.transport_running() {
             self.render_music(n);
+            self.track_low_water();
         } else {
             let (k, s, p) = self.current.as_ref().map(|c| (c.key, c.seq, c.pos)).unwrap_or((0, 0, 0));
             self.seg.piece(0, n, k, s, p, false);
@@ -475,26 +495,45 @@ impl Mixer {
         self.render_tails(n);
         self.render_preview(n);
 
-        let mut tap_idx = 0;
-        for i in 0..n {
-            let t = self.transport.step();
-            let d = self.duck.step();
-            let g = t * d;
-            let (l, r) = self.overlay.process(self.music[2 * i] * g, self.music[2 * i + 1] * g);
-            let l = l + self.prev[2 * i];
-            let r = r + self.prev[2 * i + 1];
-            self.tap.data[tap_idx] = l;
-            self.tap.data[tap_idx + 1] = r;
-            tap_idx += 2;
-            let m = self.master.step() * self.device.step();
-            let (l, r) = self.limiter.process(l * m, r * m);
-            out[2 * i] = l;
-            out[2 * i + 1] = r;
+        if self.is_active() {
+            self.idle_frames = 0;
+        } else {
+            self.idle_frames = self.idle_frames.saturating_add(n as u64);
         }
-        self.tap.dev_frame = self.dev_frame;
-        self.tap.frames = n as u32;
-        if let Some(tx) = self.tap_tx.as_mut() {
-            let _ = tx.push(*self.tap);
+        // Idle for a while with every ramp at rest: the buses are silent and the chain's state
+        // (limiter delay line, filter memory) was flushed long ago, so the output is silence.
+        // Skip the per-sample work (the device keeps calling us ~50 times a second while idle).
+        let quiet = self.idle_frames > self.tap_hold
+            && self.transport.done()
+            && self.duck.is_settled()
+            && self.master.is_settled()
+            && self.device.is_settled();
+        if quiet {
+            out.fill(0.0);
+        } else {
+            let mut tap_idx = 0;
+            for i in 0..n {
+                let t = self.transport.step();
+                let d = self.duck.step();
+                let g = t * d;
+                let (l, r) = self.overlay.process(self.music[2 * i] * g, self.music[2 * i + 1] * g);
+                let l = l + self.prev[2 * i];
+                let r = r + self.prev[2 * i + 1];
+                self.tap.data[tap_idx] = l;
+                self.tap.data[tap_idx + 1] = r;
+                tap_idx += 2;
+                let m = self.master.step() * self.device.step();
+                let (l, r) = self.limiter.process(l * m, r * m);
+                out[2 * i] = l;
+                out[2 * i + 1] = r;
+            }
+            self.tap.dev_frame = self.dev_frame;
+            self.tap.frames = n as u32;
+            if self.idle_frames <= self.tap_hold {
+                if let Some(tx) = self.tap_tx.as_mut() {
+                    let _ = tx.push(*self.tap);
+                }
+            }
         }
         self.seg.flush(&self.clock);
         self.dev_frame += n as u64;
@@ -511,6 +550,28 @@ impl Mixer {
             }
             self.emit(MixerEvent::Paused);
         }
+    }
+
+    /// Decode-buffer health of the playing voice: the lowest fill seen (once it had filled up)
+    /// and how often it dipped below `LOW_WATER_SEC`. Ignores start-up, rebuffering and the
+    /// natural drain at the end of a track.
+    fn track_low_water(&mut self) {
+        let low = self.low_water;
+        let Some(c) = self.current.as_mut() else { return };
+        if !c.started || c.underrun || c.eof() {
+            return;
+        }
+        let avail = c.available();
+        if !c.low_water_armed {
+            c.low_water_armed = avail >= low;
+            return;
+        }
+        self.stats.low_water_frames.fetch_min(avail as u64, std::sync::atomic::Ordering::Relaxed);
+        let below = avail < low;
+        if below && !c.below_low_water {
+            Stats::add(&self.stats.low_water_events, 1);
+        }
+        c.below_low_water = below;
     }
 
     fn start_crossfade(&mut self, len: u32, block_offset: usize) {
@@ -625,6 +686,7 @@ impl Mixer {
             // Underrun: wait for the decoder to catch up.
             if !cur.underrun {
                 cur.underrun = true;
+                Stats::add(&self.stats.underruns, 1);
                 let key = cur.key;
                 self.emit(MixerEvent::Underrun(key, true));
             }

@@ -67,6 +67,8 @@ pub struct Shared {
     pub device_name: Mutex<String>,
     /// Mutable voices of the current track (for `Engine::voice_count`).
     pub voice_count: AtomicU32,
+    /// Health counters (underruns, xruns, callback load, low water).
+    pub stats: Arc<crate::stats::Stats>,
 }
 
 impl Shared {
@@ -80,6 +82,7 @@ impl Shared {
             rate: AtomicU32::new(0),
             device_name: Mutex::new(String::new()),
             voice_count: AtomicU32::new(0),
+            stats: Arc::new(crate::stats::Stats::new()),
         }
     }
 
@@ -290,7 +293,7 @@ impl Controller {
                 recv(self.worker_rx) -> w => if let Ok(w) = w { self.on_worker(w) },
                 recv(self.cache_rx) -> e => if let Ok(e) = e { self.on_cache(e) },
                 recv(self.loud_rx) -> l => if let Ok(l) = l { self.on_loudness(l) },
-                default(Duration::from_millis(5)) => {}
+                default(self.poll_interval()) => {}
             }
             self.poll_mixer();
             self.tick();
@@ -302,6 +305,19 @@ impl Controller {
         self.link = None;
         self.out = Out::None;
         let _ = self.tap_tx.send(TapMsg::Shutdown);
+    }
+
+    /// Housekeeping cadence (commands always wake the loop at once): mixer events and buffering
+    /// checks matter while audio runs; paused, only freed voices trickle back; idle, only device
+    /// polling (every 1.5 s) remains.
+    fn poll_interval(&self) -> Duration {
+        if self.preview.is_some() || (self.playing && self.current.is_some()) {
+            Duration::from_millis(10)
+        } else if self.current.is_some() || !self.voices.is_empty() {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_millis(100)
+        }
     }
 
     // ---------------------------------------------------------------- output
@@ -318,9 +334,10 @@ impl Controller {
                     }
                 };
                 let rate = choice.config.sample_rate();
-                let parts = Mixer::create(rate, self.shared.clock.clone(), false, start_frame, fade_in);
+                let mut parts = Mixer::create(rate, self.shared.clock.clone(), false, start_frame, fade_in);
+                parts.mixer.set_stats(self.shared.stats.clone());
                 self.device_err.store(0, Ordering::Relaxed);
-                match output::start(choice, parts.mixer, self.shared.clock.clone(), self.device_err.clone()) {
+                match output::start(choice, parts.mixer, self.shared.clock.clone(), self.device_err.clone(), self.shared.stats.clone()) {
                     Ok(stream) => {
                         *self.shared.device_name.lock() = stream.device_name.clone();
                         self.out = Out::Device(stream);
@@ -333,7 +350,8 @@ impl Controller {
                 }
             }
             OutputMode::Offline { rate, block, sink } => {
-                let parts = Mixer::create(*rate, self.shared.clock.clone(), true, start_frame, false);
+                let mut parts = Mixer::create(*rate, self.shared.clock.clone(), true, start_frame, false);
+                parts.mixer.set_stats(self.shared.stats.clone());
                 let null = NullOutput::start(parts.mixer, *block, sink.clone());
                 *self.shared.device_name.lock() = "offline null sink".into();
                 self.out = Out::Null(null);
@@ -343,6 +361,7 @@ impl Controller {
         self.last_open_error = None;
         self.rate = rate;
         self.shared.rate.store(rate, Ordering::Relaxed);
+        self.shared.stats.rate.store(rate as u64, Ordering::Relaxed);
         self.link = Some(parts.0);
         let _ = self.tap_tx.send(TapMsg::Source { tap: parts.1, rate });
         self.send(MixerCmd::SetMaster(self.master_lin()));

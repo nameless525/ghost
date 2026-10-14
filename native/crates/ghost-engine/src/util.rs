@@ -63,13 +63,54 @@ pub fn set_low_priority() {
     }
 }
 
-/// Spawn a named thread, panicking only if the OS refuses to create threads at all.
+/// Raise the calling thread's scheduling priority for audio-feeding work that is not itself
+/// real-time (decode workers, the stream fetcher): it then keeps up even when every core is busy.
+/// The output callback already runs on the device's real-time thread.
+pub fn set_audio_feed_priority() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let _ = libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        // Only lowers the nice value when permitted (CAP_SYS_NICE / RLIMIT_NICE); harmless otherwise.
+        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        let _ = libc::setpriority(libc::PRIO_PROCESS, tid, -5);
+    }
+}
+
+/// Thread class for CPU accounting: the name without a trailing `-<n>` index.
+fn thread_class(name: &str) -> &'static str {
+    use std::sync::Mutex;
+    static CLASSES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let class = match name.rsplit_once('-') {
+        Some((head, idx)) if !idx.is_empty() && idx.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => name,
+    };
+    let mut known = CLASSES.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(c) = known.iter().find(|c| **c == class) {
+        return c;
+    }
+    let c: &'static str = Box::leak(class.to_string().into_boxed_str());
+    known.push(c);
+    c
+}
+
+/// Spawn a named thread, panicking only if the OS refuses to create threads at all. The thread
+/// is registered for per-thread CPU accounting (`Engine::stats`).
 pub fn spawn_named<F, T>(name: &str, f: F) -> std::thread::JoinHandle<T>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    std::thread::Builder::new().name(name.to_string()).spawn(f).expect("failed to spawn engine thread")
+    let class = thread_class(name);
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(move || {
+            let _cpu = crate::stats::register_thread(class);
+            f()
+        })
+        .expect("failed to spawn engine thread")
 }
 
 /// Stable short hash used for cache file names.

@@ -19,6 +19,9 @@ use crate::voice::{Continuation, VoiceShared};
 use crate::SourceSpec;
 
 const READ_FRAMES: usize = 1024;
+/// How long a worker sleeps when its ring is full. The ring holds `RING_SECONDS` (2 s), so it
+/// never drops below ~1.75 s ahead; batching refills keeps wake-ups to a few per second.
+const FULL_RING_WAIT: Duration = Duration::from_millis(250);
 
 #[derive(Debug)]
 pub enum WorkerEvent {
@@ -199,6 +202,7 @@ fn drain(run: &mut Run, out: &mut Vec<f32>, out_pos: &mut usize, router: &mut Ro
 }
 
 fn run(p: WorkerParams) {
+    crate::util::set_audio_feed_priority();
     let WorkerParams { spec, start_ms, dev_rate, producer, shared, cache, loops, events } = p;
     let mut router = Router { lanes: VecDeque::new(), events: events.clone() };
     let mut next_seg = Some(Seg { spec, shared, producer, start_ms });
@@ -280,7 +284,7 @@ fn run(p: WorkerParams) {
             if out_pos < out.len() {
                 out_pos = router.push(&out, out_pos);
                 if out_pos < out.len() {
-                    std::thread::park_timeout(Duration::from_millis(10));
+                    std::thread::park_timeout(FULL_RING_WAIT);
                     continue;
                 }
                 out.clear();

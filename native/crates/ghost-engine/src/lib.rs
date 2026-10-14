@@ -39,6 +39,7 @@ pub(crate) mod mixer;
 pub(crate) mod output;
 pub(crate) mod resample;
 pub mod source;
+pub mod stats;
 pub mod util;
 pub(crate) mod voice;
 pub mod wav;
@@ -311,6 +312,7 @@ pub struct OutputInfo {
 }
 
 pub use cache::CacheStats;
+pub use stats::{StatsSnapshot, ThreadCpu};
 
 /// Enumerate output devices without starting an engine.
 pub fn list_output_devices() -> Vec<DeviceInfo> {
@@ -448,6 +450,18 @@ impl Engine {
         self.inner.shared.analysis.frame_now(out)
     }
 
+    /// Block until `analysis_frame` has frames again (audio is playing), `cancel` is set and
+    /// `wake_analysis_waiters` is called, or `timeout` passes. Lets frame consumers sleep while
+    /// nothing plays instead of polling. Returns whether frames are available.
+    pub fn wait_analysis(&self, timeout: std::time::Duration, cancel: &std::sync::atomic::AtomicBool) -> bool {
+        self.inner.shared.analysis.wait_active(timeout, cancel)
+    }
+
+    /// Wake all `wait_analysis` callers (after setting their cancel flag).
+    pub fn wake_analysis_waiters(&self) {
+        self.inner.shared.analysis.wake_all();
+    }
+
     pub fn list_devices(&self) -> Vec<DeviceInfo> {
         let cached = self.inner.shared.devices.lock().clone();
         if cached.is_empty() {
@@ -499,6 +513,12 @@ impl Engine {
     }
     pub fn cancel_download(&self, download_id: &str) {
         self.inner.downloads.cancel(download_id);
+    }
+
+    /// Playback health counters (underruns, device xruns, output-callback load, decode-buffer low
+    /// water) and CPU time per engine thread class. `reset` zeroes the counters afterwards.
+    pub fn stats(&self, reset: bool) -> StatsSnapshot {
+        self.inner.shared.stats.snapshot(reset)
     }
 
     /// Stream cache statistics.

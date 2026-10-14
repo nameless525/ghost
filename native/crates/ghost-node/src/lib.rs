@@ -5,7 +5,10 @@
 //! * `AnalysisReader` maps the shared-memory analysis region read-only (see `shm.rs` for the
 //!   layout). The renderer preload loads this same addon only to construct readers;
 //!   constructing one never starts the engine, audio or any thread.
+//! * `processArt` / `artAccent` run the cover-art pipeline (`ghost-art`) on a small dedicated
+//!   pool (see `art.rs`); usable without a `GhostEngine`, and lazy (no threads until first use).
 
+mod art;
 mod convert;
 mod publisher;
 mod shm;
@@ -81,7 +84,9 @@ fn spawn_pump(rx: Receiver<EngineEvent>, sink: Arc<Mutex<Option<EventTsfn>>>) ->
     let (stop_tx, stop_rx) = crossbeam_channel::bounded::<()>(0);
     let thread = std::thread::Builder::new()
         .name("ghost-node-events".into())
-        .spawn(move || loop {
+        .spawn(move || {
+            let _cpu = ghost_engine::stats::register_thread("ghost-node-events");
+            loop {
             crossbeam_channel::select! {
                 recv(rx) -> ev => match ev {
                     Ok(ev) => deliver(&sink, ev),
@@ -94,6 +99,7 @@ fn spawn_pump(rx: Receiver<EngineEvent>, sink: Arc<Mutex<Option<EventTsfn>>>) ->
                     }
                     break;
                 }
+            }
             }
         })
         .map_err(|e| generic(format!("failed to spawn event thread: {e}")))?;
@@ -367,6 +373,15 @@ impl GhostEngine {
         if let Some(e) = self.live() {
             e.cancel_download(&download_id);
         }
+    }
+
+    /// Playback health: `{ underruns, xruns, callbacks, callbackOverBudget, callbackGaps,
+    /// callbackMaxUs, callbackAvgUs, callbackPeriodUs, lowWaterMs, lowWaterEvents,
+    /// threads: [{ name, count, cpuMs }] }`. Counters accumulate until read with `reset = true`.
+    /// Cheap (atomics plus one kernel query per engine thread); callable from any JS thread.
+    #[napi]
+    pub fn stats(&self, reset: Option<bool>) -> JsEngineStats {
+        self.engine.stats(reset.unwrap_or(false)).into()
     }
 
     /// Absolute path of the memory-mapped analysis region (pass to `AnalysisReader`).

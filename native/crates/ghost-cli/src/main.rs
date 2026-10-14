@@ -459,6 +459,20 @@ fn cmd_play(cli: &Cli, o: &PlayOpts) -> Result<(), String> {
                 info.device_latency_ms,
                 info.engine_latency_ms,
             );
+            let st = engine.stats(false);
+            println!(
+                "          health: underruns {} xruns {} low-water {} (events {}) callbacks {} over-budget {} gaps {} cb avg/max {:.0}/{:.0} µs of {:.0} µs",
+                st.underruns,
+                st.xruns,
+                st.low_water_ms.map(|m| format!("{m:.0} ms")).unwrap_or("-".into()),
+                st.low_water_events,
+                st.callbacks,
+                st.callback_over_budget,
+                st.callback_gaps,
+                st.callback_avg_us,
+                st.callback_max_us,
+                st.callback_period_us,
+            );
             if engine.analysis_frame(&mut frame) {
                 let loud = frame.bands.iter().enumerate().fold((0, 0.0f32), |m, (i, &b)| if b > m.1 { (i, b) } else { m });
                 println!(
@@ -499,6 +513,24 @@ fn cmd_play(cli: &Cli, o: &PlayOpts) -> Result<(), String> {
             b,
             max_res
         );
+    }
+    let st = engine.stats(false);
+    let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "stats: underruns {} xruns {} low-water {} (events {}) callbacks {} over-budget {} gaps {} cb avg/max {:.0}/{:.0} µs of {:.0} µs",
+        st.underruns,
+        st.xruns,
+        st.low_water_ms.map(|m| format!("{m:.0} ms")).unwrap_or("-".into()),
+        st.low_water_events,
+        st.callbacks,
+        st.callback_over_budget,
+        st.callback_gaps,
+        st.callback_avg_us,
+        st.callback_max_us,
+        st.callback_period_us,
+    );
+    for t in &st.threads {
+        println!("  thread {:<20} x{:<2} cpu {:8.1} ms ({:.2} % of one core)", t.name, t.count, t.cpu_ms, t.cpu_ms / wall_ms * 100.0);
     }
     engine.stop();
     std::thread::sleep(Duration::from_millis(100));

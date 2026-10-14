@@ -12,6 +12,8 @@ crate-type = ["cdylib"]
 [dependencies]
 ghost-engine = { path = "../ghost-engine" }
 ghost-analysis = { path = "../ghost-analysis" }
+# Cover-art decode / resize / encode / accent for `processArt` (runs on its own small pool).
+ghost-art = { path = "../ghost-art" }
 napi = { version = "3", features = ["napi8"] }
 napi-derive = "3"
 memmap2 = "0.9"

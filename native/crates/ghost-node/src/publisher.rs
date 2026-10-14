@@ -1,5 +1,8 @@
-//! Publisher thread: polls `Engine::analysis_frame` at ~240 Hz and writes it into the
-//! shared-memory region (see `shm.rs`). Owned by `GhostEngine`.
+//! Publisher thread: while audio plays, copies `Engine::analysis_frame` (the frame audible
+//! now) into the shared-memory region (see `shm.rs`) at the analysis thread's 200 Hz hop rate.
+//! While nothing plays it publishes "no frame", marks the region parked and sleeps in
+//! `Engine::wait_analysis` until audio flows again: no polling, no wake-ups when idle or paused.
+//! Owned by `GhostEngine`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,9 +12,12 @@ use std::time::{Duration, Instant};
 
 use ghost_engine::{AnalysisFrame, Engine};
 
-use crate::shm::{ShmWriter, NUM_BANDS, WAVEFORM_LEN};
+use crate::shm::{ShmWriter, NUM_BANDS, STATE_ACTIVE, STATE_CLOSED, STATE_PARKED, WAVEFORM_LEN};
 
-const PERIOD: Duration = Duration::from_micros(1_000_000 / 240);
+/// One analysis hop (5 ms): a new frame becomes audible this often.
+const PERIOD: Duration = Duration::from_micros(1_000_000 / 200);
+/// Upper bound for one idle sleep (the wait is woken by activity / shutdown long before).
+const PARK_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Set `GHOST_ANALYSIS_SYNTHETIC=1` to publish a generated 120 BPM test signal whenever the
 /// engine has no real frame. Lets visualizers be developed (and the channel verified)
@@ -25,6 +31,7 @@ fn synthetic_enabled() -> bool {
 
 pub struct Publisher {
     stop: Arc<AtomicBool>,
+    engine: Arc<Engine>,
     thread: Option<JoinHandle<()>>,
     path: PathBuf,
 }
@@ -36,20 +43,34 @@ impl Publisher {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_t = stop.clone();
         let synthetic = synthetic_enabled();
+        let engine_t = engine.clone();
         let thread = std::thread::Builder::new()
             .name("ghost-analysis-shm".into())
             .spawn(move || {
+                let engine = engine_t;
+                let _cpu = ghost_engine::stats::register_thread("ghost-analysis-shm");
                 let mut frame = AnalysisFrame::default();
                 let t0 = Instant::now();
                 let mut next = Instant::now();
+                let mut parked = false;
                 while !stop_t.load(Ordering::Acquire) {
                     if engine.analysis_frame(&mut frame) {
+                        if parked {
+                            writer.set_state(STATE_ACTIVE);
+                            parked = false;
+                        }
                         writer.publish(Some(&frame));
                     } else if synthetic {
                         synthesize(t0.elapsed().as_secs_f64(), &mut frame);
                         writer.publish(Some(&frame));
                     } else {
+                        // Idle / paused: say so once, then sleep until audio flows again.
                         writer.publish(None);
+                        writer.set_state(STATE_PARKED);
+                        parked = true;
+                        engine.wait_analysis(PARK_TIMEOUT, &stop_t);
+                        next = Instant::now();
+                        continue;
                     }
                     next += PERIOD;
                     let now = Instant::now();
@@ -59,11 +80,14 @@ impl Publisher {
                         next = now; // fell behind (suspend, load): don't try to catch up
                     }
                 }
-                // Tell mapped readers immediately that nothing is playing any more.
+                // Tell mapped readers immediately that nothing is playing any more, and that
+                // this region is finished (they reopen the path for a replacement engine).
                 writer.publish(None);
+                writer.set_state(STATE_CLOSED);
             })?;
         Ok(Publisher {
             stop,
+            engine,
             thread: Some(thread),
             path: path.to_path_buf(),
         })
@@ -75,7 +99,8 @@ impl Publisher {
 
     /// Stop the thread and delete the region file. Idempotent.
     pub fn stop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        self.stop.store(true, Ordering::SeqCst);
+        self.engine.wake_analysis_waiters();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
             let _ = std::fs::remove_file(&self.path);

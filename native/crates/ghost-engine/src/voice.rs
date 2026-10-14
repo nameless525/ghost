@@ -124,6 +124,9 @@ pub struct Voice {
     pub release_when_silent: bool,
     /// When a voice becomes a tail mid-block, the frame offset in that block where it resumes.
     pub block_offset: u32,
+    /// Low-water tracking (stats): the ring has filled past the threshold once since starting.
+    pub low_water_armed: bool,
+    pub below_low_water: bool,
 }
 
 impl Voice {
@@ -142,6 +145,8 @@ impl Voice {
             env: Fader::fixed(1.0),
             release_when_silent: false,
             block_offset: 0,
+            low_water_armed: false,
+            below_low_water: false,
         }
     }
 

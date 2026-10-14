@@ -20,7 +20,12 @@
 //!   2464     8  position_ms  f64         audible (latency-compensated) position of this frame
 //!   2472     4  track_seq    u32         increments when the engine's current track changes
 //!   2476     4  valid        u32         1 = frame present, 0 = nothing playing / shut down
-//!   2480        (end of payload; rest of the 4096-byte file is zero)
+//!   2480        (end of payload)
+//!   -- writer state (outside the seqlock; added compatibly in v1, older writers leave it 0) ---
+//!   2480     4  state        u32         0 = legacy (heartbeat only), 1 = active, 2 = parked,
+//!                                        3 = closed
+//!   2484     4  writer_pid   u32         publishing process
+//!   2488        (rest of the 4096-byte file is zero)
 //! ```
 //!
 //! # Protocol (single writer, any number of readers, cross-process)
@@ -33,9 +38,13 @@
 //! * Reader: `s1 = seq.load(Acquire)` (retry if odd); `<payload loads, Relaxed>`;
 //!   `fence(Acquire); s2 = seq.load(Relaxed)`; the copy is consistent iff `s1 == s2`.
 //!
-//! The publisher rewrites the region at ~240 Hz even when the engine has no frame (valid = 0),
-//! so `seq` doubles as a heartbeat: a reader that sees `seq` frozen for longer than
-//! [`STALE_AFTER`] treats the region as stale (publisher gone / process hung) and reports none.
+//! While audio plays, the publisher rewrites the region at ~200 Hz (the analysis hop rate), so
+//! `seq` doubles as a heartbeat: a reader that sees `seq` frozen for longer than [`STALE_AFTER`]
+//! while the state is `active` treats the region as stale (process hung) and reports none.
+//! While nothing plays the publisher writes `valid = 0`, sets `state = parked` and sleeps until
+//! audio flows again (no heartbeat, no wake-ups); readers then stay attached as long as the
+//! writer process exists. On shutdown it sets `state = closed` before deleting the file, which
+//! tells readers to reopen the path (a replacement engine publishes at the same path).
 
 use std::fs::OpenOptions;
 use std::io;
@@ -63,13 +72,22 @@ const OFF_POSITION: usize = OFF_ONSET + 8; // +4 padding
 const OFF_TRACK_SEQ: usize = OFF_POSITION + 8;
 const OFF_VALID: usize = OFF_TRACK_SEQ + 4;
 pub const PAYLOAD_END: usize = OFF_VALID + 4;
+const OFF_STATE: usize = PAYLOAD_END;
+const OFF_PID: usize = OFF_STATE + 4;
 pub const FILE_LEN: usize = 4096;
+
+/// Writer states (`state` word; 0 = a writer that predates it, heartbeat semantics only).
+pub const STATE_ACTIVE: u32 = 1;
+pub const STATE_PARKED: u32 = 2;
+pub const STATE_CLOSED: u32 = 3;
+/// How often a reader of a parked region re-checks that the writer process still exists.
+const PID_CHECK_EVERY: Duration = Duration::from_secs(2);
 
 const _: () = {
     assert!(OFF_SEQ.is_multiple_of(8));
     assert!(OFF_BANDS == 16 && OFF_WAVE == 400 && OFF_RMS == 2448);
     assert!(OFF_POSITION == 2464 && OFF_POSITION.is_multiple_of(8));
-    assert!(PAYLOAD_END == 2480 && PAYLOAD_END <= FILE_LEN);
+    assert!(PAYLOAD_END == 2480 && OFF_PID + 4 <= FILE_LEN);
 };
 
 /// A reader reports the region as stale once `seq` has not moved for this long.
@@ -161,8 +179,15 @@ impl ShmWriter {
         u32_at(base, OFF_VERSION).store(VERSION, Ordering::Relaxed);
         u64_at(base, OFF_SEQ).store(0, Ordering::Relaxed);
         u32_at(base, OFF_VALID).store(0, Ordering::Relaxed);
+        u32_at(base, OFF_STATE).store(STATE_ACTIVE, Ordering::Relaxed);
+        u32_at(base, OFF_PID).store(std::process::id(), Ordering::Relaxed);
         u32_at(base, OFF_MAGIC).store(MAGIC, Ordering::Release);
         Ok(w)
+    }
+
+    /// Announce the writer state (`STATE_ACTIVE` / `STATE_PARKED` / `STATE_CLOSED`).
+    pub fn set_state(&self, state: u32) {
+        u32_at(self.base(), OFF_STATE).store(state, Ordering::Release);
     }
 
     #[inline]
@@ -228,6 +253,7 @@ pub struct ShmReader {
     map: Mmap,
     last_seq: u64,
     last_change: Instant,
+    last_pid_check: Option<(Instant, bool)>,
 }
 
 impl ShmReader {
@@ -246,7 +272,22 @@ impl ShmReader {
             map,
             last_seq: u64::MAX,
             last_change: Instant::now(),
+            last_pid_check: None,
         })
+    }
+
+    /// Whether the writing process still exists (checked at most every `PID_CHECK_EVERY`).
+    fn writer_alive(&mut self) -> bool {
+        let now = Instant::now();
+        if let Some((at, alive)) = self.last_pid_check {
+            if now.duration_since(at) < PID_CHECK_EVERY {
+                return alive;
+            }
+        }
+        let pid = u32_at(self.map.as_ptr(), OFF_PID).load(Ordering::Relaxed);
+        let alive = pid == 0 || pid == std::process::id() || process_alive(pid);
+        self.last_pid_check = Some((now, alive));
+        alive
     }
 
     /// Whether a publisher is actively updating this region (valid header, heartbeat moving).
@@ -258,12 +299,20 @@ impl ShmReader {
         {
             return false;
         }
+        let state = u32_at(base, OFF_STATE).load(Ordering::Acquire);
+        if state == STATE_CLOSED {
+            return false;
+        }
         let s = u64_at(base, OFF_SEQ).load(Ordering::Acquire);
         let now = Instant::now();
         if s != self.last_seq {
             self.last_seq = s;
             self.last_change = now;
             return true;
+        }
+        if state == STATE_PARKED {
+            // Idle publisher: no heartbeat by design.
+            return self.writer_alive();
         }
         now.duration_since(self.last_change) <= STALE_AFTER
     }
@@ -357,6 +406,33 @@ mod tests {
         );
         w.publish(None);
         assert!(!r.read(&mut s));
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn parked_region_stays_alive_without_heartbeat_and_closed_does_not() {
+        let path = std::env::temp_dir().join(format!("ghost-analysis-test3-{}.shm", std::process::id()));
+        let w = ShmWriter::create(&path).unwrap();
+        let mut r = ShmReader::open(&path).unwrap();
+        let mut s = Snapshot::default();
+        w.publish(None);
+        assert!(r.alive());
+        // Active writer that stops publishing goes stale…
+        r.last_change = Instant::now() - STALE_AFTER - Duration::from_millis(10);
+        assert!(!r.alive());
+        // …a parked one does not (no heartbeat while idle, by design).
+        w.set_state(STATE_PARKED);
+        assert!(r.alive());
+        assert!(!r.read(&mut s));
+        // Waking up: frames flow again.
+        w.set_state(STATE_ACTIVE);
+        w.publish(Some(&frame(3.0)));
+        assert!(r.read(&mut s) && r.alive());
+        assert_eq!(s.rms, 3.0);
+        // Closed: readers must reopen.
+        w.publish(None);
+        w.set_state(STATE_CLOSED);
+        assert!(!r.alive());
         std::fs::remove_file(&path).unwrap();
     }
 
