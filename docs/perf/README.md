@@ -29,3 +29,22 @@ On macOS the Electron main thread also delivers native window input, so main-thr
 
 ### Audio
 - Underruns are not counted/exposed yet (to add).
+
+## After (2026-10-14, same machine/profile, quiet system)
+
+| Scenario | Before | After |
+|---|---|---|
+| Startup main stalls | 639 / 842 / 627 ms | one 72 ms stall (bundle load, before the window exists) |
+| Browse key-nav / hold / fling / search: main event-loop max | 54–308 ms | 11.7–13.3 ms |
+| Main stalls > 40 ms while browsing | recurring | 0 |
+| Main-thread image work (14 s browse profile) | ~2,550 ms | ~6 ms (Rust pool) |
+| Slow SQL on the main thread | 25–481 ms statements | none (catalog in a worker thread) |
+| 60 s continuous key-nav **during a live re-crawl** | 500–800 ms freezes | 3,601 frames, 0 > 25 ms; main max 13 ms; 0 stalls |
+| Browse style recalc (ms per second) | 81–192 | 30–38 |
+| Browse paints per frame | 12.6–21 | 4.5–10.5 |
+| GPU process, Browse | 38–47 % | 21–27 % |
+| GPU process, Title playing | ~21 % (SwapBuffers 1.52 ms/frame) | 7.5 % (0.41 ms/frame) |
+| Engine CPU idle / playing | 1.65 % / ~3.4 % | 0.23 % / 2.15 % |
+| Audio under 24.6 load average | not measured | 0 underruns, worst callback 101 µs of 21.3 ms |
+
+What changed: catalog moved to a `worker_threads` worker (RPC for `net.fetch`, `inspectArchive`, broadcasts), incremental counts and chunked work; image decode/resize/accent in a Rust thread pool with size-bucketed art; stepped accent variables, compositor-only glows and pulses, `display:none` closed overlays, 1× background / ≤1.5× visualizer canvases, off-thread texture decode; structural-sharing player store and queue-revision IPC; live backdrop blur only where sharp art sits behind (Play); App Nap blocked while playing; GHOST caches moved out of Chromium's `Cache/`.

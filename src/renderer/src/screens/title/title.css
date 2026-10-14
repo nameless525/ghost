@@ -237,11 +237,12 @@
   max-width: min(720px, 80vw);
   padding: 8px 18px 8px 14px;
   border-radius: 99px;
-  background: rgb(12 10 19 / 0.55);
+  /* No backdrop-filter: it sits on the already-blurred background, and a live blur here forced
+     an extra compositor pass every frame on the title screen. */
+  background: rgb(12 10 19 / 0.62);
   box-shadow:
     inset 0 0 0 1px rgb(255 255 255 / 0.06),
     0 8px 30px rgb(0 0 0 / 0.3);
-  backdrop-filter: blur(12px);
   font-size: var(--fs-sm);
   white-space: nowrap;
 }
