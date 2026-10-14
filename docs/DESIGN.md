@@ -230,7 +230,11 @@ The resolver asks each enabled provider in priority order and scores the candida
 3. **Bandcamp.** Indie composers, good quality, track data embedded as JSON in each page.
 4. **KHInsider.** The main catalog source: a huge catalog with MP3 and often FLAC. It marks in-game rips ("gamerip") separately from official albums.
 5. **Zophar's Domain.** About 19.5k game sets, each with per-track 320 kbps MP3 renders. That includes formats GHOST can't emulate (PSF/2SF/GSF/USF/3SF, PSP, Wii). Its rips join the KHInsider game of the same name, or become new games.
-6. **Modland.** One daily `allmods.zip` index lists loose SPC/NSF/GBS/VGM/… files, which GHOST plays with libgme: robots-clean original-hardware music for consoles from NES to Mega Drive.
+6. **Modland.**
+   - One daily `allmods.zip` index lists loose SPC/NSF/GBS/VGM files, which GHOST plays with libgme: robots-clean original-hardware music for SNES, NES, Game Boy and the 8/16-bit Segas.
+   - NSF/GBS song counts come from a 128-byte header read when the album is opened.
+   - NSF folders named after musicians mix their own work with real rips, so those albums are only kept for games the catalog already knows.
+   - HES/KSS (no song count) and SGC (no libgme player) aren't indexed.
 7. **Internet Archive.**
    - The curated game-soundtrack collections are indexed.
    - Everything else is searched on demand ("Search elsewhere").

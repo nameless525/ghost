@@ -5,7 +5,7 @@ A private desktop app for streaming (and downloading) the soundtrack of any vide
 - **Catalog sources:** indexed automatically in the background, one after another.
   - KHInsider: the main catalog, MP3 and FLAC album rips.
   - Zophar's Domain: per-track MP3 rips, including PlayStation, DS, GBA and N64 sets that can't be emulated.
-  - Modland: original SNES/NES/Game Boy/PC Engine/MSX/Sega sound files (SPC, NSF, GBS, VGM, …), emulated live with real loop points.
+  - Modland: original SNES, NES, Game Boy and Sega (Mega Drive, Master System, Game Gear) sound files (SPC, NSF, GBS, VGM), emulated live with real loop points.
   - The Internet Archive's curated game-soundtrack collections.
   - vgmrips chiptune packs. joshw.info rip sets are opt-in, because its robots.txt asks crawlers to stay out.
   - Your own music folders.
