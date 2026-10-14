@@ -225,7 +225,15 @@ CREATE TABLE IF NOT EXISTS crawl_pages (
 `
 
 /** Columns added after a table first shipped: [table, column, definition]. */
-const ADDED_COLUMNS: [string, string, string][] = [['sources', 'needs_refresh', 'INTEGER NOT NULL DEFAULT 0']]
+const ADDED_COLUMNS: [string, string, string][] = [
+  ['sources', 'needs_refresh', 'INTEGER NOT NULL DEFAULT 0'],
+  // Imported albums (YouTube / Internet Archive / Bandcamp) are pinned to a game by its norm_key
+  // instead of being clustered by their (often messy) upload titles.
+  ['albums', 'game_key', 'TEXT'],
+  // Play only [clip_start_ms, clip_end_ms) of the stream (a chapter of a full-OST video).
+  ['sources', 'clip_start_ms', 'INTEGER'],
+  ['sources', 'clip_end_ms', 'INTEGER']
+]
 
 export function ensureCatalogSchema(db: DB): void {
   db.exec(CATALOG_DDL)

@@ -2,7 +2,7 @@
 // describe an album's tracks, find candidates for a canonical track, and turn a locator into a
 // playable stream. The catalog's resolver asks enabled providers in the user's priority order.
 
-import type { AlbumKind, AudioFormat } from '../../shared/types'
+import type { AlbumKind, AudioFormat, ExternalAlbumHit } from '../../shared/types'
 import type { EngineSource } from '../engine/types'
 import type { Priority } from '../net/limiter'
 
@@ -56,6 +56,12 @@ export interface ProviderTrack {
   locator: string
   files: ProviderTrackFile[]
   composers: string[]
+  /**
+   * Streams already known when the album was fetched (Internet Archive files, Bandcamp stream URLs,
+   * a YouTube video resolved for its chapters). Stored as sources on import so playback can start
+   * without another provider round-trip.
+   */
+  streams?: StreamInfo[]
 }
 
 export interface ProviderAlbum extends AlbumHit {
@@ -123,6 +129,13 @@ export interface Provider {
   getAlbum?(ref: string, opts?: ProviderCallOptions): Promise<ProviderAlbum>
   /** Search-based providers (YouTube, Internet Archive, local files) find candidates for any track. */
   findTrack?(t: CanonicalTrack, opts?: ProviderCallOptions): Promise<SourceCandidate[]>
+  /**
+   * When the resolver calls findTrack: 'always' (cheap, e.g. a local DB lookup; the default) or
+   * 'fallback' (a network search: only once the album's own sources all failed or were excluded).
+   */
+  findTrackMode?: 'always' | 'fallback'
+  /** Album-like results for "import from YouTube / Internet Archive / Bandcamp". */
+  searchExternal?(q: string, opts?: ProviderCallOptions): Promise<ExternalAlbumHit[]>
   /** Turn a locator into playable stream(s), one per available format. */
   resolveStream(locator: string, opts?: ProviderCallOptions): Promise<StreamInfo[]>
 }

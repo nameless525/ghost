@@ -1,0 +1,492 @@
+{
+ "responseHeader": {
+  "status": 0,
+  "QTime": 55,
+  "params": {
+   "query": "mediatype:audio AND (title:(Hollow AND Knight) OR subject:(Hollow AND Knight)) AND (title:(soundtrack OR ost OR osv OR music OR score OR gamerip OR bgm) OR subject:(soundtrack OR ost OR &quot;video game music&quot; OR &quot;game music&quot; OR vgm OR &quot;video game&quot;) OR collection:(folksoundomy_gamesoundtracks OR hifidelity_soundtracks OR gamesoundtracks OR video_game_music OR vgmusic OR gamemusic OR soundtracks))",
+   "qin": "mediatype:(audio) AND (title:(Hollow AND Knight) OR subject:(Hollow AND Knight)) AND (title:(soundtrack OR ost OR osv OR music OR score OR gamerip OR bgm) OR subject:(soundtrack OR ost OR &quot;video game music&quot; OR &quot;game music&quot; OR vgm OR &quot;video game&quot;) OR collection:(folksoundomy_gamesoundtracks OR hifidelity_soundtracks OR gamesoundtracks OR video_game_music OR vgmusic OR gamemusic OR soundtracks))",
+   "fields": "identifier,title,creator,downloads,item_size,collection,format,year,date",
+   "wt": "json",
+   "rows": 30,
+   "start": 0
+  }
+ },
+ "response": {
+  "numFound": 22,
+  "start": 0,
+  "docs": [
+   {
+    "collection": [
+     "opensource_audio"
+    ],
+    "creator": "Christopher Larkin; Team Cherry",
+    "downloads": 659,
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "WAVE"
+    ],
+    "identifier": "THe-Sounds-of-Hallownest",
+    "item_size": 4371343158,
+    "title": "Hollow Knight: The Sounds of Hallownest"
+   },
+   {
+    "collection": [
+     "hifidelity_soundtracks",
+     "hifidelity"
+    ],
+    "creator": "Christopher Larkin",
+    "downloads": 8928,
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Flac",
+     "Item Tile",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "Hollow-Knight-Gods-And-Nightmares-OST",
+    "item_size": 437897133,
+    "title": "Hollow Knight Gods And Nightmares OST"
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2018-08-09T00:00:00Z",
+    "downloads": 168,
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knightgods-nightmares-extra-ost",
+    "item_size": 355958217,
+    "title": "Hollow Knight:Gods & Nightmares EXTRA OST",
+    "year": 2018
+   },
+   {
+    "collection": [
+     "hifidelity_potpourri",
+     "hifidelity"
+    ],
+    "creator": "Christopher Larkin, David Peacock, Augustine Mayuga Gonzales",
+    "date": "2019-11-28T00:00:00Z",
+    "downloads": 265,
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-piano-collections_202512",
+    "item_size": 72862752,
+    "title": "Hollow Knight Piano Collections",
+    "year": 2019
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "downloads": 1677,
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-original-soundtrack_2017",
+    "item_size": 173654135,
+    "title": "Hollow Knight Original Soundtrack"
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2018-08-09T00:00:00Z",
+    "downloads": 115,
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knightgods-nightmares-ost",
+    "item_size": 330517050,
+    "title": "Hollow Knight:Gods & Nightmares OST",
+    "year": 2018
+   },
+   {
+    "collection": [
+     "opensource_audio"
+    ],
+    "creator": "Team Cherry",
+    "date": "2017-02-24T00:00:00Z",
+    "downloads": 3770,
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "ZIP"
+    ],
+    "identifier": "HollowKnightAudio",
+    "item_size": 1657643019,
+    "title": "Hollow Knight Audio Files",
+    "year": 2017
+   },
+   {
+    "collection": [
+     "opensource_audio"
+    ],
+    "creator": "Christopher Larkin; Team Cherry",
+    "downloads": 2170,
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "WAVE"
+    ],
+    "identifier": "the-sounds-of-pharloom",
+    "item_size": 16977590778,
+    "title": "Silksong: The Sounds of Pharloom"
+   },
+   {
+    "collection": [
+     "opensource_audio"
+    ],
+    "creator": "TEAM CHERRY",
+    "downloads": 46,
+    "format": [
+     "Archive BitTorrent",
+     "Metadata",
+     "ZIP"
+    ],
+    "identifier": "hollow-knight-silksong-every-audio-asset",
+    "item_size": 5182415945,
+    "title": "Hollow Knight Silksong Every Audio Asset"
+   },
+   {
+    "collection": [
+     "hifidelity_potpourri",
+     "hifidelity"
+    ],
+    "downloads": 383,
+    "format": [
+     "24bit Flac",
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "Silk-song-flac",
+    "item_size": 2011262306,
+    "title": "Hollow Knight: Silksong - Official Soundtrack [FLAC]"
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2017-02-10T00:00:00Z",
+    "downloads": 313,
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-extra-ost",
+    "item_size": 691970551,
+    "title": "Hollow Knight EXTRA OST",
+    "year": 2017
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2025-09-05T00:00:00Z",
+    "downloads": 3003,
+    "format": [
+     "24bit Flac",
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-silksong-ost",
+    "item_size": 1565506743,
+    "title": "Hollow Knight: Silksong OST",
+    "year": 2025
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "downloads": 1900,
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "Opus"
+    ],
+    "identifier": "official-hollow-knight-original-soundtrack-opus",
+    "item_size": 159464622,
+    "title": "Hollow Knight Soundtrack (Opus)"
+   },
+   {
+    "collection": [
+     "opensource_audio",
+     "community"
+    ],
+    "creator": "Christopher Larkin",
+    "downloads": 94,
+    "format": [
+     "7z",
+     "Archive BitTorrent",
+     "Metadata"
+    ],
+    "identifier": "hollow-knight-full-ost.-7z",
+    "item_size": 321010584,
+    "title": "Hollow Knight Full OST. 7z"
+   },
+   {
+    "collection": [
+     "hifidelity_potpourri",
+     "hifidelity"
+    ],
+    "creator": "Team Cherry",
+    "downloads": 1514,
+    "format": [
+     "24bit Flac",
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "12-greymoor",
+    "item_size": 1565506999,
+    "title": "Hollow Knight Silksong Soundtrack FLAC"
+   },
+   {
+    "collection": [
+     "opensource_audio",
+     "community"
+    ],
+    "downloads": 445,
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "ost-nosk",
+    "item_size": 3436028,
+    "title": "Nosk"
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2017-02-10T00:00:00Z",
+    "downloads": 597,
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-ost",
+    "item_size": 560967338,
+    "title": "Hollow Knight OST",
+    "year": 2017
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2025-09-05T00:00:00Z",
+    "downloads": 977,
+    "format": [
+     "24bit Flac",
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-silksong-extended-ost_202512",
+    "item_size": 1677663892,
+    "title": "Hollow Knight: Silksong EXTRA OST",
+    "year": 2025
+   },
+   {
+    "collection": [
+     "opensource_audio"
+    ],
+    "creator": "Not for Sale",
+    "date": "2026-04-06T00:00:00Z",
+    "downloads": 143,
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "resurrection-of-the-chaos-heart",
+    "item_size": 612664610,
+    "title": "Super Paper Mario: Void Archives Soundtrack",
+    "year": 2026
+   },
+   {
+    "collection": [
+     "folksoundomy_gamesoundtracks",
+     "folksoundomy"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2017-02-19T00:00:00Z",
+    "downloads": 40162,
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "Ogg Vorbis",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-soundtrack-plus-dlc",
+    "item_size": 365720570,
+    "title": "Hollow Knight Official Soundtrack (Full OST + Gods & Nightmares, Silksong)",
+    "year": 2017
+   },
+   {
+    "collection": [
+     "hifidelity_potpourri",
+     "hifidelity"
+    ],
+    "creator": "Christopher Larkin",
+    "date": "2019-01-01T00:00:00Z",
+    "downloads": 1242,
+    "format": [
+     "Archive BitTorrent",
+     "Book Cover",
+     "Flac",
+     "Item Tile",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "hollow-knight-complete-soundtrack-christopher-larkin",
+    "item_size": 1979693122,
+    "title": "Hollow Knight - Complete Official Soundtrack Collection by Christopher Larkin (+ Silksong)",
+    "year": 2019
+   },
+   {
+    "collection": [
+     "hifidelity_soundtracks",
+     "hifidelity"
+    ],
+    "creator": "Christopher Larkin",
+    "downloads": 47813,
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "official-hollow-knight-original-soundtrack",
+    "item_size": 672493961,
+    "title": "Hollow Knight Soundtrack"
+   }
+  ]
+ }
+}

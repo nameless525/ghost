@@ -1,23 +1,30 @@
 // CatalogService: the catalog DB, the KHInsider index crawl, lazy album pages, source resolution,
-// enrichment and analysis storage, behind the CatalogAPI contract (src/shared/api.ts).
+// enrichment and analysis storage, external search/import (YouTube, Internet Archive, Bandcamp) and
+// the local-files scan, behind the CatalogAPI contract (src/shared/api.ts).
 
 import { parseSearch } from '../../shared/search'
-import type { AlbumDetail, BrowsePage, BrowseQuery, CatalogStatus, Game, ID, TrackView } from '../../shared/types'
+import type { AlbumDetail, BrowsePage, BrowseQuery, CatalogStatus, ExternalAlbumHit, Game, ID, TrackView } from '../../shared/types'
 import { artAccent, onArtFetched, trimArtCache } from '../net/art-protocol'
 import { isNetError, NetError } from '../net/errors'
 import type { HttpClient } from '../net/http'
 import { sharedHttp } from '../net/shared'
 import { createDefaultRegistry, type ProviderRegistry } from '../providers'
-import { isIndexProvider, type IndexProvider } from '../providers/types'
+import { LocalProvider } from '../providers/local'
+import { isIndexProvider, type IndexProvider, type ProviderAlbum } from '../providers/types'
+import type { YtDlp } from '../tools/ytdlp'
 import { Crawler } from './crawler'
 import { AccentWorker, Enricher } from './enrich'
 import type { CatalogDeps, CatalogService } from './index'
 import { QueryEngine, reseedRandom } from './query'
+import { baseTitle } from './normalize'
 import { CatalogRepo } from './repo'
 import { SourceResolver } from './resolver'
 
 const DETAIL_TTL_MS = 7 * 24 * 3600_000
 const ART_QUEUE_MAX = 60
+const EXTERNAL_SEARCH_TIMEOUT_MS = 60_000
+const EXTERNAL_HITS_MAX = 40
+const LOCAL_FOLDERS_POLL_MS = 4000
 
 /** Test / smoke-script seams. Production uses the defaults. */
 export interface CatalogInternals {
@@ -37,7 +44,37 @@ export interface CatalogInternals {
   crawlMaxPagesPerSection?: number
   /** Don't run IGDB/SGDB/accent background work. */
   disableEnrichment?: boolean
+  /** yt-dlp for the YouTube provider (default: the shared managed instance). */
+  ytdlp?: () => Promise<YtDlp>
+  /** fetch for archive.org's JSON APIs. */
+  sourceFetch?: typeof fetch
+  /** Don't scan settings.sources.localFolders. */
+  disableLocalScan?: boolean
   log?: (msg: string) => void
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  return Promise.race([
+    p.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new NetError('timeout', `${what} took longer than ${Math.round(ms / 1000)} s`)), ms)
+    })
+  ])
+}
+
+/** The game an imported album belongs to, when the user didn't say: its title minus OST decoration. */
+export function guessGameName(album: Pick<ProviderAlbum, 'title'>, hit?: Pick<ExternalAlbumHit, 'title'>): string {
+  for (const t of [album.title, hit?.title]) {
+    if (!t) continue
+    const b = baseTitle(t)
+      .replace(/\s*[-–—|:~]\s*(?:playlist|full|complete|all\s+tracks?|album|official)\b.*$/i, '')
+      .replace(/\s*\+\s*(?:dlc|extras?|bonus).*$/i, '')
+      .replace(/\s+(?:full|complete|entire|whole|official)\s*$/i, '')
+      .trim()
+    if (b && /[\p{L}\p{N}]/u.test(b)) return b
+  }
+  return album.title
 }
 
 export function createCatalogService(deps: CatalogDeps, internals: CatalogInternals = {}): CatalogService {
@@ -45,7 +82,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   const log = internals.log ?? ((m: string) => console.log(`[catalog] ${m}`))
   const repo = new CatalogRepo(deps.db, now)
   let registry: ProviderRegistry | null = internals.registry ?? null
-  const getRegistry = () => (registry ??= createDefaultRegistry(internals.http ?? sharedHttp()))
+  const getRegistry = () =>
+    (registry ??= createDefaultRegistry(internals.http ?? sharedHttp(), { db: deps.db, ytdlp: internals.ytdlp, fetch: internals.sourceFetch, log: (m) => log(`sources: ${m}`) }))
   const quality = () => deps.getSettings().sources.quality
   const qe = new QueryEngine(repo, quality)
   const resolver = new SourceResolver({ repo, registry: lazyRegistry(getRegistry), getSettings: deps.getSettings, now, log })
@@ -239,6 +277,89 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     }, 600)
   }
 
+  // --- local files ----------------------------------------------------------------------------
+  // Scan settings.sources.localFolders at startup and whenever the list changes (incremental).
+  let localKey: string | null = null
+  let localPoll: ReturnType<typeof setInterval> | null = null
+  function checkLocalFolders(force = false): void {
+    if (internals.disableLocalScan || stopped) return
+    const folders = deps.getSettings().sources.localFolders ?? []
+    const key = JSON.stringify(folders)
+    if (!force && key === localKey) return
+    localKey = key
+    const local = getRegistry().get('local')
+    const lib = local instanceof LocalProvider ? local.library : null
+    if (!lib || (!folders.length && lib.count() === 0)) return
+    lib
+      .scan(folders)
+      .then((r) => {
+        if (r.added || r.updated || r.removed || r.errors) log(`local files: ${r.files} in ${r.roots.length} folder(s), +${r.added} ~${r.updated} -${r.removed}, ${r.errors} unreadable (${r.ms} ms)`)
+        if (r.removedPaths.length) {
+          repo.tx(() => {
+            for (const p of r.removedPaths) repo.run(`DELETE FROM sources WHERE provider = 'local' AND path = ?`, p)
+          })
+          repo.revision++
+          notify()
+        }
+      })
+      .catch((e) => log(`local files scan failed: ${(e as Error).message}`))
+  }
+
+  // --- external import (YouTube / Internet Archive / Bandcamp) -----------------------------------
+  async function searchExternal(query: string, only?: ExternalAlbumHit['provider'][]): Promise<ExternalAlbumHit[]> {
+    const q = query.trim()
+    if (!q) return []
+    const wanted = only?.length ? new Set<string>(only) : null
+    const providers = getRegistry()
+      .ordered(deps.getSettings().sources)
+      .filter((p) => p.searchExternal && (!wanted || wanted.has(p.id)))
+    if (!providers.length) return []
+    const settled = await Promise.allSettled(providers.map((p) => withTimeout(p.searchExternal!(q, { priority: 0 }), EXTERNAL_SEARCH_TIMEOUT_MS, `${p.name} search`)))
+    const hits: ExternalAlbumHit[] = []
+    const errors: unknown[] = []
+    settled.forEach((r, i) => {
+      if (r.status === 'fulfilled') hits.push(...r.value)
+      else {
+        errors.push(r.reason)
+        log(`${providers[i].id} external search "${q}": ${(r.reason as Error).message}`)
+      }
+    })
+    if (!hits.length && errors.length) throw errors[0]
+    const order = providers.map((p) => p.id)
+    const seen = new Set<string>()
+    return hits
+      .filter((h) => {
+        const k = `${h.provider}\u0000${h.ref}`
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      .sort((a, b) => b.score - a.score || order.indexOf(a.provider) - order.indexOf(b.provider))
+      .slice(0, EXTERNAL_HITS_MAX)
+  }
+
+  async function importExternal(hit: ExternalAlbumHit, opts: { gameName?: string } = {}): Promise<AlbumDetail> {
+    const provider = getRegistry().get(hit?.provider)
+    if (!provider?.getAlbum) throw new Error(`Importing from ${hit?.provider ?? 'that source'} isn't supported.`)
+    const d = await provider.getAlbum(hit.ref, { priority: 0, force: true })
+    if (!d.tracks.length) throw new NetError('not_found', `"${hit.title}" has nothing playable`)
+    const album: ProviderAlbum = { ...d, cover: d.cover ?? hit.cover, thumb: d.thumb ?? hit.cover, images: d.images.length ? d.images : hit.cover ? [hit.cover] : [] }
+    const [albumId] = repo.upsertHits([album], { initial: false })
+    repo.pinAlbumToGame(albumId, opts.gameName?.trim() || guessGameName(album, hit))
+    repo.applyAlbumDetail(albumId, album)
+    // Streams the provider already gave us (IA files, Bandcamp URLs, a YouTube video's chapters)
+    // become sources now, so the first play doesn't need another round-trip.
+    const byLocator = new Map(repo.all<{ id: number; locator: string }>(`SELECT id, locator FROM tracks WHERE album_id = ? AND removed = 0`, albumId).map((r) => [r.locator, r.id]))
+    for (const t of album.tracks) {
+      const id = byLocator.get(t.locator)
+      if (id != null && t.streams?.length) resolver.storeStreams(id, album.provider, t.streams.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
+    }
+    repo.revision++
+    notify()
+    log(`imported ${album.provider} "${album.title}" (${album.tracks.length} tracks) as album ${albumId}`)
+    return service.album(String(albumId))
+  }
+
   // --- lifecycle --------------------------------------------------------------------------------
   let stopped = false
   const timers: ReturnType<typeof setTimeout>[] = []
@@ -254,15 +375,17 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   }
 
   const service: CatalogService = {
-    // External sources (YouTube / Internet Archive / Bandcamp) — implemented by the sources workstream.
-    async searchExternal() {
-      return []
-    },
-    async importExternal() {
-      throw new Error('External import is not available yet.')
-    },
+    searchExternal,
+    importExternal,
+
     start() {
       stopped = false
+      localKey = null
+      timers.push(setTimeout(() => checkLocalFolders(true), (internals.startDelayMs ?? 1500) + 500))
+      if (!internals.disableLocalScan) {
+        localPoll = setInterval(() => checkLocalFolders(), LOCAL_FOLDERS_POLL_MS)
+        localPoll.unref?.()
+      }
       if (!internals.disableEnrichment) {
         unsubscribeArt = (internals.onArtFetched ?? onArtFetched)((url, bytes) => accent.onArtFetched(url, bytes))
         enricher.start()
@@ -297,6 +420,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       prewarmTimer = null
       if (searchTimer) clearTimeout(searchTimer)
       searchTimer = null
+      if (localPoll) clearInterval(localPoll)
+      localPoll = null
     },
 
     async status() {

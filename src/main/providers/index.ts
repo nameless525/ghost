@@ -1,19 +1,27 @@
 // Provider registry. The resolver asks providers in the user's priority order
 // (settings.sources.order, minus settings.sources.disabled).
 //
-// Adding a provider (YouTube via yt-dlp, Internet Archive, local files, chiptune archives…):
+// Adding a provider (chiptune archives…):
 //   1. Implement `Provider` from ./types — usually `findTrack` (search for candidates of a canonical
-//      track and score them, DESIGN §6.4) plus `resolveStream` (locator → StreamInfo[]; return
-//      `{ kind: 'file', path }` sources for local files, set `expiresAt` for short-lived URLs).
+//      track and score them, DESIGN §6.4, helpers in ./match) plus `resolveStream` (locator →
+//      StreamInfo[]; return `{ kind: 'file', path }` sources for local files, set `expiresAt` for
+//      short-lived URLs). Network searches set `findTrackMode: 'fallback'` so they only run when
+//      the album's own sources failed. `searchExternal` + `getAlbum` make it importable.
 //   2. Register it in `createDefaultRegistry` with the id used in settings (DEFAULT_SOURCE_ORDER:
 //      'local', 'chip', 'bandcamp', 'khinsider', 'archive', 'youtube').
 // The catalog caches every resolved stream in the `sources` table, ranks them (provider order,
 // then the quality ladder, then confidence) and demotes ones the engine reports as failed.
 
 import type { Settings } from '../../shared/types'
+import type { DB } from '../db'
 import type { HttpClient } from '../net/http'
+import { sharedYtDlp, type YtDlp } from '../tools/ytdlp'
+import { ArchiveProvider } from './archive'
+import { BandcampProvider } from './bandcamp'
 import { KhinsiderProvider } from './khinsider'
+import { LocalLibrary, LocalProvider } from './local'
 import type { Provider } from './types'
+import { YouTubeProvider } from './youtube'
 
 export class ProviderRegistry {
   private providers = new Map<string, Provider>()
@@ -48,8 +56,25 @@ export class ProviderRegistry {
   }
 }
 
-export function createDefaultRegistry(http: HttpClient): ProviderRegistry {
-  return new ProviderRegistry().register(new KhinsiderProvider(http))
+export interface RegistryDeps {
+  /** The app DB (local files index). Without it there is no local-files provider. */
+  db?: DB
+  /** yt-dlp (default: the shared instance under <userData>/bin). */
+  ytdlp?: () => Promise<YtDlp>
+  /** fetch for archive.org's JSON APIs. */
+  fetch?: typeof fetch
+  log?: (msg: string) => void
+}
+
+export function createDefaultRegistry(http: HttpClient, deps: RegistryDeps = {}): ProviderRegistry {
+  const log = deps.log ?? ((m: string) => console.log(`[sources] ${m}`))
+  const r = new ProviderRegistry()
+  if (deps.db) r.register(new LocalProvider(new LocalLibrary(deps.db, { log })))
+  return r
+    .register(new BandcampProvider(http))
+    .register(new KhinsiderProvider(http))
+    .register(new ArchiveProvider({ fetch: deps.fetch }))
+    .register(new YouTubeProvider(deps.ytdlp ?? sharedYtDlp, { log }))
 }
 
 export type { Provider } from './types'

@@ -514,6 +514,47 @@ export class CatalogRepo {
     return nid
   }
 
+  /**
+   * The norm_key of an existing game called `name` (its key, display name or an alternative name),
+   * or null.
+   */
+  findGameKey(name: string): string | null {
+    const k = gameKey(name)
+    const nk = keyOf(name)
+    if (!k && !nk) return null
+    const direct = this.get<{ norm_key: string }>(`SELECT norm_key FROM games WHERE norm_key IN (?, ?) ORDER BY album_count DESC LIMIT 1`, k, nk)
+    if (direct) return direct.norm_key
+    for (const g of this.all<{ norm_key: string; name: string; alt_names: string }>(`SELECT norm_key, name, alt_names FROM games WHERE sort_name IN (?, ?) LIMIT 20`, sortKey(name), sortKey(baseTitle(name)))) {
+      if (keyOf(g.name) === nk || keyOf(g.name) === k) return g.norm_key
+    }
+    // Alternative names (IGDB alt names, other album titles): a substring prefilter, then exact keys.
+    const needle = `%${name.replace(/[%_]/g, ' ').trim()}%`
+    for (const g of this.all<{ norm_key: string; alt_names: string }>(`SELECT norm_key, alt_names FROM games WHERE alt_names LIKE ? ORDER BY album_count DESC LIMIT 50`, needle)) {
+      if (j<string[]>(g.alt_names, []).some((a) => keyOf(a) === nk || keyOf(a) === k)) return g.norm_key
+    }
+    return null
+  }
+
+  /**
+   * Pin an album to a game by name: the existing game with that name, else a new one called
+   * `gameName`. The album keeps that game through re-clustering. Returns the game id.
+   */
+  pinAlbumToGame(albumId: number, gameName: string): number {
+    const name = gameName.trim()
+    if (!name) throw new Error('empty game name')
+    const key = this.findGameKey(name) ?? (gameKey(name) || keyOf(name) || foldText(name))
+    let gid = 0
+    this.tx(() => {
+      this.loadGameMaps()
+      const existed = this.gameIdByKey!.has(key)
+      gid = this.gameIdFor(key, name)
+      if (!existed) this.run(`UPDATE games SET name = ?, sort_name = ? WHERE id = ?`, name, sortKey(name), gid)
+      this.run(`UPDATE albums SET game_key = ? WHERE id = ?`, key, albumId)
+    })
+    this.assignGames([albumId])
+    return gid
+  }
+
   /** Incrementally (re)assign games for these albums, refresh the affected games and FTS docs. */
   assignGames(albumIds: number[]): void {
     if (!albumIds.length) return
@@ -523,13 +564,15 @@ export class CatalogRepo {
     this.tx(() => {
       for (let i = 0; i < albumIds.length; i += 500) {
         const chunk = albumIds.slice(i, i + 500)
-        const rows = this.all<{ id: number; title: string; kind: AlbumKind; game_id: number | null }>(
-          `SELECT id, title, kind, game_id FROM albums WHERE id IN (${chunk.map(() => '?').join(',')})`,
+        const rows = this.all<{ id: number; title: string; kind: AlbumKind; game_id: number | null; game_key: string | null }>(
+          `SELECT id, title, kind, game_id, game_key FROM albums WHERE id IN (${chunk.map(() => '?').join(',')})`,
           ...chunk
         )
         // Primary (non-mergeable) albums in this batch count before the mergeable ones look for a head.
-        for (const r of rows) if (!MERGEABLE_KINDS.has(r.kind)) this.primaryKeys!.add(gameKey(r.title))
+        for (const r of rows) if (!MERGEABLE_KINDS.has(r.kind)) this.primaryKeys!.add(r.game_key ?? gameKey(r.title))
         const keys = clusterKeys(rows, this.primaryKeys!)
+        // Imported albums are pinned to the game they were imported into.
+        for (const r of rows) if (r.game_key) keys.set(r.id, r.game_key)
         for (const r of rows) {
           const key = keys.get(r.id)!
           const gid = this.gameIdFor(key, r.title)
@@ -571,8 +614,9 @@ export class CatalogRepo {
           sort_added: number
           total_ms: number | null
           intensity: number | null
+          game_key: string | null
         }>(
-          `SELECT id, game_id, title, alt_titles, kind, year, cover, platforms, sort_added, total_ms, intensity FROM albums
+          `SELECT id, game_id, title, alt_titles, kind, year, cover, platforms, sort_added, total_ms, intensity, game_key FROM albums
            WHERE game_id IN (${ph}) AND gone = 0 ORDER BY kind_rank, sort_year, id`,
           ...chunk
         )
@@ -594,7 +638,9 @@ export class CatalogRepo {
           }
           const igdb = j<IgdbData | null>(g.igdb_json, null)
           const sgdb = j<SgdbData | null>(g.sgdb_json, null)
-          const derived = pickGameName(as)
+          // Pinned (imported) albums don't name the game: upload titles are too noisy.
+          const named = as.filter((a) => !a.game_key)
+          const derived = named.length ? pickGameName(named) : ''
           const name = igdb?.name || derived || g.name
           const nameKey = keyOf(name)
           const alt: string[] = []
@@ -609,7 +655,7 @@ export class CatalogRepo {
           }
           for (const n of igdb?.altNames ?? []) pushAlt(n)
           pushAlt(derived)
-          for (const a of as) {
+          for (const a of named) {
             pushAlt(baseTitle(a.title))
             for (const t of j<string[]>(a.alt_titles, [])) pushAlt(baseTitle(t))
           }
@@ -673,17 +719,19 @@ export class CatalogRepo {
    * process stays responsive.
    */
   async reclusterAll(yieldFn: () => Promise<void> = () => new Promise((r) => setImmediate(r))): Promise<void> {
-    const rows = this.all<{ id: number; title: string; kind: AlbumKind; game_id: number | null }>(`SELECT id, title, kind, game_id FROM albums WHERE gone = 0`)
+    const rows = this.all<{ id: number; title: string; kind: AlbumKind; game_id: number | null; game_key: string | null }>(
+      `SELECT id, title, kind, game_id, game_key FROM albums WHERE gone = 0`
+    )
     const keys = new Map<number, string>()
     const primary = new Set<string>()
     for (let i = 0; i < rows.length; i++) {
-      const k = gameKey(rows[i].title)
+      const k = rows[i].game_key ?? gameKey(rows[i].title)
       keys.set(rows[i].id, k)
       if (!MERGEABLE_KINDS.has(rows[i].kind)) primary.add(k)
       if (i % 4000 === 3999) await yieldFn()
     }
     for (const r of rows) {
-      if (!MERGEABLE_KINDS.has(r.kind) || primary.has(keys.get(r.id)!)) continue
+      if (r.game_key || !MERGEABLE_KINDS.has(r.kind) || primary.has(keys.get(r.id)!)) continue
       const h = headKey(r.title)
       if (h && primary.has(h)) keys.set(r.id, h)
     }

@@ -1,0 +1,395 @@
+{
+ "id": "CbaFAQbCkdc",
+ "title": "Hollow Knight Full OST - Original Soundtrack Complete Edition, Includes All DLC Music + Extra Tracks",
+ "formats": [
+  {
+   "asr": 22050,
+   "filesize": 40515438,
+   "format_id": "139",
+   "format_note": "low",
+   "source_preference": -1,
+   "fps": null,
+   "audio_channels": 2,
+   "height": null,
+   "quality": 2.0,
+   "has_drm": false,
+   "tbr": 48.782,
+   "filesize_approx": 40514688,
+   "width": null,
+   "language": null,
+   "language_preference": -1,
+   "preference": null,
+   "ext": "m4a",
+   "vcodec": "none",
+   "acodec": "mp4a.40.5",
+   "dynamic_range": null,
+   "container": "m4a_dash",
+   "url": "https://rr2---sn-jvhj5nu-nh46.googlevideo.com/videoplayback?expire=1791985427&ei=szLPavGVA_CKsfIPpOz1mAs&ip=0.0.0.0&id=o-AP8nsdCcFUZwna_sSXPLQ7fYsx3VYyQMUetwIOIOWe1G&itag=139&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=375&met=1791963827%2C&mh=Zq&mm=31%2C29&mn=sn-jvhj5nu-nh46%2Csn-n4v7sney&ms=au%2Crdu&mv=m&mvi=2&pl=40&rms=au%2Cau&initcwndbps=3865875&bui=AWzQHwpPY_LWJ0XdONhSY4QWQM9SkcITYwP9T0ZqAZB4z7v-AsP5PlcSpXf9-2Vj69K8sJbeIZ8qRQtP&spc=mpRQ_5bOnnruR1lOlYnld-tS7G8_oTRAc7BmehWRpG-6esWZ6KvXqgR0z7i-&vprv=1&svpuc=1&mime=audio%2Fmp4&rqh=1&gir=yes&clen=40515438&dur=6644.203&lmt=1617044267202600&mt=1791963223&fvip=2&keepalive=yes&fexp=51565115%2C52184231&c=VISIONOS&txp=5432434&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AE0s2JYwRAIgNMXy_6eHRjUKee7aLpssqf0rc5wYYAZEdQZvCxHjqkwCID66_9zMrhubExwTSflzSsatS9hlTq6ni1_7IR-0cMb9&lsparams=cps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRQIgEC5Bs6whpauIEM34bdM2MEuIQbItUTCaeYtCU4v40kYCIQC71UOmdRVdYEsj8RXEaUL2MQGcXKjHOAY5x2cuQwqPLA%3D%3D",
+   "available_at": 1791963827,
+   "downloader_options": {
+    "http_chunk_size": 10485760
+   },
+   "protocol": "https",
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "abr": 48.782,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "139 - audio only (low)"
+  },
+  {
+   "asr": 48000,
+   "filesize": 44294171,
+   "format_id": "249",
+   "format_note": "low",
+   "source_preference": -1,
+   "fps": null,
+   "audio_channels": 2,
+   "height": null,
+   "quality": 2.0,
+   "has_drm": false,
+   "tbr": 53.333,
+   "filesize_approx": 44293729,
+   "width": null,
+   "language": null,
+   "language_preference": -1,
+   "preference": null,
+   "ext": "webm",
+   "vcodec": "none",
+   "acodec": "opus",
+   "dynamic_range": null,
+   "container": "webm_dash",
+   "url": "https://rr2---sn-jvhj5nu-nh46.googlevideo.com/videoplayback?expire=1791985427&ei=szLPavGVA_CKsfIPpOz1mAs&ip=0.0.0.0&id=o-AP8nsdCcFUZwna_sSXPLQ7fYsx3VYyQMUetwIOIOWe1G&itag=249&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=375&met=1791963827%2C&mh=Zq&mm=31%2C29&mn=sn-jvhj5nu-nh46%2Csn-n4v7sney&ms=au%2Crdu&mv=m&mvi=2&pl=40&rms=au%2Cau&initcwndbps=3865875&bui=AWzQHwpPY_LWJ0XdONhSY4QWQM9SkcITYwP9T0ZqAZB4z7v-AsP5PlcSpXf9-2Vj69K8sJbeIZ8qRQtP&spc=mpRQ_5bOnnruR1lOlYnld-tS7G8_oTRAc7BmehWRpG-6esWZ6KvXqgR0z7i-&vprv=1&svpuc=1&mime=audio%2Fwebm&rqh=1&gir=yes&clen=44294171&dur=6644.101&lmt=1617044079786361&mt=1791963223&fvip=2&keepalive=yes&fexp=51565115%2C52184231&c=VISIONOS&txp=5432434&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AE0s2JYwRAIgJoTwMfLBSYXqUxeADGeYZXm6lPyv_P-WmREr1ZhNXsQCIEb5cY02xJ9fxBW8N8M1aBrhXHYzWNj7S4lXzFlJZEO6&lsparams=cps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRQIgEC5Bs6whpauIEM34bdM2MEuIQbItUTCaeYtCU4v40kYCIQC71UOmdRVdYEsj8RXEaUL2MQGcXKjHOAY5x2cuQwqPLA%3D%3D",
+   "available_at": 1791963827,
+   "downloader_options": {
+    "http_chunk_size": 10485760
+   },
+   "protocol": "https",
+   "audio_ext": "webm",
+   "video_ext": "none",
+   "vbr": 0,
+   "abr": 53.333,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "249 - audio only (low)"
+  },
+  {
+   "asr": 48000,
+   "filesize": 58581210,
+   "format_id": "250",
+   "format_note": "low",
+   "source_preference": -1,
+   "fps": null,
+   "audio_channels": 2,
+   "height": null,
+   "quality": 2.0,
+   "has_drm": false,
+   "tbr": 70.536,
+   "filesize_approx": 58581038,
+   "width": null,
+   "language": null,
+   "language_preference": -1,
+   "preference": null,
+   "ext": "webm",
+   "vcodec": "none",
+   "acodec": "opus",
+   "dynamic_range": null,
+   "container": "webm_dash",
+   "url": "https://rr2---sn-jvhj5nu-nh46.googlevideo.com/videoplayback?expire=1791985427&ei=szLPavGVA_CKsfIPpOz1mAs&ip=0.0.0.0&id=o-AP8nsdCcFUZwna_sSXPLQ7fYsx3VYyQMUetwIOIOWe1G&itag=250&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=375&met=1791963827%2C&mh=Zq&mm=31%2C29&mn=sn-jvhj5nu-nh46%2Csn-n4v7sney&ms=au%2Crdu&mv=m&mvi=2&pl=40&rms=au%2Cau&initcwndbps=3865875&bui=AWzQHwpPY_LWJ0XdONhSY4QWQM9SkcITYwP9T0ZqAZB4z7v-AsP5PlcSpXf9-2Vj69K8sJbeIZ8qRQtP&spc=mpRQ_5bOnnruR1lOlYnld-tS7G8_oTRAc7BmehWRpG-6esWZ6KvXqgR0z7i-&vprv=1&svpuc=1&mime=audio%2Fwebm&rqh=1&gir=yes&clen=58581210&dur=6644.101&lmt=1617044084784764&mt=1791963223&fvip=2&keepalive=yes&fexp=51565115%2C52184231&c=VISIONOS&txp=5432434&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AE0s2JYwRQIgc-j4e_FbKlXdie0oXhIyfRcPy1Ku3nprukzQZrBU4HgCIQDtIaC3cTRlMRlo1JPGccEP7Qlh8SozcWNFeP5YTgcq9g%3D%3D&lsparams=cps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRQIgEC5Bs6whpauIEM34bdM2MEuIQbItUTCaeYtCU4v40kYCIQC71UOmdRVdYEsj8RXEaUL2MQGcXKjHOAY5x2cuQwqPLA%3D%3D",
+   "available_at": 1791963827,
+   "downloader_options": {
+    "http_chunk_size": 10485760
+   },
+   "protocol": "https",
+   "audio_ext": "webm",
+   "video_ext": "none",
+   "vbr": 0,
+   "abr": 70.536,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "250 - audio only (low)"
+  },
+  {
+   "asr": 44100,
+   "filesize": 107528629,
+   "format_id": "140",
+   "format_note": "medium",
+   "source_preference": -1,
+   "fps": null,
+   "audio_channels": 2,
+   "height": null,
+   "quality": 3.0,
+   "has_drm": false,
+   "tbr": 129.471,
+   "filesize_approx": 107527834,
+   "width": null,
+   "language": null,
+   "language_preference": -1,
+   "preference": null,
+   "ext": "m4a",
+   "vcodec": "none",
+   "acodec": "mp4a.40.2",
+   "dynamic_range": null,
+   "container": "m4a_dash",
+   "url": "https://rr2---sn-jvhj5nu-nh46.googlevideo.com/videoplayback?expire=1791985427&ei=szLPavGVA_CKsfIPpOz1mAs&ip=0.0.0.0&id=o-AP8nsdCcFUZwna_sSXPLQ7fYsx3VYyQMUetwIOIOWe1G&itag=140&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=375&met=1791963827%2C&mh=Zq&mm=31%2C29&mn=sn-jvhj5nu-nh46%2Csn-n4v7sney&ms=au%2Crdu&mv=m&mvi=2&pl=40&rms=au%2Cau&initcwndbps=3865875&bui=AWzQHwpPY_LWJ0XdONhSY4QWQM9SkcITYwP9T0ZqAZB4z7v-AsP5PlcSpXf9-2Vj69K8sJbeIZ8qRQtP&spc=mpRQ_5bOnnruR1lOlYnld-tS7G8_oTRAc7BmehWRpG-6esWZ6KvXqgR0z7i-&vprv=1&svpuc=1&mime=audio%2Fmp4&rqh=1&gir=yes&clen=107528629&dur=6644.134&lmt=1617044267379308&mt=1791963223&fvip=2&keepalive=yes&fexp=51565115%2C52184231&c=VISIONOS&txp=5432434&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AE0s2JYwRgIhAOjsIrNu7B3C5183durIsVU_D1oCXy1CExxq1_rZFoicAiEAja6w_DUHXNzS1BPuC0hmV7lg73wuwo3s1JFLc4uf7wc%3D&lsparams=cps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRQIgEC5Bs6whpauIEM34bdM2MEuIQbItUTCaeYtCU4v40kYCIQC71UOmdRVdYEsj8RXEaUL2MQGcXKjHOAY5x2cuQwqPLA%3D%3D",
+   "available_at": 1791963827,
+   "downloader_options": {
+    "http_chunk_size": 10485760
+   },
+   "protocol": "https",
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "abr": 129.471,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "140 - audio only (medium)"
+  }
+ ],
+ "thumbnails": [
+  {
+   "url": "https://i.ytimg.com/vi_webp/CbaFAQbCkdc/hq720.webp",
+   "preference": -2,
+   "id": "39"
+  },
+  {
+   "url": "https://i.ytimg.com/vi/CbaFAQbCkdc/maxresdefault.jpg",
+   "preference": -1,
+   "id": "40"
+  },
+  {
+   "url": "https://i.ytimg.com/vi_webp/CbaFAQbCkdc/maxresdefault.webp",
+   "preference": 0,
+   "id": "41"
+  }
+ ],
+ "thumbnail": "https://i.ytimg.com/vi/CbaFAQbCkdc/hqdefault.jpg",
+ "description": "Silksong Hype !!! I'll post my next OST when silksong comes out (:\n\n[Game name: Hollow Knight]\n[Composer: Christopher Larkin]\n\n [0:00] Enter Hallownest\n [1:30] Dirtmouth\n [3:24] Crossroads\n [5:53] False Knight\n [8:57] Greenpath\n [12:34] Hornet\n [15:21] Reflection\n [17:00] Mantis Lords\n [18:46] City of Tears (Ft. Amelia Jones)\n [21:44] Dung Defender\n [23:52] Crystal Peak\n [28:00] Fungal Wastes\n [31:04] Decisive Battle\n [33:10] Soul Sanctum\n [37:41] Resting Grounds\n [39:53] Queen’s Gardens\n [41:40] The White Lady\n [42:59] Broken Vessel\n [45:00] Kingdom’s Edge\n [47:20] Nosk\n [49:11] Dream\n [51:12] Dream Battle\n [53:39] White Palace\n [57:56] Sealed Vessel\n [1:03:41] Radiance\n [1:06:00] Hollow Knight\n\nDLC\n 1:07:45 Hive Knight \n 1:09:48 Truth, Beauty and Hatred \n 1:11:47 Nightmare Lantern (Interlude)\n 1:12:04 The Grimm Troupe\n 1:14:22 Nightmare King \n 1:17:13 White Defender\n 1:20:52 Dreamers\n 1:21:47 Pale Court\n 1:25:38 Gods & Glory\n 1:28:31 Daughter of Hallownest\n 1:32:27 Godhome\n 1:33:11 Sisters of Battle\n 1:35:18 Haunted Foes\n 1:37:55 Furious Gods\n 1:39:02 Pure Vessel\n\nEXTRAS\n 1:41:26 Pale King's Throne\n 1:41:51 Shade Music Box\n 1:42:27 Shade Theme\n 1:43:53 Colosseum of Fools (Intensity 1-6)\n 1:47:00 City of Tears Indoors \n 1:48:43 NPC Room Optional Song\n 1:49:26 Queens Gardens - Action",
+ "channel_id": "UCMpzFgHvA3TaxHX3yz1CkWg",
+ "channel_url": "https://www.youtube.com/channel/UCMpzFgHvA3TaxHX3yz1CkWg",
+ "duration": 6644,
+ "view_count": 1072143,
+ "average_rating": null,
+ "age_limit": 0,
+ "webpage_url": "https://www.youtube.com/watch?v=CbaFAQbCkdc",
+ "categories": [
+  "Music"
+ ],
+ "tags": [],
+ "playable_in_embed": true,
+ "live_status": "not_live",
+ "media_type": "video",
+ "release_timestamp": null,
+ "comment_count": 647,
+ "chapters": [
+  {
+   "start_time": 0,
+   "end_time": 4065,
+   "title": "<Untitled Chapter 1>"
+  },
+  {
+   "start_time": 4065,
+   "title": "Hive Knight",
+   "end_time": 4188
+  },
+  {
+   "start_time": 4188,
+   "title": "Truth, Beauty and Hatred",
+   "end_time": 4307
+  },
+  {
+   "start_time": 4307,
+   "title": "Nightmare Lantern (Interlude)",
+   "end_time": 4324
+  },
+  {
+   "start_time": 4324,
+   "title": "The Grimm Troupe",
+   "end_time": 4462
+  },
+  {
+   "start_time": 4462,
+   "title": "Nightmare King",
+   "end_time": 4633
+  },
+  {
+   "start_time": 4633,
+   "title": "White Defender",
+   "end_time": 4852
+  },
+  {
+   "start_time": 4852,
+   "title": "Dreamers",
+   "end_time": 4907
+  },
+  {
+   "start_time": 4907,
+   "title": "Pale Court",
+   "end_time": 5138
+  },
+  {
+   "start_time": 5138,
+   "title": "Gods & Glory",
+   "end_time": 5311
+  },
+  {
+   "start_time": 5311,
+   "title": "Daughter of Hallownest",
+   "end_time": 5547
+  },
+  {
+   "start_time": 5547,
+   "title": "Godhome",
+   "end_time": 5591
+  },
+  {
+   "start_time": 5591,
+   "title": "Sisters of Battle",
+   "end_time": 5718
+  },
+  {
+   "start_time": 5718,
+   "title": "Haunted Foes",
+   "end_time": 5875
+  },
+  {
+   "start_time": 5875,
+   "title": "Furious Gods",
+   "end_time": 5942
+  },
+  {
+   "start_time": 5942,
+   "title": "Pure Vessel",
+   "end_time": 6086
+  },
+  {
+   "start_time": 6086,
+   "title": "Pale King's Throne",
+   "end_time": 6111
+  },
+  {
+   "start_time": 6111,
+   "title": "Shade Music Box",
+   "end_time": 6147
+  },
+  {
+   "start_time": 6147,
+   "title": "Shade Theme",
+   "end_time": 6233
+  },
+  {
+   "start_time": 6233,
+   "title": "Colosseum of Fools (Intensity 1-6)",
+   "end_time": 6420
+  },
+  {
+   "start_time": 6420,
+   "title": "City of Tears Indoors",
+   "end_time": 6523
+  },
+  {
+   "start_time": 6523,
+   "title": "NPC Room Optional Song",
+   "end_time": 6566
+  },
+  {
+   "start_time": 6566,
+   "title": "Queens Gardens - Action",
+   "end_time": 6644
+  }
+ ],
+ "like_count": 14055,
+ "channel": "That Music Guy",
+ "channel_follower_count": 976,
+ "creators": null,
+ "uploader": "That Music Guy",
+ "uploader_id": "@thatmusicguy1610",
+ "uploader_url": "https://www.youtube.com/@thatmusicguy1610",
+ "upload_date": "20200116",
+ "timestamp": 1579197798,
+ "availability": "public",
+ "original_url": "https://www.youtube.com/watch?v=CbaFAQbCkdc",
+ "webpage_url_basename": "watch",
+ "webpage_url_domain": "youtube.com",
+ "extractor": "youtube",
+ "extractor_key": "Youtube",
+ "playlist": null,
+ "playlist_index": null,
+ "display_id": "CbaFAQbCkdc",
+ "fulltitle": "Hollow Knight Full OST - Original Soundtrack Complete Edition, Includes All DLC Music + Extra Tracks",
+ "duration_string": "1:50:44",
+ "release_year": null,
+ "is_live": false,
+ "was_live": false,
+ "_has_drm": null,
+ "epoch": 1791963827,
+ "asr": 44100,
+ "filesize": 107528629,
+ "format_id": "140",
+ "format_note": "medium",
+ "source_preference": -1,
+ "fps": null,
+ "audio_channels": 2,
+ "height": null,
+ "quality": 3.0,
+ "has_drm": false,
+ "tbr": 129.471,
+ "filesize_approx": 107527834,
+ "width": null,
+ "language": null,
+ "language_preference": -1,
+ "preference": null,
+ "ext": "m4a",
+ "vcodec": "none",
+ "acodec": "mp4a.40.2",
+ "dynamic_range": null,
+ "container": "m4a_dash",
+ "url": "https://rr2---sn-jvhj5nu-nh46.googlevideo.com/videoplayback?expire=1791985427&ei=szLPavGVA_CKsfIPpOz1mAs&ip=0.0.0.0&id=o-AP8nsdCcFUZwna_sSXPLQ7fYsx3VYyQMUetwIOIOWe1G&itag=140&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=375&met=1791963827%2C&mh=Zq&mm=31%2C29&mn=sn-jvhj5nu-nh46%2Csn-n4v7sney&ms=au%2Crdu&mv=m&mvi=2&pl=40&rms=au%2Cau&initcwndbps=3865875&bui=AWzQHwpPY_LWJ0XdONhSY4QWQM9SkcITYwP9T0ZqAZB4z7v-AsP5PlcSpXf9-2Vj69K8sJbeIZ8qRQtP&spc=mpRQ_5bOnnruR1lOlYnld-tS7G8_oTRAc7BmehWRpG-6esWZ6KvXqgR0z7i-&vprv=1&svpuc=1&mime=audio%2Fmp4&rqh=1&gir=yes&clen=107528629&dur=6644.134&lmt=1617044267379308&mt=1791963223&fvip=2&keepalive=yes&fexp=51565115%2C52184231&c=VISIONOS&txp=5432434&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AE0s2JYwRgIhAOjsIrNu7B3C5183durIsVU_D1oCXy1CExxq1_rZFoicAiEAja6w_DUHXNzS1BPuC0hmV7lg73wuwo3s1JFLc4uf7wc%3D&lsparams=cps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRQIgEC5Bs6whpauIEM34bdM2MEuIQbItUTCaeYtCU4v40kYCIQC71UOmdRVdYEsj8RXEaUL2MQGcXKjHOAY5x2cuQwqPLA%3D%3D",
+ "available_at": 1791963827,
+ "protocol": "https",
+ "audio_ext": "m4a",
+ "video_ext": "none",
+ "vbr": 0,
+ "abr": 129.471,
+ "resolution": "audio only",
+ "aspect_ratio": null,
+ "http_headers": {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-us,en;q=0.5",
+  "Sec-Fetch-Mode": "navigate"
+ },
+ "format": "140 - audio only (medium)",
+ "_type": "video",
+ "_version": {
+  "version": "2026.08.19",
+  "current_git_head": null,
+  "release_git_head": "594bd50c2c78ac432f81600d309fdc4e0a92d82c",
+  "repository": "yt-dlp/yt-dlp"
+ }
+}
