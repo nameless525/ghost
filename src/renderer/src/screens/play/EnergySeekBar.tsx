@@ -43,7 +43,15 @@ function sample(energy: number[], t0: number, t1: number): number {
   return v
 }
 
-function buildMasks(a: TrackAnalysis, durationMs: number, width: number, dpr: number): Masks {
+/**
+ * Encode a mask canvas off the main thread (toBlob) and hand back an object URL. toDataURL
+ * PNG-encoded ~6 ms of masks synchronously on every track change / Play mount.
+ */
+function toUrl(c: HTMLCanvasElement): Promise<string | null> {
+  return new Promise((resolve) => c.toBlob((b) => resolve(b ? URL.createObjectURL(b) : null), 'image/png'))
+}
+
+async function buildMasks(a: TrackAnalysis, durationMs: number, width: number, dpr: number): Promise<Masks> {
   const W = Math.max(1, Math.round(width * dpr))
   const H = Math.round(GRAPH_H * dpr)
   const step = (COL + GAP) * dpr
@@ -81,7 +89,7 @@ function buildMasks(a: TrackAnalysis, durationMs: number, width: number, dpr: nu
 
   // beat ticks (a strip under the baseline): every beat if they're far enough apart, else
   // downbeats, else every 4th downbeat
-  let ticks: string | null = null
+  let ticks: Promise<string | null> = Promise.resolve(null)
   const beats = a.beats ?? []
   if (beats.length > 1 && durS > 0) {
     const pxPerS = width / durS
@@ -98,10 +106,16 @@ function buildMasks(a: TrackAnalysis, durationMs: number, width: number, dpr: nu
       tg.globalAlpha = major ? 1 : 0.5
       tg.fillRect(x, 0, Math.max(1, Math.round(dpr)), major ? TH : Math.round(TH * 0.55))
     })
-    ticks = tc.toDataURL('image/png')
+    ticks = toUrl(tc)
   }
 
-  return { shape: sc.toDataURL('image/png'), kiai: anyKiai ? kc.toDataURL('image/png') : null, ticks }
+  const [shape, kiaiUrl, ticksUrl] = await Promise.all([toUrl(sc), anyKiai ? toUrl(kc) : null, ticks])
+  return { shape: shape ?? '', kiai: kiaiUrl, ticks: ticksUrl }
+}
+
+const revokeMasks = (m: Masks | null) => {
+  if (!m) return
+  for (const u of [m.shape, m.kiai, m.ticks]) if (u && u.startsWith('blob:')) URL.revokeObjectURL(u)
 }
 
 export function EnergySeekBar({ active, className }: { active: boolean; className?: string }) {
@@ -135,9 +149,18 @@ export function EnergySeekBar({ active, className }: { active: boolean; classNam
       setMasks(null)
       return
     }
+    let alive = true
     const dpr = Math.min(2, window.devicePixelRatio || 1)
-    setMasks(buildMasks(analysis!, duration!, width, dpr))
+    void buildMasks(analysis!, duration!, width, dpr).then((m) => {
+      if (alive) setMasks(m)
+      else revokeMasks(m)
+    })
+    return () => {
+      alive = false
+    }
   }, [analysis, duration, width, hasEnergy])
+  // the previous masks' blob URLs are released once replaced (and on unmount)
+  useEffect(() => () => revokeMasks(masks), [masks])
 
   const kiaiSegs = useMemo(() => {
     if (!analysis || !duration) return []
@@ -147,25 +170,26 @@ export function EnergySeekBar({ active, className }: { active: boolean; classNam
 
   const inKiai = (ms: number) => !!analysis?.kiai?.some(([s, e]) => ms / 1000 >= s && ms / 1000 < e)
 
-  const style = masks
-    ? ({
-        '--mask-shape': `url(${masks.shape})`,
-        '--mask-kiai': masks.kiai ? `url(${masks.kiai})` : 'none',
-        '--mask-ticks': masks.ticks ? `url(${masks.ticks})` : 'none'
-      } as CSSProperties)
-    : undefined
+  // The (large) data-URL masks go straight onto the masked layers, not through inherited custom
+  // properties: the slider rewrites --v on an ancestor several times a second, and every
+  // inherited-variable change restyles the subtree, re-resolving any var() mask on the way.
+  const maskStyles = useMemo(() => {
+    if (!masks) return null
+    const m = (u: string | null): CSSProperties => (u ? { maskImage: `url(${u})`, WebkitMaskImage: `url(${u})` } : {})
+    return { shape: m(masks.shape), kiai: m(masks.kiai), ticks: m(masks.ticks) }
+  }, [masks])
 
   const graph = (
-    <div className={cx('pl-graph', masks ? 'pl-graph--ready' : 'pl-graph--pending')} style={style}>
+    <div className={cx('pl-graph', masks ? 'pl-graph--ready' : 'pl-graph--pending')}>
       <div className="pl-graph__zoom">
-        {masks ? (
+        {masks && maskStyles ? (
           <>
-            <div className="pl-graph__layer pl-graph__base" />
-            {masks.kiai && <div className="pl-graph__layer pl-graph__kiai" />}
+            <div className="pl-graph__layer pl-graph__base" style={maskStyles.shape} />
+            {masks.kiai && <div className="pl-graph__layer pl-graph__kiai" style={maskStyles.kiai} />}
             <div className="pl-graph__clip">
               <div className="pl-graph__clip-inner">
-                <div className="pl-graph__layer pl-graph__played" />
-                {masks.kiai && <div className="pl-graph__layer pl-graph__played-kiai" />}
+                <div className="pl-graph__layer pl-graph__played" style={maskStyles.shape} />
+                {masks.kiai && <div className="pl-graph__layer pl-graph__played-kiai" style={maskStyles.kiai} />}
               </div>
             </div>
           </>
@@ -173,7 +197,7 @@ export function EnergySeekBar({ active, className }: { active: boolean; classNam
           <div className="pl-graph__shimmer" aria-hidden />
         )}
       </div>
-      {masks?.ticks && <div className="pl-graph__ticks" />}
+      {masks?.ticks && <div className="pl-graph__ticks" style={maskStyles?.ticks} />}
       <div className="pl-graph__hover" />
       <div className="pl-graph__head" />
     </div>

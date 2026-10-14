@@ -23,8 +23,9 @@ if (mode === '--summary' || secs === '--summary') {
   for (const [k, us] of [...agg].sort((a, b) => b[1] - a[1]).slice(0, 35)) console.log(String(Math.round(us / 1000)).padStart(7), 'ms ', k)
   process.exit(0)
 }
-// CPU_PORT=9223 profiles the renderer page instead (remote-debugging port).
-const port = process.env.CPU_PORT || 9229
+// CPU_PORT=9223 profiles the renderer page instead (remote-debugging port); INSPECT_PORT picks the
+// main process' --inspect port when it isn't 9229.
+const port = process.env.CPU_PORT || process.env.INSPECT_PORT || 9229
 const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
 const target = list.find((t) => t.type === 'page' && !t.url.startsWith('devtools')) || list[0]
 const ws = new WebSocket(target.webSocketDebuggerUrl)

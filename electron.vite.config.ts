@@ -12,7 +12,16 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     resolve: { alias },
-    build: { rollupOptions: { external: [/\.node$/] } }
+    build: {
+      rollupOptions: {
+        external: [/\.node$/],
+        // The catalog runs in a worker thread (src/main/catalog/host.ts spawns out/main/catalogWorker.js).
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          catalogWorker: resolve(__dirname, 'src/main/catalog/worker.ts')
+        }
+      }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

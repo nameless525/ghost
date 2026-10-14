@@ -1,22 +1,32 @@
 // Per-frame access to the engine's real-time analysis.
 //
-// `frame()` calls ghost().analysis.read() at most ONCE per ticker frame and caches the
-// result for every caller in that frame. Call it from ticker callbacks (useTicker), never
-// from React render. `levels` holds a few smoothed, ready-to-use loudness values.
+// `frame()` reads the engine at most ONCE per ticker frame and caches the result for every
+// caller in that frame. Call it from ticker callbacks (useTicker), never from React render.
+// `levels` holds a few smoothed, ready-to-use loudness values.
+//
+// The frame object and its arrays are reused: the packed reader (one Float32Array across the
+// context bridge) is unpacked into them, so reading allocates nothing on this side. Treat the
+// result as valid for the current frame only (copy what you need to keep).
 
+import { unpackFrame } from '@shared/analysis-pack'
 import type { AnalysisFrame } from '@shared/types'
 import { ghost } from '../ghost'
 import { ticker, TickPriority } from './ticker'
 
 let cached: AnalysisFrame | null = null
 let cachedFrame = -1
+const reused: AnalysisFrame = { bands: new Float32Array(96), waveform: new Float32Array(512), rms: 0, peak: 0, onset: 0, positionMs: 0, trackSeq: 0 }
 
 /** Latest analysis frame (96 bands, waveform, rms, onset, …) or null when nothing plays. */
 export function frame(): AnalysisFrame | null {
   if (cachedFrame !== ticker.frameId) {
     cachedFrame = ticker.frameId
     try {
-      cached = ghost()?.analysis?.read() ?? null
+      const a = ghost()?.analysis
+      if (a?.readPacked) {
+        const p = a.readPacked()
+        cached = p ? unpackFrame(p, reused) : null
+      } else cached = a?.read() ?? null
     } catch {
       cached = null
     }

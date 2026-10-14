@@ -9,6 +9,8 @@ export interface MosaicProps {
   covers: string[]
   /** px or CSS length. */
   size: number | string
+  /** Rendered width in CSS px when `size` isn't numeric (art is requested at this size). */
+  w?: number
   radius?: number
   smart?: boolean
   className?: string
@@ -24,7 +26,8 @@ function tiles(covers: string[]): string[] {
   return c
 }
 
-export const Mosaic = forwardRef<HTMLDivElement, MosaicProps>(function Mosaic({ covers, size, radius = 12, smart, className, style }, ref) {
+export const Mosaic = forwardRef<HTMLDivElement, MosaicProps>(function Mosaic({ covers, size, w, radius = 12, smart, className, style }, ref) {
+  const px = w ?? (typeof size === 'number' ? size : 220)
   const t = tiles(covers)
   const s = typeof size === 'number' ? `${size}px` : size
   return (
@@ -32,11 +35,11 @@ export const Mosaic = forwardRef<HTMLDivElement, MosaicProps>(function Mosaic({ 
       {t.length >= 4 ? (
         <div className="lx-mosaic__grid">
           {t.map((c, i) => (
-            <CoverArt key={i} src={c} size="100%" radius={0} ring={false} />
+            <CoverArt key={i} src={c} size="100%" w={px / 2} radius={0} ring={false} />
           ))}
         </div>
       ) : t.length || !smart ? (
-        <CoverArt src={t[0] ?? null} size="100%" radius={0} ring={false} />
+        <CoverArt src={t[0] ?? null} size="100%" w={px} radius={0} ring={false} />
       ) : null}
       {smart && !t.length && (
         <div className="lx-mosaic__smart">

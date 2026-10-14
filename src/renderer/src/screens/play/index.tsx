@@ -82,7 +82,6 @@ export default function PlayScreen(props: PlayScreenProps) {
   const seek = useRef<HTMLDivElement | null>(null)
   const top = useRef<HTMLDivElement>(null)
   const disc = useRef<HTMLDivElement>(null)
-  const discPulse = useRef<HTMLDivElement>(null)
   const discGlow = useRef<HTMLDivElement>(null)
   const drawer = useRef<HTMLElement | null>(null)
   const osd = useRef<OsdHandle>(null)
@@ -103,7 +102,9 @@ export default function PlayScreen(props: PlayScreenProps) {
   const stage = getVisualizerStage()
   const playing = status === 'playing'
 
-  usePulse(discPulse, { amount: RADIAL_PULSE, enabled: phase === 'play' && mode === 'radial' })
+  // The beat scale goes on .pl-disc itself (already a compositor layer): scaling the inner
+  // .pl-disc__pulse re-recorded the whole cover every frame, even with will-change.
+  usePulse(disc, { amount: RADIAL_PULSE, enabled: phase === 'play' && mode === 'radial' })
   usePulse(discGlow, { mode: 'var', enabled: phase === 'play' && mode === 'radial' })
 
   // ------------------------------------------------------------------ background
@@ -464,7 +465,7 @@ export default function PlayScreen(props: PlayScreenProps) {
 
       {current && (
         <div ref={disc} className="pl-disc" aria-hidden={!discShown}>
-          <div ref={discPulse} className="pl-disc__pulse">
+          <div className="pl-disc__pulse">
             <div ref={discGlow} className="pl-disc__glow" />
             <button
               type="button"

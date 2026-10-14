@@ -18,9 +18,13 @@ export function getDb(): DatabaseSync {
   return db
 }
 
-/** Run `fn` inside a transaction (node:sqlite has no helper). Not re-entrant. */
+/**
+ * Run `fn` inside a write transaction (node:sqlite has no helper). Not re-entrant. IMMEDIATE: the
+ * catalog worker writes the same file on its own connection, and a deferred transaction that read
+ * first fails with SQLITE_BUSY (no busy wait) if the worker committed in between.
+ */
 export function tx<T>(d: DatabaseSync, fn: () => T): T {
-  d.exec('BEGIN')
+  d.exec('BEGIN IMMEDIATE')
   try {
     const out = fn()
     d.exec('COMMIT')

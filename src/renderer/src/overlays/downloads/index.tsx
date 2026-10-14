@@ -341,7 +341,7 @@ function ItemArt({ d, section, index }: { d: DownloadItem; section: Section; ind
     return (
       <div className="dl-item__art dl-item__art--ring">
         <ProgressRing value={indeterminate ? null : d.status === 'tagging' ? 1 : d.progress} size={50} thickness={3}>
-          <CoverArt src={d.cover} size={38} radius={19} ring={false} />
+          <CoverArt src={d.cover} size={38} radius={19} ring={false} lazy />
         </ProgressRing>
         <span className="dl-item__pct tnum">{indeterminate ? <LoaderCircle className="dl-spin g-keep-motion" /> : `${Math.floor((d.status === 'tagging' ? 1 : d.progress) * 100)}%`}</span>
       </div>
@@ -350,7 +350,7 @@ function ItemArt({ d, section, index }: { d: DownloadItem; section: Section; ind
   return (
     <div className="dl-item__art">
       {section === 'queued' && <span className="dl-item__pos tnum">{index + 1}</span>}
-      <CoverArt src={d.cover} size={section === 'queued' ? 32 : 40} radius={8} />
+      <CoverArt src={d.cover} size={section === 'queued' ? 32 : 40} radius={8} lazy />
     </div>
   )
 }

@@ -72,14 +72,17 @@
   background: linear-gradient(90deg, var(--accent-lo), var(--accent) 70%, var(--accent-hi));
   box-shadow: 0 0 12px rgb(var(--accent-rgb) / 0.6);
   transition: transform 500ms var(--ease-out-quint);
+  overflow: hidden;
 }
+/* the sheen slides with a transform (compositor) instead of animating background-position */
 .dl-overall__fill::after {
   content: '';
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
-  background-size: 40% 100%;
-  background-repeat: no-repeat;
   animation: dl-sheen 1.8s linear infinite;
 }
 .dl-overall__indet {
@@ -93,10 +96,10 @@
 }
 @keyframes dl-sheen {
   from {
-    background-position: -60% 0;
+    transform: translateX(-90%);
   }
   to {
-    background-position: 160% 0;
+    transform: translateX(240%);
   }
 }
 @keyframes dl-indet {

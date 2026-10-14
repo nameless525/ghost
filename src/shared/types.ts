@@ -234,6 +234,22 @@ export interface PlayerState {
    * …), or null when it has none. Bit i of `mask` set = voice i is muted. Resets to 0 on track change.
    */
   voices: { names: string[]; mask: number } | null
+  /**
+   * Revision of `queue`: changes whenever the queue's order, membership or any item changes.
+   * Lets a consumer of 'player:state' keep its copy of the queue (see PlayerStateEvent).
+   */
+  queueRev?: number
+}
+
+/**
+ * Payload of the 'player:state' event: a PlayerState whose `queue` is only included when it
+ * changed since the previous broadcast (the 1 Hz heartbeat, volume steps, seeks, previews…
+ * leave it out). `queueRev` names the queue the state refers to: keep your previous copy when
+ * `queue` is absent, and refetch player.getState() if your copy's revision doesn't match.
+ * player.getState() always returns the full state (queue included).
+ */
+export interface PlayerStateEvent extends Omit<PlayerState, 'queue'> {
+  queue?: QueueItem[]
 }
 
 export interface AudioDevice {
@@ -241,6 +257,13 @@ export interface AudioDevice {
   name: string
   isDefault: boolean
 }
+
+/**
+ * Layout of AnalysisAPI.readPacked(): one Float32Array per frame instead of an object holding
+ * two typed arrays (one copy across the context bridge, nothing else allocated).
+ *   [rms, peak, onset, positionMs, trackSeq, numBands, waveformLen, ...bands, ...waveform]
+ */
+export const PACKED_FRAME = { RMS: 0, PEAK: 1, ONSET: 2, POSITION: 3, TRACK_SEQ: 4, NUM_BANDS: 5, WAVEFORM_LEN: 6, HEADER: 7 } as const
 
 /** One real-time analysis frame (read synchronously every animation frame). */
 export interface AnalysisFrame {

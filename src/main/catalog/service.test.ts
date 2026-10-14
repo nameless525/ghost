@@ -203,9 +203,9 @@ describe('CatalogService end-to-end over fixtures', () => {
       intensity: 2.4,
       durationMs: 203_000
     })
-    expect(svc.getAnalysis(t.id)).toEqual({ lufs: -15.5, truePeakDb: expect.closeTo(-0.7, 5), bpm: 96, beats: [0.25, 0.875, 1.5], downbeats: [0.25], kiai: [[12.5, 30], [60, 75.25]], energy: [0, 0.5, 1], intensity: 2.4 })
+    expect(await svc.getAnalysis(t.id)).toEqual({ lufs: -15.5, truePeakDb: expect.closeTo(-0.7, 5), bpm: 96, beats: [0.25, 0.875, 1.5], downbeats: [0.25], kiai: [[12.5, 30], [60, 75.25]], energy: [0, 0.5, 1], intensity: 2.4 })
     expect((await svc.tracks([t.id]))[0].analysis).toEqual({ bpm: 96, intensity: 2.4, lufs: -15.5 })
-    expect(svc.getAnalysis('999999')).toBeNull()
+    expect(await svc.getAnalysis('999999')).toBeNull()
     const top = await svc.browse({ text: '', group: 'game', sort: 'intensity', offset: 0, limit: 1 })
     expect(top.groups[0].title).toBe('A Bird Story')
     expect((await svc.browse({ text: 'intensity>2', group: 'game', sort: 'title', offset: 0, limit: 5 })).groups.map((g) => g.title)).toEqual(['A Bird Story'])

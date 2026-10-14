@@ -131,7 +131,8 @@ function NowPlayingChip() {
       if (!el) return
       const s = usePlayer.getState()
       const f = s.durationMs ? Math.min(1, livePositionMs(s) / s.durationMs) : 0
-      const v = f.toFixed(4)
+      // ~half a device pixel per step on the chip: a write every ~150 ms, not every frame
+      const v = (Math.round(f * 1024) / 1024).toFixed(4)
       if (el.dataset.v !== v) {
         el.dataset.v = v
         el.style.transform = `scaleX(${v})`

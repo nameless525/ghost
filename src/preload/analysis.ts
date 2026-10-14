@@ -5,8 +5,13 @@
 // Main passes the addon path and region path as additionalArguments (see preloadArgsFor):
 //   --ghost-native=<abs path to ghost.node>  --ghost-shm=<abs path to region file>
 // read() never throws: it returns null whenever no fresh frame is available.
+//
+// readPacked() returns the same frame as ONE Float32Array (PACKED_FRAME layout): crossing the
+// context bridge copies every typed array and object it's handed, so one flat array per frame
+// is one copy instead of an object plus two arrays. The packing buffer here is reused.
 import { createRequire } from 'node:module'
 import type { AnalysisAPI } from '../shared/api'
+import { packFrame } from '../shared/analysis-pack'
 import type { AnalysisFrame } from '../shared/types'
 
 interface NativeReader {
@@ -27,7 +32,10 @@ function argValue(name: string): string | null {
   return arg ? arg.slice(prefix.length) : null
 }
 
-const none: AnalysisAPI = { read: () => null }
+const none: AnalysisAPI = { read: () => null, readPacked: () => null }
+
+/** Reused packing buffer (the bridge copies it out on every call anyway). */
+let packBuf: Float32Array | undefined
 
 export function createAnalysisReader(): AnalysisAPI {
   const nativePath = argValue('ghost-native')
@@ -47,25 +55,31 @@ export function createAnalysisReader(): AnalysisAPI {
   let reader: NativeReader | null = null
   let nextOpen = 0
 
-  return {
-    read(): AnalysisFrame | null {
-      try {
-        if (!reader) {
-          const now = Date.now()
-          if (now < nextOpen) return null
-          nextOpen = now + REOPEN_MS
-          reader = new addon.AnalysisReader(shmPath) // throws until the engine has created it
-        }
-        const frame = reader.read()
-        if (frame) return frame
-        // No frame: either nothing is playing (publisher alive) or the region was orphaned
-        // (engine shut down or recreated at the same path) and must be reopened.
-        if (!reader.alive()) reader = null
-        return null
-      } catch {
-        reader = null
-        return null
+  const read = (): AnalysisFrame | null => {
+    try {
+      if (!reader) {
+        const now = Date.now()
+        if (now < nextOpen) return null
+        nextOpen = now + REOPEN_MS
+        reader = new addon.AnalysisReader(shmPath) // throws until the engine has created it
       }
+      const frame = reader.read()
+      if (frame) return frame
+      // No frame: either nothing is playing (publisher alive) or the region was orphaned
+      // (engine shut down or recreated at the same path) and must be reopened.
+      if (!reader.alive()) reader = null
+      return null
+    } catch {
+      reader = null
+      return null
+    }
+  }
+
+  return {
+    read,
+    readPacked(): Float32Array | null {
+      const f = read()
+      return f ? (packBuf = packFrame(f, packBuf)) : null
     }
   }
 }

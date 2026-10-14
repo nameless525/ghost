@@ -91,7 +91,7 @@ export function useMediaSession(): void {
       if (key !== lastMetaKey) {
         lastMetaKey = key
         try {
-          const art = artUrl(t?.cover)
+          const art = artUrl(t?.cover, { w: 512, dpr: 1 })
           ms.metadata = t
             ? new MediaMetadata({
                 title: t.title,

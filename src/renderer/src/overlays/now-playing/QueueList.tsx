@@ -387,7 +387,7 @@ function QueueRowView({
       <span className="np-q-row__lead">
         {current ? <MiniEq active={active && playing} /> : <span className="tnum">{row.abs + 1}</span>}
       </span>
-      <CoverArt src={t.cover} size={38} radius={7} hue={t.accent} />
+      <CoverArt src={t.cover} size={38} radius={7} hue={t.accent} lazy />
       <span className="np-q-row__text">
         <span className="np-q-row__title g-ellipsis">{t.title}</span>
         <span className="np-q-row__sub g-ellipsis">

@@ -257,7 +257,7 @@ export function httpSource(trackId: ID, tag: string, over: Partial<ResolvedSourc
 }
 
 /** The catalog methods the services actually use (so additions to CatalogService don't break the fake). */
-export type UsedCatalog = Pick<CatalogService, 'tracks' | 'album' | 'albumOf' | 'queryTrackIds' | 'resolveSources' | 'getAnalysis' | 'recordAnalysis' | 'markSourceFailed'>
+export type UsedCatalog = Pick<CatalogService, 'tracks' | 'album' | 'albumOf' | 'queryTrackIds' | 'resolveSources' | 'getAnalysis' | 'peekAnalysis' | 'recordAnalysis' | 'markSourceFailed'>
 
 export class FakeCatalog implements UsedCatalog {
   tracksById = new Map<ID, TrackView>()
@@ -313,8 +313,12 @@ export class FakeCatalog implements UsedCatalog {
   async random() {
     return null
   }
-  getAnalysis(trackId: ID) {
+  async getAnalysis(trackId: ID) {
     return this.analyses.get(trackId) ?? null
+  }
+  /** Like the worker proxy's LRU: what this process already knows. */
+  peekAnalysis(trackId: ID) {
+    return this.analyses.get(trackId)
   }
   recordAnalysis(trackId: ID, result: OfflineAnalysisResult) {
     this.recorded.push({ trackId, result })

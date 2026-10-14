@@ -4,10 +4,8 @@
 
 import { parseSearch } from '../../shared/search'
 import type { AlbumDetail, BrowsePage, BrowseQuery, CatalogStatus, ExternalAlbumHit, Game, ID, TrackView } from '../../shared/types'
-import { artAccent, onArtFetched, trimArtCache } from '../net/art-protocol'
 import { isNetError, NetError } from '../net/errors'
 import type { HttpClient } from '../net/http'
-import { sharedHttp } from '../net/shared'
 import { createDefaultRegistry, type ProviderRegistry } from '../providers'
 import { CHIP_ID, ChipProvider } from '../providers/chip'
 import { LocalProvider } from '../providers/local'
@@ -36,8 +34,15 @@ export interface CatalogInternals {
   fetchJson?: typeof fetch
   /** Accent colour for an image URL (default: decode via Electron nativeImage from the art cache). */
   accentOf?: (url: string, bytes?: Buffer) => Promise<string | null>
-  /** Subscribe to newly fetched art (default: the ghost-art protocol). */
-  onArtFetched?: (fn: (url: string, bytes: Buffer) => void) => () => void
+  /**
+   * Subscribe to newly fetched art (default: the ghost-art protocol). Listeners get the bytes, or the
+   * accent itself when the art pipeline already computed it (the worker gets just the URL).
+   */
+  onArtFetched?: (fn: (url: string, bytes?: Buffer, accent?: string | null) => void) => () => void
+  /** Trim the art cache a minute after start (default: the ghost-art protocol's; skipped when accentOf is given). */
+  trimArtCache?: () => Promise<unknown>
+  /** Serve stale bucket aggregations (platform/year/composer/franchise) for this long after the data changed. */
+  bucketStaleMs?: number
   now?: () => number
   /** Delay before the startup crawl begins (ms). */
   startDelayMs?: number
@@ -67,6 +72,41 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   ])
 }
 
+// Main-process defaults (Electron net / the ghost-art protocol), loaded lazily so the catalog worker's
+// bundle never pulls in Electron: the worker always passes its own transports.
+const artProtocol = () => import('../net/art-protocol')
+
+function defaultOnArtFetched(fn: (url: string, bytes?: Buffer, accent?: string | null) => void): () => void {
+  let off: (() => void) | null = null
+  let dead = false
+  void artProtocol()
+    .then((m) => {
+      if (!dead) off = m.onArtAccent((url, hex) => fn(url, undefined, hex))
+    })
+    .catch(() => {})
+  return () => {
+    dead = true
+    off?.()
+  }
+}
+
+/** The process-wide HTTP client of the main process (net/shared), loaded on first use. */
+function lazySharedHttp(): HttpClient {
+  let loaded: HttpClient | null = null
+  let p: Promise<HttpClient> | null = null
+  const get = () => (p ??= import('../net/shared').then((m) => (loaded = m.sharedHttp())))
+  return {
+    pageFetch: async (url, opts) => (await get()).pageFetch(url, opts),
+    fetchBytes: async (url, opts) => (await get()).fetchBytes(url, opts),
+    invalidate: async (url) => (await get()).invalidate(url),
+    limiter: (host) => {
+      if (!loaded) throw new Error('HTTP client not loaded yet')
+      return loaded.limiter(host)
+    },
+    blockedUntil: (host) => loaded?.blockedUntil(host) ?? 0
+  }
+}
+
 /** The game an imported album belongs to, when the user didn't say: its title minus OST decoration. */
 export function guessGameName(album: Pick<ProviderAlbum, 'title'>, hit?: Pick<ExternalAlbumHit, 'title'>): string {
   for (const t of [album.title, hit?.title]) {
@@ -87,7 +127,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   const repo = new CatalogRepo(deps.db, now)
   let registry: ProviderRegistry | null = internals.registry ?? null
   const getRegistry = () =>
-    (registry ??= createDefaultRegistry(internals.http ?? sharedHttp(), {
+    (registry ??= createDefaultRegistry(internals.http ?? lazySharedHttp(), {
       db: deps.db,
       ytdlp: internals.ytdlp,
       fetch: internals.sourceFetch,
@@ -95,7 +135,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       log: (m) => log(`sources: ${m}`)
     }))
   const quality = () => deps.getSettings().sources.quality
-  const qe = new QueryEngine(repo, quality)
+  const qe = new QueryEngine(repo, quality, { bucketStaleMs: internals.bucketStaleMs ?? 0 })
   const resolver = new SourceResolver({ repo, registry: lazyRegistry(getRegistry), getSettings: deps.getSettings, now, log })
 
   // --- status broadcast (throttled) -----------------------------------------------------------
@@ -112,12 +152,14 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   let prewarmTimer: ReturnType<typeof setTimeout> | null = null
   const schedulePrewarm = (ms: number) => {
     if (prewarmTimer) clearTimeout(prewarmTimer)
-    prewarmTimer = setTimeout(() => {
+    prewarmTimer = setTimeout(async () => {
       prewarmTimer = null
-      if (stopped || crawler?.running) return
+      // In small chunks (the catalog keeps answering Browse meanwhile).
+      await repo.preloadGameMaps().catch((e) => log(`prewarm games: ${(e as Error).message}`))
       for (const group of ['platform', 'year', 'composer', 'franchise'] as const) {
+        if (stopped || crawler?.running) return
         try {
-          qe.browse({ text: '', group, sort: 'title', offset: 0, limit: 1 })
+          await qe.warmBuckets(group)
         } catch (e) {
           log(`prewarm ${group}: ${(e as Error).message}`)
         }
@@ -152,7 +194,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   }
 
   const enricher = new Enricher({ repo, getSettings: deps.getSettings, fetch: internals.fetchJson, onChange: notify, log, now })
-  const accent = new AccentWorker(repo, internals.accentOf ?? artAccent, notify)
+  const accent = new AccentWorker(repo, internals.accentOf ?? (async (url, bytes) => (await artProtocol()).artAccent(url, bytes)), notify)
 
   let crawler: Crawler | null = null
   const getCrawler = (): Crawler | null => {
@@ -436,14 +478,13 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
         localPoll.unref?.()
       }
       if (!internals.disableEnrichment) {
-        unsubscribeArt = (internals.onArtFetched ?? onArtFetched)((url, bytes) => accent.onArtFetched(url, bytes))
+        unsubscribeArt = (internals.onArtFetched ?? defaultOnArtFetched)((url, bytes, hex) => accent.onArtFetched(url, bytes, hex))
         enricher.start()
       }
       timers.push(
         setTimeout(() => {
           if (stopped) return
-          // Fresh shuffle for 'random' sort each launch.
-          repo.run(`UPDATE games SET rnd = abs(random()) % 2147483647`)
+          // Fresh shuffle for 'random' sort each launch (a seeded hash order; no rows are rewritten).
           reseedRandom()
           const c = getCrawler()
           if (c?.start()) log('index crawl started')
@@ -454,7 +495,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
           notify()
         }, internals.startDelayMs ?? 1500)
       )
-      if (!internals.disableEnrichment && !internals.accentOf) timers.push(setTimeout(() => void trimArtCache().catch(() => {}), 60_000))
+      const trim = internals.trimArtCache ?? (internals.accentOf ? null : async () => (await artProtocol()).trimArtCache())
+      if (!internals.disableEnrichment && trim) timers.push(setTimeout(() => void trim().catch(() => {}), 60_000))
     },
 
     stop() {
@@ -550,7 +592,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       return qe.random(text)
     },
 
-    getAnalysis(trackId) {
+    async getAnalysis(trackId) {
       const id = Number(trackId)
       return Number.isFinite(id) ? repo.getAnalysis(id) : null
     },

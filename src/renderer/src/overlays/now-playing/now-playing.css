@@ -65,7 +65,19 @@
   border-radius: 12px;
   box-shadow:
     0 10px 30px rgb(0 0 0 / 0.5),
-    0 0 calc(10px + var(--pulse, 0) * 18px) rgb(var(--accent-rgb) / calc(0.25 + var(--pulse, 0) * 0.25));
+    0 0 10px rgb(var(--accent-rgb) / 0.25);
+}
+/* the beat glow: a fixed, fully-grown glow whose opacity follows --pulse (compositor-only,
+   instead of re-painting a growing box-shadow every frame) */
+.np-hero__cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 28px rgb(var(--accent-rgb) / 0.5);
+  opacity: var(--pulse, 0);
+  pointer-events: none;
+  will-change: opacity;
 }
 .np-hero__text {
   display: flex;

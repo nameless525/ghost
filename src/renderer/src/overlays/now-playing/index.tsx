@@ -95,7 +95,7 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
     )
   }
 
-  const art = artUrl(current.hero ?? current.cover)
+  const art = artUrl(current.hero ?? current.cover, { w: 460 })
   const sub = [current.gameName, current.albumTitle].filter(Boolean).join(' · ')
 
   return (
@@ -146,6 +146,7 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
             max={duration ?? 1}
             disabled={!duration}
             live={() => livePositionMs()}
+            liveActive={open}
             onCommit={(ms) => void ghost().player.seek(ms)}
             format={formatTime}
             wheelStep={0.02}

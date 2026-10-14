@@ -63,13 +63,23 @@ export function VolumeMeter() {
     const el = root.current
     if (!el) return
     tween(el).set({ opacity: 0, x: 24, scale: 0.86 })
+    // Hidden = display:none: the meter is mounted for the app's lifetime, and while merely
+    // transparent its accent-coloured strokes and backdrop blur still restyle/animate (e.g. on
+    // every accent change) for nothing.
+    el.style.display = 'none'
 
     const hide = () => {
       if (!shown.current) return
       if (hovering.current) return arm()
       shown.current = false
       setVisible(false)
-      tween(el).fadeOut(320, 'outQuad').moveToX(20, 460, 'outQuint').scaleTo(0.94, 460, 'outQuint')
+      tween(el)
+        .fadeOut(320, 'outQuad')
+        .moveToX(20, 460, 'outQuint')
+        .scaleTo(0.94, 460, 'outQuint')
+        .then(() => {
+          if (!shown.current) el.style.display = 'none'
+        })
     }
     const arm = (ms = HIDE_MS) => {
       window.clearTimeout(hideTimer.current)
@@ -87,6 +97,7 @@ export function VolumeMeter() {
       if (!shown.current) {
         shown.current = true
         setVisible(true)
+        el.style.display = ''
         tween(el).fadeIn(160, 'outQuad').moveToX(0, 520, 'outQuint').scaleTo(1, 520, 'outBack')
       } else {
         // a little kick on every change while visible

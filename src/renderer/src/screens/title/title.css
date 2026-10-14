@@ -42,6 +42,9 @@
   inset: 0;
   border-radius: 50%;
   outline-offset: 10px;
+  /* beat pulse writes `scale` every frame: keep the whole logo on its own layer so it is
+     rasterised once and only re-composited */
+  will-change: transform;
 }
 .tl-logo:focus-visible {
   outline: 3px solid rgb(var(--accent-rgb) / 0.9);
@@ -60,6 +63,7 @@
   background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.5) 0%, rgb(var(--accent-rgb) / 0.16) 38%, transparent 66%);
   opacity: calc(0.5 + var(--pulse, 0) * 0.32);
   transition: transform 700ms var(--ease-out-quint);
+  will-change: opacity; /* --pulse changes every frame: compositor-only */
 }
 .tl-hover--on .tl-logo-art__glow {
   transform: scale(1.12);
@@ -271,15 +275,18 @@
   gap: 2px;
   height: 12px;
 }
+/* bars scale (compositor) rather than animate height (layout + paint every frame) */
 .tl-np__eq i {
   width: 3px;
-  height: 30%;
+  height: 100%;
   border-radius: 2px;
   background: var(--accent);
   box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.8);
+  transform-origin: bottom;
+  transform: scaleY(0.3);
 }
 .tl-np--playing .tl-np__eq i {
-  animation: tl-eq 900ms ease-in-out infinite alternate;
+  animation: tl-np-eq 900ms ease-in-out infinite alternate;
 }
 .tl-np--playing .tl-np__eq i:nth-child(2) {
   animation-duration: 650ms;
@@ -289,12 +296,12 @@
   animation-duration: 780ms;
   animation-delay: -420ms;
 }
-@keyframes tl-eq {
+@keyframes tl-np-eq {
   from {
-    height: 25%;
+    transform: scaleY(0.25);
   }
   to {
-    height: 100%;
+    transform: scaleY(1);
   }
 }
 .tl-press {

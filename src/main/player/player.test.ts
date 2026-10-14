@@ -563,6 +563,40 @@ describe('engine events', () => {
     expect(t.bc.of('player:state')).toHaveLength(0)
   })
 
+  it('sends the queue only when it changed (queueRev names it)', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2', 't3'])
+    await t.settle()
+    t.started()
+    await flush()
+    // (loading may replace items, e.g. with the resolved source: the latest queue sent wins)
+    const first = t.bc.of('player:state').filter((s) => s.queue).pop()!
+    expect(first.queue!.map((q) => q.track.id)).toEqual(['t1', 't2', 't3'])
+    const rev = first.queueRev!
+    expect(t.player.snapshot().queueRev).toBe(rev)
+    // heartbeat / volume: no queue, same revision
+    t.bc.clear()
+    t.player.tick()
+    await t.player.setVolume(0.5)
+    await flush()
+    for (const s of t.bc.of('player:state')) {
+      expect(s.queue).toBeUndefined()
+      expect(s.queueRev).toBe(rev)
+    }
+    expect(t.bc.of('player:state').length).toBeGreaterThan(0)
+    // a queue change: sent once, with a new revision
+    t.bc.clear()
+    await t.player.enqueue(['t4'], 'end')
+    await flush()
+    const changed = t.bc.of('player:state')
+    expect(changed[0].queue!.map((q) => q.track.id)).toEqual(['t1', 't2', 't3', 't4'])
+    expect(changed[0].queueRev).toBeGreaterThan(rev)
+    // getState() always carries the full queue
+    const full = await t.player.getState()
+    expect(full.queue).toHaveLength(4)
+    expect(full.queueRev).toBe(changed[0].queueRev)
+  })
+
   it('does not let a stale engine position undo a seek', async () => {
     const t = setup()
     await t.player.playTracks(['t1'])

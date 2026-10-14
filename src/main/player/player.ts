@@ -8,6 +8,7 @@ import type {
   LoopMode,
   PlayContext,
   PlayerState,
+  PlayerStateEvent,
   PlayStatus,
   PlaylistDetail,
   QueueItem,
@@ -26,7 +27,7 @@ import type { Broadcast } from '../ipc'
 import type { SessionData, SessionStore } from './session'
 import { fisherYates, smartShuffle, type Rng } from './shuffle'
 
-export type PlayerCatalog = Pick<CatalogService, 'album' | 'resolveSources' | 'getAnalysis' | 'recordAnalysis' | 'markSourceFailed'>
+export type PlayerCatalog = Pick<CatalogService, 'album' | 'resolveSources' | 'getAnalysis' | 'peekAnalysis' | 'recordAnalysis' | 'markSourceFailed'>
 
 export interface PlayerLibrary {
   decorateOne(t: TrackView): TrackView
@@ -274,10 +275,40 @@ export class Player implements PlayerAPI {
 
   /** A fresh PlayerState snapshot. */
   snapshot(): PlayerState {
+    return { ...this.lightSnapshot(), queue: [...this.s.queue] }
+  }
+
+  /** Everything but the queue (plus the queue's revision). */
+  private lightSnapshot(): Omit<PlayerState, 'queue'> {
     this.refreshPosition()
     const current = this.item()?.track ?? null
     const v = current ? this.s.voices : null
-    return { ...this.s, current, queue: [...this.s.queue], voices: v ? { names: [...v.names], mask: v.mask } : null }
+    const { queue: _queue, ...rest } = this.s
+    return { ...rest, current, voices: v ? { names: [...v.names], mask: v.mask } : null, queueRev: this.queueRevision() }
+  }
+
+  // The queue is replaced (never mutated) on every change, so its identity is its revision.
+  private queueRev = 0
+  private revOf: QueueItem[] | null = null
+  /** The queue as of the last 'player:state' broadcast. */
+  private sentQueue: QueueItem[] | null = null
+
+  private queueRevision(): number {
+    if (this.s.queue !== this.revOf) {
+      this.revOf = this.s.queue
+      this.queueRev++
+    }
+    return this.queueRev
+  }
+
+  /** The 'player:state' payload: the queue only when it changed since the last broadcast. */
+  stateEvent(): PlayerStateEvent {
+    const ev: PlayerStateEvent = this.lightSnapshot()
+    if (this.s.queue !== this.sentQueue) {
+      this.sentQueue = this.s.queue
+      ev.queue = [...this.s.queue]
+    }
+    return ev
   }
 
   private changed(): void {
@@ -285,7 +316,7 @@ export class Player implements PlayerAPI {
     this.emitQueued = true
     queueMicrotask(() => {
       this.emitQueued = false
-      if (!this.disposed) this.deps.broadcast('player:state', this.snapshot())
+      if (!this.disposed) this.deps.broadcast('player:state', this.stateEvent())
     })
   }
 
@@ -434,7 +465,8 @@ export class Player implements PlayerAPI {
   private engineTrack(id: string, track: TrackView, src: ResolvedSource): EngineTrack {
     let lufs: number | null = track.analysis?.lufs ?? null
     try {
-      lufs = this.catalog.getAnalysis(track.id)?.lufs ?? lufs
+      // The catalog runs in a worker: only what it already handed this process (same value as the summary).
+      lufs = this.catalog.peekAnalysis?.(track.id)?.lufs ?? lufs
     } catch {
       /* keep summary value */
     }
@@ -474,19 +506,32 @@ export class Player implements PlayerAPI {
   // Loading
 
   private setCurrentItem(item: QueueItem): void {
-    let analysis: TrackAnalysis | null = null
+    let analysis: TrackAnalysis | null | undefined
     try {
-      analysis = this.catalog.getAnalysis(item.track.id)
+      analysis = this.catalog.peekAnalysis?.(item.track.id)
     } catch {
       analysis = null
     }
-    this.s.currentAnalysis = analysis
+    this.s.currentAnalysis = analysis ?? null
+    // Not known in this process yet: ask the catalog (async) and fill it in if still current.
+    if (analysis === undefined) this.loadAnalysis(item)
     this.s.durationMs = this.infoDuration.get(item.uid) ?? item.track.durationMs ?? null
     this.s.error = null
     // A new track starts with every voice audible (the engine's mask is global).
     const names = this.infoVoices.get(item.uid)
     this.s.voices = names ? { names, mask: 0 } : null
     this.resetVoiceMask()
+  }
+
+  private loadAnalysis(item: QueueItem): void {
+    this.catalog
+      .getAnalysis(item.track.id)
+      .then((a) => {
+        if (!a || this.s.currentAnalysis || this.item()?.uid !== item.uid) return
+        this.s.currentAnalysis = a
+        this.changed()
+      })
+      .catch(() => {})
   }
 
   private resetVoiceMask(): void {
@@ -908,7 +953,7 @@ export class Player implements PlayerAPI {
     }
     let full: TrackAnalysis | null = null
     try {
-      full = this.catalog.getAnalysis(trackId)
+      full = this.catalog.peekAnalysis?.(trackId) ?? null
     } catch {
       full = null
     }
@@ -1407,10 +1452,10 @@ export class Player implements PlayerAPI {
   // Previews
 
   /** Where a preview starts: the first kiai section if analysed, else 35% in. */
-  previewPoint(track: TrackView): number {
+  async previewPoint(track: TrackView): Promise<number> {
     let a: TrackAnalysis | null = null
     try {
-      a = this.catalog.getAnalysis(track.id)
+      a = this.catalog.peekAnalysis?.(track.id) ?? (await this.catalog.getAnalysis(track.id))
     } catch {
       a = null
     }
@@ -1431,9 +1476,11 @@ export class Player implements PlayerAPI {
       remoteResolved: false,
       lastError: null,
       seq,
-      startMs: typeof startMs === 'number' && startMs >= 0 ? startMs : this.previewPoint(track)
+      startMs: typeof startMs === 'number' && startMs >= 0 ? startMs : 0
     }
     this.pv = pv
+    // The start point may need the analysis from the catalog worker: look it up while resolving.
+    const point = typeof startMs === 'number' && startMs >= 0 ? null : this.previewPoint(track)
     try {
       const r = await this.resolveInitial(trackId)
       pv.sources = r.sources
@@ -1442,6 +1489,7 @@ export class Player implements PlayerAPI {
       pv.lastError = (e as Error)?.message ?? String(e)
       pv.remoteResolved = true
     }
+    if (point) pv.startMs = await point
     if (pv !== this.pv) return
     await this.startPreviewSource(pv)
   }

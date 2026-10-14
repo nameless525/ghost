@@ -180,7 +180,7 @@ export function HistoryTab({ live, active }: { live: Live<HistoryEntry[]>; activ
                         {today ? relativeTime(e.playedAt, now) : clockTime(e.playedAt)}
                       </span>
                       <span className="lib-hist__cover">
-                        <CoverArt src={t.cover} size={36} radius={7} hue={t.accent} />
+                        <CoverArt src={t.cover} size={36} radius={7} hue={t.accent} lazy />
                         <button
                           type="button"
                           className="lib-hist__play"

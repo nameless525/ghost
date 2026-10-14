@@ -17,6 +17,7 @@ import type {
   HistoryEntry,
   PlayContext,
   PlayerState,
+  PlayerStateEvent,
   Playlist,
   PlaylistItem,
   QueueItem,
@@ -309,8 +310,32 @@ let trackSeq = 0
 function livePos(): number {
   return player.status === 'playing' ? player.positionMs + (now() - player.positionAt) : player.positionMs
 }
+// Like the real player: 'player:state' carries the queue only when it changed (queueRev names it).
+let queueRev = 0
+let queueKey = ''
+let sentKey: string | null = null
+function syncQueueRev(): string {
+  const key = player.queue.map((q) => `${q.uid}:${q.track.liked ? 1 : 0}${q.track.downloaded ? 1 : 0}`).join(',')
+  if (key !== queueKey) {
+    queueKey = key
+    queueRev++
+  }
+  player.queueRev = queueRev
+  return key
+}
 function pushState() {
-  emit('player:state', structuredClone(player))
+  const key = syncQueueRev()
+  const { queue, ...rest } = structuredClone(player)
+  const ev: PlayerStateEvent = rest
+  if (key !== sentKey) {
+    sentKey = key
+    ev.queue = queue
+  }
+  emit('player:state', ev)
+}
+function fullState(): PlayerState {
+  syncQueueRev()
+  return structuredClone(player)
 }
 function snapshot() {
   player.positionMs = livePos()
@@ -587,7 +612,7 @@ export function installMockGhost(): void {
       }
     },
     player: {
-      getState: () => delay(structuredClone(player), 0),
+      getState: () => delay(fullState(), 0),
       playTracks: async (ids, start = 0, context) => setQueue(ids, start, context ?? null),
       playAlbum: async (albumId, start = 0) => {
         const a = albums.find((x) => x.id === albumId)!

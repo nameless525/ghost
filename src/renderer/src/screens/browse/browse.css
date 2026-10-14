@@ -108,11 +108,14 @@
   box-shadow:
     inset 0 0 0 1px var(--glass-line),
     0 6px 18px rgb(0 0 0 / 0.32);
+  /* Hover only: selection changes (every key press) must not start box-shadow transitions,
+     which repaint the whole panel every frame. The selection's glow fades via .bc-ring. */
+  transition: background-color 220ms var(--ease-out-quint);
+}
+.bc-item.is-hover .bc-panel {
   transition:
     background-color 220ms var(--ease-out-quint),
     box-shadow 260ms var(--ease-out-quint);
-}
-.bc-item.is-hover .bc-panel {
   background: color-mix(in srgb, var(--bg-5) 86%, transparent);
   box-shadow:
     inset 0 0 0 1px var(--line-3),
@@ -121,8 +124,6 @@
 .bc-item.is-selected .bc-panel {
   box-shadow:
     inset 0 0 0 1px rgb(var(--accent-rgb) / 0.35),
-    0 0 0 1.5px rgb(var(--accent-rgb) / 0.9),
-    0 0 30px rgb(var(--accent-rgb) / 0.38),
     0 10px 30px rgb(0 0 0 / 0.45);
 }
 .bc-item.is-active .bc-panel {
@@ -131,18 +132,35 @@
     0 8px 26px rgb(0 0 0 / 0.42);
 }
 
-/* the pulsing accent rim (opacity written per frame for the selected panel only) */
-.bc-glow {
+/* The selection's accent ring + outer glow, and the beat-pulsing rim. Both are siblings of
+   the panel (sheared the same way) and only change opacity, written per frame by the
+   carousel; while lit they get their own compositor layers, so selection fades and beat
+   pulses never repaint the panel. */
+.bc-glow,
+.bc-ring {
   position: absolute;
   inset: 0;
-  border-radius: inherit;
+  border-radius: var(--radius);
+  transform: skewX(var(--shear));
   pointer-events: none;
   opacity: 0;
+}
+.bc-ring {
+  z-index: 3;
+  box-shadow:
+    0 0 0 1.5px rgb(var(--accent-rgb) / 0.9),
+    0 0 30px rgb(var(--accent-rgb) / 0.38);
+}
+.bc-glow {
   z-index: 4;
   box-shadow:
     inset 0 0 0 1.5px rgb(var(--accent-rgb) / 0.95),
     inset 0 0 22px rgb(var(--accent-rgb) / 0.28);
   background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.16), transparent 42%);
+}
+.bc-item.is-lit .bc-glow,
+.bc-item.is-lit .bc-ring {
+  will-change: opacity;
 }
 
 .bc-content {
@@ -223,13 +241,16 @@
   background: var(--ga, var(--accent));
   box-shadow: 0 0 12px var(--ga, var(--accent));
   opacity: 0.85;
+  /* widens 4 → 6 px with a compositor-only transform (a width transition relayouts and
+     repaints the panel every frame) */
+  transform-origin: left center;
   transition:
-    width 300ms var(--ease-out-quint),
+    transform 300ms var(--ease-out-quint),
     opacity 300ms;
 }
 .bc-item.is-selected .bc-edge,
 .bc-item.is-hover .bc-edge {
-  width: 6px;
+  transform: scaleX(1.5);
   opacity: 1;
 }
 .bc-item--group .bc-content {
@@ -311,6 +332,10 @@
   background: var(--accent);
   box-shadow: none;
   opacity: 0.35;
+}
+.bc-item--album.is-selected .bc-edge,
+.bc-item--album.is-hover .bc-edge {
+  transform: scaleX(2);
 }
 .bc-item--album.is-expanded .bc-edge {
   opacity: 0.9;
@@ -414,9 +439,13 @@
     0 3px 10px rgb(0 0 0 / 0.25);
 }
 .bc-item--track .bc-glow {
+  border-radius: 8px;
   box-shadow:
     inset 0 0 0 1.5px rgb(var(--accent-rgb) / 0.95),
     inset 0 0 16px rgb(var(--accent-rgb) / 0.25);
+}
+.bc-item--track .bc-ring {
+  border-radius: 8px;
 }
 .bc-item--track .bc-content {
   display: flex;

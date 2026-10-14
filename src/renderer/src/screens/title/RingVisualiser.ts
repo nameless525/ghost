@@ -4,6 +4,13 @@
 // breathing shimmer keeps the ring alive.
 import type { AnalysisFrame } from '@shared/types'
 
+/** Max canvas resolution (window.__ghostGfx.ringRes in dev). */
+const RING_MAX_RES = { v: 1.5 }
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  const g = ((window as unknown as { __ghostGfx?: Record<string, unknown> }).__ghostGfx ??= {})
+  Object.defineProperty(g, 'ringRes', { configurable: true, get: () => RING_MAX_RES.v, set: (v: number) => (RING_MAX_RES.v = v) })
+}
+
 const PER_SIDE = 72
 const USED_BANDS = 84 // skip the top of the spectrum, it's mostly air
 
@@ -22,7 +29,8 @@ export class RingVisualiser {
   }
 
   resize(cssSize: number): void {
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    // 1.5× is plenty for soft additive bars (and ~56% of the fill of 2× on Retina/4K)
+    const dpr = Math.min(RING_MAX_RES.v, window.devicePixelRatio || 1)
     if (cssSize === this.size && dpr === this.dpr) return
     this.size = cssSize
     this.dpr = dpr

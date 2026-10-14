@@ -361,16 +361,25 @@ export class AccentWorker {
     private onChange: () => void
   ) {}
 
-  /** Called by the art protocol when a cover arrives from the network. */
-  onArtFetched(url: string, bytes: Buffer): void {
+  /**
+   * Called by the art protocol when a cover arrives from the network: with its bytes, or with the
+   * accent when the art pipeline already computed it (`known`; null = no usable accent).
+   */
+  onArtFetched(url: string, bytes?: Buffer, known?: string | null): void {
     const games = this.repo.all<{ id: number }>(`SELECT id FROM games WHERE cover = ? AND accent IS NULL`, url)
     if (!games.length) return
-    void this.accentOf(url, bytes).then((accent) => {
+    const apply = (accent: string | null) => {
       if (!accent) return
-      for (const g of games) this.repo.run(`UPDATE games SET accent = ? WHERE id = ? AND cover = ?`, accent, g.id, url)
+      this.repo.tx(() => {
+        for (const g of games) this.repo.run(`UPDATE games SET accent = ? WHERE id = ? AND cover = ?`, accent, g.id, url)
+      })
       this.repo.revision++
       this.onChange()
-    })
+    }
+    if (known !== undefined) return apply(known)
+    void this.accentOf(url, bytes)
+      .then(apply)
+      .catch(() => {})
   }
 
   /** Queue games (e.g. a browse page) whose covers may already be cached. */

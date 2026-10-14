@@ -145,11 +145,13 @@ function OverlayPanel({ id, def, open }: { id: OverlayId; def: OverlayDef; open:
     const el = panel.current
     const b = body.current
     if (!el || !b) return
+    // A closed panel is display:none (data-phase='closed'): it must be laid out before we can
+    // measure it or slide it in. React re-renders the same phase right after.
+    if (open && el.dataset.phase === 'closed') el.dataset.phase = 'entering'
     const w = el.offsetWidth + 40
     const hidden = def.side === 'left' ? { x: -w, y: 0 } : def.side === 'right' ? { x: w, y: 0 } : { x: 0, y: -24 }
     if (open) {
       if (def.side === 'drop') alignDrop(el)
-      el.style.visibility = ''
       el.removeAttribute('inert')
       setPhase('entering')
       const t = tween(el).clear()
@@ -168,7 +170,6 @@ function OverlayPanel({ id, def, open }: { id: OverlayId; def: OverlayDef; open:
         .then(() => {
           if (useUI.getState().overlays[id]) return
           setPhase('closed')
-          el.style.visibility = 'hidden'
           el.setAttribute('inert', '')
         })
     }

@@ -298,7 +298,7 @@ export class DownloadManager implements DownloadsAPI {
       job.dest = dest
       let analysis = null
       try {
-        analysis = this.deps.catalog.getAnalysis(rec.trackId)
+        analysis = await this.deps.catalog.getAnalysis(rec.trackId)
       } catch {
         analysis = null
       }

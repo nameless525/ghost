@@ -479,7 +479,7 @@ const Row = memo(function Row({ item, index, track, selected, sortable, exiting,
             )}
           </span>
           <span className="tl-c tl-c--cover">
-            <CoverArt src={track.cover} size={36} radius={7} hue={track.accent} />
+            <CoverArt src={track.cover} size={36} radius={7} hue={track.accent} lazy />
           </span>
           <span className="tl-c tl-c--title">
             <span className="tl-title g-ellipsis">{track.title}</span>

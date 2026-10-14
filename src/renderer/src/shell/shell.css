@@ -337,6 +337,7 @@
   height: 100%;
   transform-origin: left;
   transform: scaleX(0);
+  will-change: transform; /* advanced per frame: compositor-only */
   background: var(--accent);
   box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.8);
 }
@@ -397,8 +398,10 @@
   box-shadow: var(--shadow-pop);
   transform-origin: top right;
 }
+/* Closed overlays stay mounted (state survives) but cost nothing: no style, layout, paint or
+   running CSS animations while display:none. */
 .g-ov[data-phase='closed'] {
-  visibility: hidden;
+  display: none;
 }
 .g-ov[data-phase='exiting'] {
   pointer-events: none;

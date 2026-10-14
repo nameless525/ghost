@@ -23,6 +23,14 @@ import { destroyTextures, makeTextures, type VisTextures } from './textures'
 import { computeLayout, HUD_HEIGHT, VISUALIZER_MODES, type VisFrame, type VisLayer, type VisLayout, type VisualizerMode } from './types'
 import { vivid } from './util'
 
+/** Max canvas resolution (device px per CSS px). */
+const VIS_MAX_RES = { v: 1.5 }
+// Dev handle for A/B-ing the resolution: window.__ghostGfx.visRes = 2
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  const g = ((window as unknown as { __ghostGfx?: Record<string, unknown> }).__ghostGfx ??= {})
+  Object.defineProperty(g, 'visRes', { configurable: true, get: () => VIS_MAX_RES.v, set: (v: number) => (VIS_MAX_RES.v = v) })
+}
+
 interface MixAnim {
   v: number
   from: number
@@ -85,8 +93,12 @@ export class VisualizerStage {
     this.ready = this.init()
   }
 
+  /**
+   * Canvas resolution. Additive glows, soft bars and particles look the same at 1.5× as at 2×,
+   * at ~56% of the fill (the stage covers the whole window).
+   */
   private resolution(): number {
-    return Math.min(2, (window.devicePixelRatio || 1) * uiZoom())
+    return Math.min(VIS_MAX_RES.v, (window.devicePixelRatio || 1) * uiZoom())
   }
 
   private async init(): Promise<void> {

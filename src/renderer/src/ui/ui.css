@@ -507,6 +507,12 @@
   scale: 0;
   pointer-events: none;
 }
+/* Live seek bars move the fill/thumb every few frames: keep those on their own layers (other
+   sliders only move on input, so they stay in their parent's layer). */
+.g-slider--seek .g-slider__fill,
+.g-slider--seek .g-slider__thumb {
+  will-change: transform;
+}
 .g-slider:hover .g-slider__track,
 .g-slider.is-dragging .g-slider__track,
 .g-slider:focus-visible .g-slider__track {

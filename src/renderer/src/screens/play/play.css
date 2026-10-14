@@ -70,6 +70,7 @@
   background: radial-gradient(circle, rgb(var(--accent-rgb) / 0.55) 30%, rgb(var(--accent-rgb) / 0.12) 55%, transparent 70%);
   opacity: calc(0.35 + var(--pulse, 0) * 0.35);
   pointer-events: none;
+  will-change: opacity;
 }
 .pl-root--kiai .pl-disc__glow {
   opacity: calc(0.6 + var(--pulse, 0) * 0.4);
@@ -601,34 +602,34 @@
 }
 .pl-graph__base {
   background: rgb(255 255 255 / 0.2);
-  -webkit-mask-image: var(--mask-shape);
-  mask-image: var(--mask-shape);
+  /* mask-image: set inline (EnergySeekBar) */
 }
 .pl-graph__kiai {
   background: linear-gradient(0deg, rgb(var(--accent-rgb) / 0.22), rgb(var(--accent-hi-rgb) / 0.5));
-  -webkit-mask-image: var(--mask-kiai);
-  mask-image: var(--mask-kiai);
+  /* mask-image: set inline (EnergySeekBar) */
 }
+/* The played part is a clip window sliding over a counter-sliding copy: both are their own
+   layers so the (masked) energy graph is rasterised once, not on every position step. */
 .pl-graph__clip {
   position: absolute;
   inset: 0;
   overflow: hidden;
   transform: translateX(calc((var(--v) - 1) * 100%));
+  will-change: transform;
 }
 .pl-graph__clip-inner {
   position: absolute;
   inset: 0;
   transform: translateX(calc((1 - var(--v)) * 100%));
+  will-change: transform;
 }
 .pl-graph__played {
   background: linear-gradient(0deg, var(--accent-lo), var(--accent) 55%, var(--accent-hi));
-  -webkit-mask-image: var(--mask-shape);
-  mask-image: var(--mask-shape);
+  /* mask-image: set inline (EnergySeekBar) */
 }
 .pl-graph__played-kiai {
   background: linear-gradient(0deg, var(--accent-hi), #fff);
-  -webkit-mask-image: var(--mask-kiai);
-  mask-image: var(--mask-kiai);
+  /* mask-image: set inline (EnergySeekBar) */
   opacity: 0.8;
 }
 .pl-root--kiai .pl-graph__played {
@@ -641,8 +642,7 @@
   top: calc(100% + 9px);
   height: 7px;
   background: rgb(255 255 255 / 0.55);
-  -webkit-mask-image: var(--mask-ticks);
-  mask-image: var(--mask-ticks);
+  /* mask-image: set inline (EnergySeekBar) */
   -webkit-mask-size: 100% 100%;
   mask-size: 100% 100%;
   opacity: 0;
@@ -668,6 +668,7 @@
 }
 .pl-graph__head {
   transform: translateX(calc(var(--v) * 100cqw));
+  will-change: transform;
   background: #fff;
   box-shadow:
     0 0 10px rgb(var(--accent-rgb) / 0.95),
@@ -1032,7 +1033,8 @@ html.reduce-motion .pl-paused--on {
 }
 .pl-ch__head > svg {
   color: var(--accent-hi);
-  filter: drop-shadow(0 0 calc(2px + var(--pulse, 0) * 5px) rgb(var(--accent-rgb) / 0.8));
+  /* fixed glow: a --pulse-sized drop-shadow re-rasterised the strip every frame */
+  filter: drop-shadow(0 0 4px rgb(var(--accent-rgb) / 0.8));
 }
 .pl-ch__count {
   font-weight: var(--fw-semibold);
@@ -1117,11 +1119,20 @@ html.reduce-motion .pl-paused--on {
   bottom: 0;
   width: 3px;
   background: var(--accent);
-  box-shadow: 0 0 calc(7px + var(--pulse, 0) * 10px) rgb(var(--accent-rgb) / 0.85);
+  box-shadow: 0 0 7px rgb(var(--accent-rgb) / 0.85);
   transition:
     width 300ms var(--ease-out-quint),
     opacity 260ms var(--ease-out-quint),
     background-color 260ms;
+}
+/* the beat: a grown glow whose opacity follows --pulse (compositor-only) */
+.pl-ch__bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow: 0 0 17px rgb(var(--accent-rgb) / 0.85);
+  opacity: min(1, var(--pulse, 0));
+  will-change: opacity;
 }
 .pl-ch__wash {
   position: absolute;
@@ -1156,8 +1167,9 @@ html.reduce-motion .pl-paused--on {
   height: 6px;
   border-radius: 50%;
   background: var(--accent-hi);
-  box-shadow: 0 0 calc(4px + var(--pulse, 0) * 9px) rgb(var(--accent-rgb) / 0.95);
+  box-shadow: 0 0 9px rgb(var(--accent-rgb) / 0.95);
   opacity: calc(0.7 + var(--pulse, 0) * 0.3);
+  will-change: opacity;
 }
 .pl-ch__icon {
   flex: none;
@@ -1197,6 +1209,9 @@ html.reduce-motion .pl-paused--on {
   opacity: 0.18;
   box-shadow: none;
 }
+.pl-ch__pill--off .pl-ch__bar::after {
+  display: none;
+}
 .pl-ch__pill--off .pl-ch__key {
   color: var(--fg-4);
 }
@@ -1212,7 +1227,7 @@ html.reduce-motion .pl-paused--on {
   box-shadow:
     inset 0 0 0 1px rgb(var(--accent-rgb) / 0.75),
     0 6px 18px rgb(0 0 0 / 0.3),
-    0 0 calc(14px + var(--pulse, 0) * 12px) rgb(var(--accent-rgb) / 0.35);
+    0 0 20px rgb(var(--accent-rgb) / 0.35);
 }
 .pl-ch__pill--solo .pl-ch__wash {
   opacity: 0.85;

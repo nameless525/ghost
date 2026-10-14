@@ -104,6 +104,8 @@ interface Item {
   ly: number
   lo: number
   lg: number
+  /** Last written ring opacity. */
+  lr: number
   ls: number
 }
 
@@ -1049,8 +1051,8 @@ export class Carousel {
   private releaseItem(it: Item): void {
     resetPanel(it.node)
     it.node.el.classList.add('is-free')
-    it.node.panel.style.scale = ''
     it.node.glow.style.opacity = ''
+    it.node.ring.style.opacity = ''
     delete it.node.cache.lx
     this.pool[it.type].push(it.node)
   }
@@ -1084,6 +1086,7 @@ export class Carousel {
       ly: NaN,
       lo: NaN,
       lg: NaN,
+      lr: NaN,
       ls: NaN
     }
     if (row && row.born && now - row.born < 450) {
@@ -1158,7 +1161,7 @@ export class Carousel {
     const s = sc.value
     const v = dt > 0 ? ((s - this.lastScroll) / dt) * 1000 : 0
     this.lastScroll = s
-    this.speed += (Math.abs(v) - this.speed) * 0.25
+    this.speed += (Math.abs(v) - this.speed) * (1 - Math.exp(-dt / 58)) // ≈0.25 per 60 Hz frame, same at 120 Hz
 
     if (this.phase === 'intro' && now - this.phaseAt > 1200) this.phase = 'idle'
 
@@ -1276,27 +1279,32 @@ export class Carousel {
       if (cy > fadeBottom - 70) alpha *= clamp01((fadeBottom - cy) / 70)
 
       const n = it.node
+      // Everything per frame is transform/opacity on composited layers: the item (position +
+      // beat scale), the selection ring and the pulsing rim (own layers while lit).
       const xr = Math.round(x * 10) / 10
       const yr = Math.round(sy * 10) / 10
-      if (xr !== it.lx || yr !== it.ly) {
+      const sc2 = Math.round((1 + 0.012 * pulse * it.sel) * 1000) / 1000
+      if (xr !== it.lx || yr !== it.ly || sc2 !== it.ls) {
         it.lx = xr
         it.ly = yr
-        n.el.style.transform = `translate3d(${xr}px,${yr}px,0)`
+        it.ls = sc2
+        n.el.style.transform = sc2 === 1 ? `translate3d(${xr}px,${yr}px,0)` : `translate3d(${xr}px,${yr}px,0) scale(${sc2})`
       }
       const o = Math.round(alpha * 100) / 100
       if (o !== it.lo) {
         it.lo = o
         n.el.style.opacity = String(o)
       }
+      setClass(n, 'is-lit', it.sel > 0.004)
+      const ring = Math.round(it.sel * 100) / 100
+      if (ring !== it.lr) {
+        it.lr = ring
+        n.ring.style.opacity = String(ring)
+      }
       const g = Math.round(it.sel * (0.72 + 0.28 * Math.min(1, pulse)) * 100) / 100
       if (g !== it.lg) {
         it.lg = g
         n.glow.style.opacity = String(g)
-      }
-      const sc2 = Math.round((1 + 0.012 * pulse * it.sel) * 1000) / 1000
-      if (sc2 !== it.ls) {
-        it.ls = sc2
-        n.panel.style.scale = sc2 === 1 ? '' : String(sc2)
       }
       if (!it.leaving) {
         if (setClass(n, 'is-selected', isSel)) n.el.setAttribute('aria-selected', String(isSel))

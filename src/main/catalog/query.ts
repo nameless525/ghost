@@ -98,14 +98,30 @@ function numericCond(col: string, f: SearchFilter, where: string[], params: SQLI
   }
 }
 
+export interface QueryEngineOptions {
+  /**
+   * Keep serving a bucket aggregation (platform/year/composer/franchise) for this long after the
+   * catalog changed before recomputing it (0 = always fresh). Art fills and enrichment bump the
+   * revision several times a second while browsing; the counts barely move.
+   */
+  bucketStaleMs?: number
+  /** Album ids per chunk for background aggregations (default BUCKET_CHUNK). */
+  bucketChunk?: number
+  now?: () => number
+}
+
 export class QueryEngine {
   private platformCache: { rev: number; at: number; rows: { slug: string; name_fold: string }[] } | null = null
-  private bucketCache = new Map<string, { groups: BucketRow[]; at: number }>()
+  private bucketCache = new Map<string, BucketEntry>()
+  private readonly now: () => number
 
   constructor(
     private repo: CatalogRepo,
-    private quality: () => Quality
-  ) {}
+    private quality: () => Quality,
+    private opts: QueryEngineOptions = {}
+  ) {
+    this.now = opts.now ?? Date.now
+  }
 
   ctx(): CompileCtx {
     const likes = this.repo.tableInfo('likes')
@@ -326,31 +342,46 @@ export class QueryEngine {
 
   private gameFilter(c: Compiled): { sql: string; params: SQLInputValue[] } {
     if (c.empty) return { sql: '', params: [] }
-    return { sql: `WHERE g.id IN (SELECT a.game_id FROM albums a WHERE a.gone = 0 AND ${c.where.join(' AND ')})`, params: c.params }
+    return { sql: `WHERE g.id IN (SELECT a.game_id FROM ${albumsFor(c)} WHERE a.gone = 0 AND ${c.where.join(' AND ')})`, params: c.params }
   }
 
   private browseGames(c: Compiled, sort: SortBy, offset: number, limit: number): BrowsePage {
     const f = this.gameFilter(c)
-    const total = this.repo.get<{ n: number }>(`SELECT COUNT(*) AS n FROM games g ${f.sql}`, ...f.params)!.n
-    const rows = this.repo.all<GameGroupRow>(
-      `SELECT g.id, g.name, g.year, g.platforms, g.cover, g.hero, g.accent, g.album_count FROM games g ${f.sql} ORDER BY ${GAME_ORDER[sort] ?? GAME_ORDER.title} LIMIT ? OFFSET ?`,
-      ...f.params,
-      limit,
-      offset
-    )
+    // Unfiltered: the trigger-maintained count (no table walk).
+    const total = c.empty ? this.repo.counts().games : this.repo.get<{ n: number }>(`SELECT COUNT(*) AS n FROM games g ${f.sql}`, ...f.params)!.n
+    const cols = `g.id, g.name, g.year, g.platforms, g.cover, g.hero, g.accent, g.album_count`
+    const rows =
+      sort === 'random'
+        ? // Shuffle order: pick the page's ids over a covering index first, then load just those rows.
+          this.repo.all<GameGroupRow>(
+            `SELECT ${cols} FROM games g WHERE g.id IN (SELECT g.id FROM games g ${f.sql} ORDER BY ${gameOrder('random')} LIMIT ? OFFSET ?) ORDER BY ${gameOrder('random')}`,
+            ...f.params,
+            limit,
+            offset
+          )
+        : this.repo.all<GameGroupRow>(`SELECT ${cols} FROM games g ${f.sql} ORDER BY ${gameOrder(sort)} LIMIT ? OFFSET ?`, ...f.params, limit, offset)
     return { total, offset, groups: rows.map(gameGroup) }
   }
 
   private browseAlbums(c: Compiled, sort: SortBy, offset: number, limit: number): BrowsePage {
     const where = ['a.gone = 0', ...c.where].join(' AND ')
-    const total = this.repo.get<{ n: number }>(`SELECT COUNT(*) AS n FROM albums a WHERE ${where}`, ...c.params)!.n
-    const rows = this.repo.all<AlbumGroupRow>(
-      `SELECT a.id, a.title, a.kind, a.year, a.platforms, a.cover, a.game_id, g.name AS game_name, g.cover AS game_cover, g.hero, g.accent
-       FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where} ORDER BY ${ALBUM_ORDER[sort] ?? ALBUM_ORDER.title} LIMIT ? OFFSET ?`,
-      ...c.params,
-      limit,
-      offset
-    )
+    const total = c.empty ? this.repo.counts().albums : this.repo.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${albumsFor(c)} WHERE ${where}`, ...c.params)!.n
+    const cols = `a.id, a.title, a.kind, a.year, a.platforms, a.cover, a.game_id, g.name AS game_name, g.cover AS game_cover, g.hero, g.accent`
+    const rows =
+      sort === 'random'
+        ? this.repo.all<AlbumGroupRow>(
+            `SELECT ${cols} FROM albums a LEFT JOIN games g ON g.id = a.game_id
+             WHERE a.id IN (SELECT a.id FROM albums a WHERE ${where} ORDER BY ${albumOrder('random')} LIMIT ? OFFSET ?) ORDER BY ${albumOrder('random')}`,
+            ...c.params,
+            limit,
+            offset
+          )
+        : this.repo.all<AlbumGroupRow>(
+            `SELECT ${cols} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where} ORDER BY ${albumOrder(sort)} LIMIT ? OFFSET ?`,
+            ...c.params,
+            limit,
+            offset
+          )
     return {
       total,
       offset,
@@ -373,74 +404,152 @@ export class QueryEngine {
     }
   }
 
-  /** Aggregate buckets (+ representative art) for a non-game grouping; cached per query and revision. */
-  private bucketRows(group: GroupBy, text: string, c: Compiled): BucketRow[] {
-    const cacheKey = `${group}\u0000${text}\u0000${this.repo.revision}`
+  /**
+   * Aggregate buckets (+ representative art) for a non-game grouping, cached per query. When the
+   * catalog changed, a cached result is still served (with `bucketStaleMs`) and recomputed in the
+   * background (in chunks, yielding between them) once it is older than that, so switching
+   * groupings never waits on the aggregation twice. Without `bucketStaleMs` every change
+   * recomputes synchronously.
+   */
+  private buckets(group: GroupBy, text: string, c: Compiled): BucketEntry {
+    const cacheKey = `${group}\u0000${text}`
     const hit = this.bucketCache.get(cacheKey)
-    if (hit && Date.now() - hit.at < 60_000) return hit.groups
-    const where = ['a.gone = 0', ...c.where].join(' AND ')
-    let from: string
-    let key: string
-    let title: string
-    let extraWhere = ''
-    switch (group) {
-      case 'platform':
-        from = 'album_platforms ap JOIN albums a ON a.id = ap.album_id'
-        key = 'ap.slug'
-        title = 'MIN(ap.name)'
-        break
-      case 'year':
-        from = 'albums a'
-        key = 'a.year'
-        title = "COALESCE(CAST(a.year AS TEXT), 'Unknown year')"
-        break
-      case 'composer':
-        from = 'album_composers ac JOIN albums a ON a.id = ac.album_id'
-        key = 'ac.name_fold'
-        title = 'MIN(ac.name)'
-        break
-      case 'franchise':
-        from = 'albums a JOIN games g ON g.id = a.game_id'
-        key = 'lower(g.franchise)'
-        title = 'MIN(g.franchise)'
-        extraWhere = 'g.franchise IS NOT NULL AND '
-        break
-      default:
-        return []
+    const stale = this.opts.bucketStaleMs ?? 0
+    if (hit && (hit.rev === this.repo.revision || stale > 0)) {
+      if (hit.rev !== this.repo.revision && this.now() - hit.at >= stale && !hit.refreshing) {
+        hit.refreshing = true
+        void this.computeBucketsChunked(cacheKey, group, c).catch(() => {
+          hit.refreshing = false
+        })
+      }
+      return hit
     }
-    const rows = this.repo.all<BucketRow>(
-      `SELECT ${key} AS k, ${title} AS title, COUNT(*) AS n, MIN(a.sort_year) AS y, MAX(a.sort_added) AS added, SUM(a.total_ms) AS len,
-              AVG(a.intensity) AS inten${group === 'franchise' ? ', COUNT(DISTINCT g.id) AS games' : ''}
-       FROM ${from} WHERE ${extraWhere}${where} GROUP BY ${key}`,
-      ...c.params
-    )
-    // Representative art: the most recently added album with a cover in each bucket (SQLite's
-    // bare-column rule returns the other columns from the row holding MAX()).
-    const art = new Map<string, { cover: string; hero: string | null; accent: string | null }>()
-    const artFrom = group === 'franchise' ? from : `${from} LEFT JOIN games g ON g.id = a.game_id`
-    for (const r of this.repo.all<{ k: unknown; cover: string; hero: string | null; accent: string | null }>(
-      `SELECT ${key} AS k, COALESCE(a.cover, g.cover) AS cover, g.hero AS hero, g.accent AS accent, MAX(a.sort_added * 8 - a.kind_rank) AS score
-       FROM ${artFrom} WHERE ${extraWhere}${where} AND COALESCE(a.cover, g.cover) IS NOT NULL GROUP BY ${key}`,
-      ...c.params
-    )) {
-      art.set(String(r.k ?? 'unknown'), { cover: r.cover, hero: r.hero, accent: r.accent })
-    }
-    for (const r of rows) {
-      r.k = String(r.k ?? 'unknown')
-      const a = art.get(r.k)
-      r.cover = a?.cover ?? null
-      r.hero = a?.hero ?? null
-      r.accent = a?.accent ?? null
-    }
-    this.bucketCache.set(cacheKey, { groups: rows, at: Date.now() })
-    if (this.bucketCache.size > 16) this.bucketCache.delete(this.bucketCache.keys().next().value!)
-    return rows
+    return this.storeBuckets(cacheKey, this.repo.revision, [this.aggregateBuckets(group, c, null)])
   }
 
-  private browseBuckets(group: GroupBy, text: string, c: Compiled, sort: SortBy, offset: number, limit: number): BrowsePage {
-    const rows = [...this.bucketRows(group, text, c)]
-    const byTitle = (a: BucketRow, b: BucketRow) => (group === 'year' ? (a.y ?? 9999) - (b.y ?? 9999) : a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }))
-    const seed = sortSeed()
+  /** Compute (and cache) a grouping in the background: id-range chunks with a yield after each. */
+  async warmBuckets(group: GroupBy, text = '', yieldFn: () => Promise<void> = () => new Promise((r) => setTimeout(r, 0))): Promise<void> {
+    await this.computeBucketsChunked(`${group}\u0000${text}`, group, this.compile(parseSearch(text), 'album'), yieldFn)
+  }
+
+  private async computeBucketsChunked(cacheKey: string, group: GroupBy, c: Compiled, yieldFn: () => Promise<void> = () => new Promise((r) => setTimeout(r, 0))): Promise<void> {
+    const rev = this.repo.revision
+    const span = this.repo.get<{ lo: number | null; hi: number | null }>(`SELECT MIN(id) AS lo, MAX(id) AS hi FROM albums`)
+    const parts: BucketPart[] = []
+    if (span?.lo != null && span.hi != null) {
+      const step = this.opts.bucketChunk ?? BUCKET_CHUNK
+      for (let lo = span.lo; lo <= span.hi; lo += step) {
+        await yieldFn()
+        parts.push(this.aggregateBuckets(group, c, [lo, lo + step]))
+      }
+    }
+    await yieldFn()
+    this.storeBuckets(cacheKey, rev, parts)
+  }
+
+  /** One aggregation pass (albums with ids in `range`, or all): per-bucket partial aggregates and art winners. */
+  private aggregateBuckets(group: GroupBy, c: Compiled, range: [number, number] | null): BucketPart {
+    const q = bucketSql(group, c)
+    if (!q) return { rows: [], winners: [], fallback: [] }
+    const where = [...q.where, ...(range ? ['a.id >= ? AND a.id < ?'] : [])].join(' AND ')
+    const params = [...c.params, ...(range ?? [])]
+    const rows = this.repo.all<PartRow>(
+      `SELECT ${q.key} AS k, ${q.title} AS title, COUNT(*) AS n, MIN(a.sort_year) AS y, MAX(a.sort_added) AS added, SUM(a.total_ms) AS len,
+              SUM(a.intensity) AS isum, COUNT(a.intensity) AS icnt${q.games ? ', GROUP_CONCAT(DISTINCT g.id) AS gids' : ''}
+       FROM ${q.from} WHERE ${where} GROUP BY ${q.key}`,
+      ...params
+    )
+    // Representative art: the most recently added album with its own cover in each bucket (SQLite's
+    // bare-column rule returns the other columns from the row holding MAX()).
+    const winners = this.repo.all<Winner>(
+      `SELECT ${q.key} AS k, a.game_id AS gid, a.cover AS cover, MAX(a.sort_added * 8 - a.kind_rank) AS score
+       FROM ${q.from} WHERE ${where} AND a.cover IS NOT NULL GROUP BY ${q.key}`,
+      ...params
+    )
+    // For buckets where no album has its own cover (e.g. chiptune rip sets): the best cover-less
+    // album whose game has art.
+    const fallback = this.repo.all<Winner>(
+      `SELECT ${q.key} AS k, a.game_id AS gid, NULL AS cover, MAX(a.sort_added * 8 - a.kind_rank) AS score
+       FROM ${q.from} WHERE ${where} AND a.cover IS NULL AND EXISTS (SELECT 1 FROM games cg WHERE cg.id = a.game_id AND cg.cover IS NOT NULL) GROUP BY ${q.key}`,
+      ...params
+    )
+    return { rows, winners, fallback }
+  }
+
+  /** Merge partial aggregates, attach art (games' art looked up for the winners only) and cache. */
+  private storeBuckets(cacheKey: string, rev: number, parts: BucketPart[]): BucketEntry {
+    const acc = new Map<string, BucketRow & { isum: number; icnt: number; gids?: Set<string> }>()
+    const best = new Map<string, Winner>()
+    const second = new Map<string, Winner>()
+    for (const part of parts) {
+      for (const r of part.rows) {
+        const k = String(r.k ?? 'unknown')
+        let a = acc.get(k)
+        if (!a) acc.set(k, (a = { k, title: r.title, n: 0, y: null, added: null, len: null, inten: null, isum: 0, icnt: 0, gids: r.gids != null ? new Set() : undefined }))
+        if (r.title < a.title) a.title = r.title
+        a.n += r.n
+        if (r.y != null) a.y = a.y == null ? r.y : Math.min(a.y, r.y)
+        if (r.added != null) a.added = a.added == null ? r.added : Math.max(a.added, r.added)
+        if (r.len != null) a.len = (a.len ?? 0) + r.len
+        a.isum += r.isum ?? 0
+        a.icnt += r.icnt ?? 0
+        if (r.gids) for (const id of String(r.gids).split(',')) a.gids?.add(id)
+      }
+      for (const [list, into] of [
+        [part.winners, best],
+        [part.fallback, second]
+      ] as const) {
+        for (const w of list) {
+          const k = String(w.k ?? 'unknown')
+          const b = into.get(k)
+          if (!b || w.score > b.score) into.set(k, w)
+        }
+      }
+    }
+    for (const [k, w] of second) if (!best.has(k)) best.set(k, w)
+    const gameArt = new Map<number, { cover: string | null; hero: string | null; accent: string | null }>()
+    const gids = [...new Set([...best.values()].map((w) => w.gid).filter((x): x is number => x != null))]
+    for (let i = 0; i < gids.length; i += 500) {
+      const chunk = gids.slice(i, i + 500)
+      for (const g of this.repo.all<{ id: number; cover: string | null; hero: string | null; accent: string | null }>(
+        `SELECT id, cover, hero, accent FROM games WHERE id IN (${ph(chunk.length)})`,
+        ...chunk
+      ))
+        gameArt.set(g.id, g)
+    }
+    const rows: BucketRow[] = []
+    for (const a of acc.values()) {
+      const w = best.get(a.k)
+      const g = w?.gid != null ? gameArt.get(w.gid) : undefined
+      const cover = w?.cover ?? g?.cover ?? null
+      rows.push({
+        k: a.k,
+        title: a.title,
+        n: a.n,
+        y: a.y,
+        added: a.added,
+        len: a.len,
+        inten: a.icnt ? a.isum / a.icnt : null,
+        games: a.gids?.size,
+        cover,
+        hero: cover ? (g?.hero ?? null) : null,
+        accent: cover ? (g?.accent ?? null) : null
+      })
+    }
+    const entry: BucketEntry = { rows, at: this.now(), rev, sorted: new Map(), refreshing: false }
+    this.bucketCache.delete(cacheKey)
+    this.bucketCache.set(cacheKey, entry)
+    if (this.bucketCache.size > 16) this.bucketCache.delete(this.bucketCache.keys().next().value!)
+    return entry
+  }
+
+  /** The entry's rows in `sort` order (sorted once per entry, sort and shuffle seed). */
+  private sortedBuckets(entry: BucketEntry, group: GroupBy, sort: SortBy): BucketRow[] {
+    const key = sort === 'random' ? `random:${sortSeed()}` : sort
+    const have = entry.sorted.get(key)
+    if (have) return have
+    const rows = [...entry.rows]
+    const byTitle = (a: BucketRow, b: BucketRow) => (group === 'year' ? (a.y ?? 9999) - (b.y ?? 9999) : collator.compare(a.title, b.title))
     switch (sort) {
       case 'year':
         rows.sort((a, b) => (a.y ?? 9999) - (b.y ?? 9999) || byTitle(a, b))
@@ -454,12 +563,21 @@ export class QueryEngine {
       case 'intensity':
         rows.sort((a, b) => (a.inten ?? 1000) - (b.inten ?? 1000) || byTitle(a, b))
         break
-      case 'random':
-        rows.sort((a, b) => hash32(a.k + seed) - hash32(b.k + seed))
+      case 'random': {
+        const seed = sortSeed()
+        const h = new Map(rows.map((r) => [r, hash32(r.k + seed)]))
+        rows.sort((a, b) => h.get(a)! - h.get(b)!)
         break
+      }
       default:
         rows.sort(byTitle)
     }
+    entry.sorted.set(key, rows)
+    return rows
+  }
+
+  private browseBuckets(group: GroupBy, text: string, c: Compiled, sort: SortBy, offset: number, limit: number): BrowsePage {
+    const rows = this.sortedBuckets(this.buckets(group, text, c), group, sort)
     const groups: BrowseGroup[] = rows.slice(offset, offset + limit).map((r) => {
       const year = r.y != null && r.y < 9999 ? r.y : null
       const subtitle = [
@@ -494,7 +612,7 @@ export class QueryEngine {
     const c = this.compile(parseSearch(q.text), 'album')
     const scope = bucketScope(kind, value)
     const where = ['a.gone = 0', scope.sql, ...c.where].join(' AND ')
-    const order = kind === 'game' && (q.sort === 'title' || q.sort === 'year') ? 'a.kind_rank, a.sort_year, a.sort_title, a.id' : ALBUM_ORDER[q.sort] ?? ALBUM_ORDER.title
+    const order = kind === 'game' && (q.sort === 'title' || q.sort === 'year') ? 'a.kind_rank, a.sort_year, a.sort_title, a.id' : albumOrder(q.sort)
     const rows = this.repo.all<AlbumRowLite>(
       `SELECT ${ALBUM_COLUMNS} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where} ORDER BY ${order} LIMIT 1000`,
       ...scope.params,
@@ -510,7 +628,7 @@ export class QueryEngine {
     const n = this.repo.get<{ n: number }>(`SELECT COUNT(*) AS n FROM games g ${f.sql}`, ...f.params)!.n
     if (!n) return null
     const off = Math.floor(Math.random() * n)
-    const g = this.repo.get<{ id: number }>(`SELECT g.id FROM games g ${f.sql} ORDER BY g.rnd LIMIT 1 OFFSET ?`, ...f.params, off)
+    const g = this.repo.get<{ id: number }>(`SELECT g.id FROM games g ${f.sql} ORDER BY g.id LIMIT 1 OFFSET ?`, ...f.params, off)
     if (!g) return null
     const where = ['a.gone = 0', 'a.game_id = ?', ...c.where].join(' AND ')
     const a = this.repo.get<{ id: number }>(`SELECT a.id FROM albums a WHERE ${where} ORDER BY random() LIMIT 1`, g.id, ...c.params)
@@ -566,22 +684,28 @@ const TRACK_COLS = `
   g.id AS game_id, g.name AS game_name, g.year AS game_year, g.cover AS game_cover, g.hero AS game_hero, g.accent AS game_accent,
   an.bpm AS bpm, an.intensity AS intensity, an.lufs AS lufs`
 
-export const GAME_ORDER: Record<SortBy, string> = {
+export const GAME_ORDER: Record<Exclude<SortBy, 'random'>, string> = {
   title: 'g.sort_name, g.id',
   year: 'g.sort_year, g.sort_name, g.id',
   recent: 'g.added_at DESC, g.sort_name, g.id',
   length: 'g.sort_len, g.sort_name, g.id',
-  intensity: 'g.sort_intensity, g.sort_name, g.id',
-  random: 'g.rnd, g.id'
+  intensity: 'g.sort_intensity, g.sort_name, g.id'
 }
 
-export const ALBUM_ORDER: Record<SortBy, string> = {
+export const ALBUM_ORDER: Record<Exclude<SortBy, 'random'>, string> = {
   title: 'a.sort_title, a.id',
   year: 'a.sort_year, a.sort_title, a.id',
   recent: 'a.sort_added DESC, a.sort_title, a.id',
   length: 'a.sort_len, a.sort_title, a.id',
-  intensity: 'a.sort_intensity, a.sort_title, a.id',
-  random: 'a.rnd, a.id'
+  intensity: 'a.sort_intensity, a.sort_title, a.id'
+}
+
+export function gameOrder(sort: SortBy): string {
+  return sort === 'random' ? `${shuffleKey('g.id')}, g.id` : (GAME_ORDER[sort] ?? GAME_ORDER.title)
+}
+
+export function albumOrder(sort: SortBy): string {
+  return sort === 'random' ? `${shuffleKey('a.id')}, a.id` : (ALBUM_ORDER[sort] ?? ALBUM_ORDER.title)
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -617,6 +741,81 @@ interface AlbumGroupRow {
   game_cover: string | null
   hero: string | null
   accent: string | null
+}
+
+/** Album ids per chunk when aggregating in the background (~5 ms per chunk on a 100k catalog). */
+const BUCKET_CHUNK = 8000
+
+interface PartRow {
+  k: unknown
+  title: string
+  n: number
+  y: number | null
+  added: number | null
+  len: number | null
+  isum: number | null
+  icnt: number
+  gids?: string | null
+}
+
+interface Winner {
+  k: unknown
+  gid: number | null
+  cover: string | null
+  score: number
+}
+
+interface BucketPart {
+  rows: PartRow[]
+  winners: Winner[]
+  fallback: Winner[]
+}
+
+/** SQL for a bucket grouping over albums `a` (where: conditions to AND). */
+function bucketSql(group: GroupBy, c: Compiled): { from: string; key: string; title: string; where: string[]; games: boolean } | null {
+  // Unfiltered aggregations read the albums through a narrow covering index instead of the wide
+  // rows (3-8x faster on a 100k-album catalog). Filters may need other columns: let SQLite choose.
+  const albums = c.empty ? 'albums a INDEXED BY albums_facts' : 'albums a'
+  const where = ['a.gone = 0', ...c.where]
+  switch (group) {
+    case 'platform':
+      // Album-driven: id-ordered lookups into album_platforms' (album_id, slug) key.
+      return { from: `${albums} CROSS JOIN album_platforms ap ON ap.album_id = a.id`, key: 'ap.slug', title: 'MIN(ap.name)', where, games: false }
+    case 'year':
+      return { from: albums, key: 'a.year', title: "COALESCE(CAST(a.year AS TEXT), 'Unknown year')", where, games: false }
+    case 'composer':
+      return { from: `album_composers ac JOIN ${albums} ON a.id = ac.album_id`, key: 'ac.name_fold', title: 'MIN(ac.name)', where, games: false }
+    case 'franchise':
+      return { from: `${albums} JOIN games g ON g.id = a.game_id`, key: 'lower(g.franchise)', title: 'MIN(g.franchise)', where: ['g.franchise IS NOT NULL', ...where], games: true }
+    default:
+      return null
+  }
+}
+
+interface BucketEntry {
+  rows: BucketRow[]
+  at: number
+  /** repo.revision the rows were computed at. */
+  rev: number
+  /** Sorted copies, by sort (and shuffle seed). */
+  sorted: Map<string, BucketRow[]>
+  refreshing: boolean
+}
+
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
+
+/** Album columns in the albums_facts covering index (schema.ts). */
+const FACTS_COLUMNS = new Set(['id', 'gone', 'year', 'sort_year', 'sort_added', 'total_ms', 'intensity', 'kind_rank', 'game_id', 'cover'])
+
+/**
+ * The albums source for a filter subquery: when the conditions are driven by album ids (full-text
+ * matches) and only touch columns of the narrow covering index, read that instead of the wide rows
+ * (4-8x fewer pages: much faster on a cold cache, e.g. the first keystrokes of a search).
+ */
+function albumsFor(c: Compiled): string {
+  if (c.empty || !c.where.some((w) => w.startsWith('a.id IN ('))) return 'albums a'
+  for (const w of c.where) for (const m of w.matchAll(/\ba\.(\w+)/g)) if (!FACTS_COLUMNS.has(m[1])) return 'albums a'
+  return 'albums a INDEXED BY albums_facts'
 }
 
 interface BucketRow {
@@ -674,13 +873,23 @@ function bucketScope(kind: GroupBy, value: string): { sql: string; params: SQLIn
   }
 }
 
-let seedValue = String(Math.random())
+// 'random' sort: a per-launch pseudo-random permutation computed from the id in SQL (an affine map,
+// a square and another affine map modulo a prime), instead of a stored shuffle column that had to
+// be rewritten for every game at startup. Every intermediate stays below 2^62 (no float overflow).
+const PRIME = 2147483647
+const rand30 = () => 1 + Math.floor(Math.random() * 0x3ffffffe)
+let seed = { a: rand30() | 1, b: rand30(), c: rand30() | 1, d: rand30(), text: String(Math.random()) }
 function sortSeed(): string {
-  return seedValue
+  return seed.text
 }
 /** Reshuffle 'random' sort orders. */
 export function reseedRandom(): void {
-  seedValue = String(Math.random())
+  seed = { a: rand30() | 1, b: rand30(), c: rand30() | 1, d: rand30(), text: String(Math.random()) }
+}
+/** SQL for the shuffle key of an integer id column (ids are rowids, well below 2^31). */
+export function shuffleKey(col: string): string {
+  const x = `((${col} * ${seed.a} + ${seed.b}) % ${PRIME})`
+  return `((((${x} * ${x}) % ${PRIME}) * ${seed.c} + ${seed.d}) % ${PRIME})`
 }
 
 function hash32(s: string): number {

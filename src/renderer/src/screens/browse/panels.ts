@@ -13,7 +13,10 @@ export interface PanelNode {
   type: PanelType
   el: HTMLDivElement
   panel: HTMLDivElement
+  /** Beat-pulsing rim (opacity per frame). Sibling of the panel. */
   glow: HTMLDivElement
+  /** Selection ring + outer glow (opacity follows the selection fade). Sibling of the panel. */
+  ring: HTMLDivElement
   title: HTMLElement
   sub: HTMLElement | null
   meta: HTMLElement | null
@@ -120,8 +123,11 @@ export function createPanel(type: PanelType): PanelNode {
     content.innerHTML = '<span class="bc-spin" aria-hidden="true"></span>'
     title = span('bc-title', content)
   }
-  const glow = div('bc-glow', panel)
-  return { type, el, panel, glow, title, sub, meta, img, right, num, cache: {} }
+  // Siblings of the panel (not children) so their opacity can live on their own compositor
+  // layers without the panel's rounded overflow clip.
+  const ring = div('bc-ring', el)
+  const glow = div('bc-glow', el)
+  return { type, el, panel, glow, ring, title, sub, meta, img, right, num, cache: {} }
 }
 
 function setText(n: PanelNode, key: string, el: HTMLElement | null, text: string): void {
@@ -190,7 +196,7 @@ export function fillGroup(n: PanelNode, g: BrowseGroup | null, title: string | n
   if (g.kind !== 'game' && g.kind !== 'album') meta = `<span class="bc-chip bc-chip--kind">${esc(g.kind)}</span>` + meta
   if (g.kind === 'game' && g.platforms.length > 3) meta += `<span class="bc-chip bc-chip--soft">+${g.platforms.length - 3}</span>`
   setHTML(n, 'meta', n.meta, meta)
-  setImg(n, g.cover ?? g.hero, 280)
+  setImg(n, g.cover ?? g.hero, 200) // .bc-art is 196 css px wide
   setVar(n, '--ga', g.accent ?? 'var(--accent)')
 }
 
@@ -218,7 +224,7 @@ export function fillAlbum(n: PanelNode, a: Album, title: string, showGame: boole
   if (a.totalMs) bits.push(formatTime(a.totalMs))
   setText(n, 'sub', n.sub, bits.join(' · '))
   setHTML(n, 'right', n.right, `<span class="bc-kind bc-kind--${a.kind}">${esc(KIND_LABEL[a.kind] ?? a.kind)}</span>${formatBadges(a.formats)}`)
-  setImg(n, a.cover, 96)
+  setImg(n, a.cover, 40) // .bc-thumb is 38 css px
   setClass(n, 'is-expanded', expanded)
 }
 
@@ -250,11 +256,12 @@ export function fillLoading(n: PanelNode, label: string): void {
 
 /** Reset per-use state when a node goes back to the pool. */
 export function resetPanel(n: PanelNode): void {
-  n.el.classList.remove('is-selected', 'is-hover', 'is-active')
+  n.el.classList.remove('is-selected', 'is-hover', 'is-active', 'is-lit')
   n.el.removeAttribute('aria-selected')
   delete n.cache['c:is-selected']
   delete n.cache['c:is-hover']
   delete n.cache['c:is-active']
+  delete n.cache['c:is-lit']
   n.el.style.opacity = '0'
   delete n.cache.o
 }

@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { IPC_EVENT, type GhostServices } from '../shared/api'
 import { defaultSettings } from '../shared/defaults'
 import type { BrowseQuery, CatalogStatus, GhostNotification } from '../shared/types'
-import { createCatalog, type CatalogService } from './catalog'
+import type { CatalogService } from './catalog'
+import { createCatalogHost, type CatalogHost } from './catalog/host'
 import { openDb } from './db'
 import { DownloadManager } from './downloads'
 import { loadEngine, preloadArgsFor } from './engine/native'
@@ -86,7 +87,7 @@ function unavailableCatalog(reason: string): CatalogService {
     tracks: async () => [],
     searchTracks: async () => [],
     random: async () => null,
-    getAnalysis: () => null,
+    getAnalysis: async () => null,
     recordAnalysis: () => {},
     resolveSources: async () => [],
     markSourceFailed: () => {},
@@ -117,32 +118,46 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
 
   // --- storage & settings ----------------------------------------------------
   const db = openDb(paths.db())
+  // The catalog worker shares this file on its own connection (WAL). Wait for its write lock rather
+  // than failing with SQLITE_BUSY, and leave checkpoints to the worker so a large WAL is never
+  // folded back on this thread.
+  db.exec('PRAGMA busy_timeout = 3000; PRAGMA wal_autocheckpoint = 0;')
   const settingsStore = new SettingsStore(join(dataDir(), 'settings.json'), defaultSettings(paths.defaultDownloads()))
   const getSettings = () => settingsStore.peek()
 
   // --- catalog ---------------------------------------------------------------
-  // The catalog starts before the engine; chiptune rip albums list their archive through it.
+  // Runs in a worker thread (catalog/worker.ts): its SQLite queries, crawling and HTML parsing would
+  // otherwise stall this thread, which also delivers native window input on macOS. `catalog` is an
+  // RPC proxy; calls queue until the worker is up (spawned below, after startup writes are done).
+  // Chiptune rip albums list their archive through the engine, created after the catalog.
   let engineRef: EngineBridge | null = null
   const inspectArchive = (source: EngineSource): Promise<ArchiveListing> => {
     const e = engineRef
     if (!e?.inspectArchive) return Promise.reject(new Error('The audio engine is unavailable, so chiptune rip sets can’t be opened.'))
     return e.inspectArchive(source)
   }
+  let catalogHost: CatalogHost | null = null
   let catalog: CatalogService
   try {
-    catalog = createCatalog({ db, broadcast, getSettings: () => settingsStore.get(), inspectArchive })
+    catalogHost = createCatalogHost({
+      dbPath: paths.db(),
+      dataDir: dataDir(),
+      settings: settingsStore.get(),
+      broadcast,
+      inspectArchive,
+      onFatal: (e) => {
+        console.error('[services] catalog failed to load:', e)
+        notices.push({ id: 'startup-catalog', kind: 'error', title: 'Catalog unavailable', body: errMessage(e) })
+      }
+    })
+    catalog = catalogHost.catalog
   } catch (e) {
     console.error('[services] catalog failed to load:', e)
     catalog = unavailableCatalog(errMessage(e))
     notices.push({ id: 'startup-catalog', kind: 'error', title: 'Catalog unavailable', body: errMessage(e) })
   }
-  try {
-    catalog.start()
-  } catch (e) {
-    // Background work (crawl, art prefetch) failed to start; lookups may still work.
-    console.error('[services] catalog background work failed to start:', e)
-    notices.push({ id: 'startup-catalog-start', kind: 'error', title: 'Catalog indexing failed to start', body: errMessage(e) })
-  }
+  // Background work (crawl, art prefetch) starts once the worker is up.
+  catalog.start()
 
   // --- audio engine ----------------------------------------------------------
   let engine: EngineBridge
@@ -198,6 +213,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   })
 
   settingsStore.onChange((next, prev) => {
+    catalogHost?.setSettings(next)
     applyEngineSettings(engine, next, prev)
     player.onSettingsChanged(next)
   })
@@ -206,12 +222,12 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   const settingsApi = createSettingsService({ store: settingsStore, broadcast, pickFolder })
 
   // --- restore ---------------------------------------------------------------
-  try {
-    await Promise.race([player.restore(sessionStore.load()), new Promise((r) => setTimeout(r, 2500))])
-  } catch (e) {
-    console.error('[services] session restore failed:', e)
-  }
+  // Not awaited: the window shouldn't wait on the catalog worker (restore fetches the queue's
+  // tracks through it); the restored state is broadcast when it lands.
+  void player.restore(sessionStore.load()).catch((e) => console.error('[services] session restore failed:', e))
   downloads.resume()
+  // Startup writes on this connection are done: let the catalog worker open the DB now.
+  catalogHost?.spawn()
 
   // --- the API ---------------------------------------------------------------
   const services: GhostServices = {
@@ -271,7 +287,8 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
         console.error('[services] engine shutdown failed:', e)
       }
       try {
-        catalog.stop()
+        if (catalogHost) catalogHost.dispose()
+        else catalog.stop()
       } catch (e) {
         console.error('[services] catalog shutdown failed:', e)
       }

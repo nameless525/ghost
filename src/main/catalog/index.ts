@@ -17,18 +17,30 @@ export interface ResolvedSource {
   sizeBytes: number | null
 }
 
+/**
+ * The catalog runs in a worker thread (./worker.ts); main holds an RPC proxy (./client.ts). Methods
+ * returning void are fire-and-forget: they return at once and errors are logged, not thrown.
+ */
 export interface CatalogService extends CatalogAPI {
-  /** Start background work (index crawl if stale, art prefetch queue). */
+  /** Start background work (index crawl if stale, art prefetch queue). Fire-and-forget. */
   start(): void
+  /** Stop background work. Fire-and-forget. */
   stop(): void
-  /** Full analysis for a track, if recorded. */
-  getAnalysis(trackId: ID): TrackAnalysis | null
+  /** Full analysis for a track, if recorded. (Async since the catalog moved off the main thread.) */
+  getAnalysis(trackId: ID): Promise<TrackAnalysis | null>
+  /**
+   * Synchronous peek at an analysis this process recorded or fetched recently (the main-side proxy
+   * keeps a small LRU). `undefined` = not known here: call getAnalysis. Optional.
+   */
+  peekAnalysis?(trackId: ID): TrackAnalysis | null | undefined
+  /** Store an engine analysis. Fire-and-forget. */
   recordAnalysis(trackId: ID, result: OfflineAnalysisResult): void
   /**
    * Ranked playable sources for a track, resolving provider URLs on demand.
    * `exclude` lists cache keys that already failed this session.
    */
   resolveSources(trackId: ID, opts?: { quality?: Settings['sources']['quality']; exclude?: string[] }): Promise<ResolvedSource[]>
+  /** Demote a source the engine failed to play. Fire-and-forget. */
   markSourceFailed(trackId: ID, cacheKey: string, reason: string): void
   /** Album + game for a track (tagging, album gain, notifications). */
   albumOf(trackId: ID): Promise<{ album: Album; game: Game | null } | null>

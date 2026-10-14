@@ -1,7 +1,13 @@
 // Mirror of the main-process PlayerState, plus a live (extrapolated) position helper.
+//
+// Every 'player:state' push is a fresh structured clone, and the queue is only included when
+// it changed (PlayerStateEvent). Incoming state is merged with structural sharing: anything
+// deep-equal to what we already hold keeps its identity, so selectors like (s) => s.current
+// don't re-render their components on the 1 Hz heartbeat, a volume step or a seek.
 import { create } from 'zustand'
-import type { PlayerState } from '@shared/types'
+import type { PlayerState, PlayerStateEvent } from '@shared/types'
 import { ghost } from '../ghost'
+import { share } from '../lib/share'
 
 const initial: PlayerState = {
   status: 'idle',
@@ -35,7 +41,38 @@ export function livePositionMs(s: PlayerState = usePlayer.getState()): number {
   return s.durationMs ? Math.min(p, s.durationMs) : p
 }
 
+/**
+ * Fold a 'player:state' event (or a full state) into the store. Returns false when the event
+ * refers to a queue revision we don't hold (the caller should refetch the full state).
+ */
+export function applyPlayerState(e: PlayerStateEvent | PlayerState): boolean {
+  const prev = usePlayer.getState()
+  let queue = e.queue
+  if (queue === undefined) {
+    // queue omitted: it's unchanged since the last broadcast, which we must have seen
+    if (e.queueRev !== undefined && prev.queueRev !== e.queueRev) return false
+    queue = prev.queue
+  }
+  const next: PlayerState = { ...e, queue }
+  usePlayer.setState(share(prev, next), true)
+  return true
+}
+
+let refetching = false
+function refetch(): void {
+  if (refetching) return
+  refetching = true
+  void ghost()
+    .player.getState()
+    .then((s) => applyPlayerState(s))
+    .finally(() => {
+      refetching = false
+    })
+}
+
 export function initPlayerStore(): void {
-  void ghost().player.getState().then((s) => usePlayer.setState(s, true))
-  ghost().on('player:state', (s) => usePlayer.setState(s, true))
+  void ghost().player.getState().then((s) => applyPlayerState(s))
+  ghost().on('player:state', (s) => {
+    if (!applyPlayerState(s)) refetch()
+  })
 }

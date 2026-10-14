@@ -26,7 +26,9 @@ const anchor = (el: HTMLElement | null) => {
 }
 
 export function Footer() {
-  const sel = useBrowse((s) => s.sel)
+  // only whether there's a selection: subscribing to `sel` itself re-rendered every button on
+  // every key press
+  const none = useBrowse((s) => !s.sel)
   const group = useBrowse((s) => s.group)
   const sort = useBrowse((s) => s.sort)
   const historyLen = useBrowse((s) => s.historyLen)
@@ -34,7 +36,6 @@ export function Footer() {
   const playing = usePlayer((s) => s.status === 'playing')
   const queueBtn = useRef<HTMLButtonElement>(null)
   const plBtn = useRef<HTMLButtonElement>(null)
-  const none = !sel
 
   return (
     <div className="bf">

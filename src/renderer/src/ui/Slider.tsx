@@ -6,7 +6,7 @@
 //   <Slider variant="seek" min={0} max={durationMs} live={() => livePositionMs()}
 //           onCommit={(ms) => ghost().player.seek(ms)} format={formatTime}
 //           background={<EnergyGraph … />} />
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
 import { useTicker } from '../motion/ticker'
 import { sfx } from '../sound'
 import { cx, hueStyle, useEvent, type Hue } from './util'
@@ -16,6 +16,8 @@ export interface SliderProps {
   value?: number
   /** Polled every animation frame instead of `value` (no re-renders). */
   live?: () => number
+  /** Poll `live` (default true). Pass false while the slider can't be seen (closed overlay). */
+  liveActive?: boolean
   min?: number
   max?: number
   /** Snap step (and keyboard step). Default (max-min)/100. */
@@ -45,6 +47,7 @@ export interface SliderProps {
 export function Slider({
   value = 0,
   live,
+  liveActive = true,
   min = 0,
   max = 1,
   step,
@@ -74,8 +77,9 @@ export function Slider({
   const withTicks = ticks ?? variant !== 'seek'
 
   const writeV = (v: number) => {
-    const f = Math.max(0, Math.min(1, (v - min) / range))
-    if (Math.abs(f - lastWritten.current) < 0.0002) return
+    // quantised to ~1/4096 of the track (under a device pixel on any seek bar)
+    const f = Math.round(Math.max(0, Math.min(1, (v - min) / range)) * 4096) / 4096
+    if (f === lastWritten.current) return
     lastWritten.current = f
     root.current?.style.setProperty('--v', f.toFixed(4))
   }
@@ -85,10 +89,13 @@ export function Slider({
     if (!dragging.current && !live) writeV(value)
   })
 
-  // live value → css, every frame
+  // live value → css, every frame (and at once when polling resumes, before the next paint)
+  useLayoutEffect(() => {
+    if (liveActive && live && !dragging.current) writeV(live())
+  }, [liveActive]) // eslint-disable-line react-hooks/exhaustive-deps
   useTicker(() => {
     if (!dragging.current && live) writeV(live())
-  }, !!live)
+  }, !!live && liveActive)
 
   const valueAt = (clientX: number) => {
     const r = root.current!.getBoundingClientRect()

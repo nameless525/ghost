@@ -125,7 +125,8 @@ export function PlaylistDetailView({ initial, from, active, onBack, onOpenPlayli
   const n = items?.length ?? p.trackCount
   const totalMs = useMemo(() => (items ? items.reduce((s, i) => s + (i.track.durationMs ?? 0), 0) : p.durationMs), [items, p.durationMs])
   const ctx = useMemo(() => ({ kind: 'playlist' as const, id, title: p.name }), [id, p.name])
-  const backdrop = artUrl(p.covers[0] ?? null)
+  // heavily blurred and faint: a small copy is indistinguishable
+  const backdrop = artUrl(p.covers[0] ?? null, { w: 160 })
 
   return (
     <div ref={root} className="lib-detail">

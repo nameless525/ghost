@@ -10,7 +10,7 @@ import type { OfflineAnalysisResult } from '../engine/types'
 import type { AlbumHit, PlatformRef, ProviderAlbum, ProviderTrackFile } from '../providers/types'
 import { LOSSLESS_FORMATS } from '../providers/types'
 import { baseTitle, clusterKeys, franchiseGuess, gameKey, headKey, keyOf, kindRank, MERGEABLE_KINDS, pickGameName, sortKey } from './normalize'
-import { ensureCatalogSchema, UNKNOWN_INTENSITY, UNKNOWN_LEN, UNKNOWN_YEAR } from './schema'
+import { ensureCatalogSchema, recountCatalog, UNKNOWN_INTENSITY, UNKNOWN_LEN, UNKNOWN_YEAR } from './schema'
 
 export type Quality = Settings['sources']['quality']
 
@@ -210,6 +210,43 @@ function unf32(u: unknown): number[] {
   return Array.from(new Float32Array(copy.buffer, 0, Math.floor(copy.byteLength / 4)), (x) => Math.round(x * 1000) / 1000)
 }
 
+/**
+ * Pause between the write transactions of background work (crawls). The main process writes its
+ * library tables on another connection and, while one of ours is open, sleeps in SQLite's busy
+ * handler (retrying after 1, 2, 5, 10… ms): small transactions with real gaps let it in quickly.
+ */
+export const writerPause = (): Promise<void> => new Promise((r) => setTimeout(r, 8))
+/** Rows per write transaction in background work. */
+export const BACKGROUND_TX_ROWS = 100
+
+/** Call `yieldFn` once `sliceMs` of synchronous work has passed since the last yield. */
+export function timeSlicer(yieldFn: () => Promise<void>, sliceMs = 8): () => Promise<void> {
+  let last = performance.now()
+  return async () => {
+    if (performance.now() - last < sliceMs) return
+    await yieldFn()
+    last = performance.now()
+  }
+}
+
+/**
+ * How long write transactions held the database (debug stats). The main process writes its
+ * library tables on another connection and waits (busy_timeout) while one is open, so long ones
+ * would stall it: background work keeps them short.
+ */
+export const txStats = { count: 0, totalMs: 0, maxMs: 0, over20: 0, over50: 0, slowest: '' }
+function noteTx(ms: number): void {
+  txStats.count++
+  txStats.totalMs += ms
+  if (ms > txStats.maxMs) {
+    txStats.maxMs = Math.round(ms * 10) / 10
+    // Which write it was (the callers above tx()).
+    txStats.slowest = (new Error().stack ?? '').split('\n').slice(3, 6).map((l) => l.trim().replace(/^at /, '').replace(/ \(.*\)$/, '')).join(' < ')
+  }
+  if (ms > 20) txStats.over20++
+  if (ms > 50) txStats.over50++
+}
+
 export class CatalogRepo {
   private stmts = new Map<string, StatementSync>()
   private gameIdByKey: Map<string, number> | null = null
@@ -251,7 +288,11 @@ export class CatalogRepo {
   /** Re-entrant transaction. */
   tx<T>(fn: () => T): T {
     if (this.db.isTransaction) return fn()
-    this.db.exec('BEGIN')
+    const t0 = performance.now()
+    // IMMEDIATE: take the write lock up front. A deferred transaction that read first can't be
+    // upgraded once the main process (another connection) has committed meanwhile, and SQLite
+    // fails that with SQLITE_BUSY without waiting (busy_timeout doesn't apply).
+    this.db.exec('BEGIN IMMEDIATE')
     try {
       const out = fn()
       this.db.exec('COMMIT')
@@ -259,6 +300,8 @@ export class CatalogRepo {
     } catch (e) {
       this.db.exec('ROLLBACK')
       throw e
+    } finally {
+      noteTx(performance.now() - t0)
     }
   }
 
@@ -273,11 +316,16 @@ export class CatalogRepo {
     return v
   }
 
+  /** Catalog sizes, maintained by triggers (no table walk; see COUNTS_TRIGGERS_DDL). */
   counts(): { games: number; albums: number; tracks: number } {
-    const r = this.get<{ g: number; a: number; t: number }>(
-      `SELECT (SELECT COUNT(*) FROM games) AS g, (SELECT COUNT(*) FROM albums WHERE gone = 0) AS a, (SELECT COUNT(*) FROM tracks WHERE removed = 0) AS t`
-    )!
-    return { games: r.g, albums: r.a, tracks: r.t }
+    const out = { games: 0, albums: 0, tracks: 0 }
+    for (const r of this.all<{ k: string; n: number }>(`SELECT k, n FROM catalog_counts`)) if (r.k in out) out[r.k as keyof typeof out] = r.n
+    return out
+  }
+
+  /** Recompute the maintained counts from the tables (one full count). */
+  recount(): void {
+    this.tx(() => recountCatalog(this.db))
   }
 
   meta(key: string): string | null {
@@ -371,6 +419,24 @@ export class CatalogRepo {
       }
     })
     return ids
+  }
+
+  /** upsertHits in small transactions with pauses between them (background crawls). */
+  async upsertHitsPaced(hits: AlbumHit[], opts: { initial: boolean }, pause: () => Promise<void> = writerPause): Promise<number[]> {
+    const ids: number[] = []
+    for (let i = 0; i < hits.length; i += BACKGROUND_TX_ROWS) {
+      if (i) await pause()
+      for (const id of this.upsertHits(hits.slice(i, i + BACKGROUND_TX_ROWS), opts)) ids.push(id)
+    }
+    return ids
+  }
+
+  /** assignGames in small transactions with pauses between them (background crawls). */
+  async assignGamesPaced(albumIds: number[], pause: () => Promise<void> = writerPause): Promise<void> {
+    for (let i = 0; i < albumIds.length; i += BACKGROUND_TX_ROWS) {
+      if (i) await pause()
+      this.assignGames(albumIds.slice(i, i + BACKGROUND_TX_ROWS))
+    }
   }
 
   private writePlatforms(albumId: number, platforms: PlatformRef[]): void {
@@ -501,6 +567,31 @@ export class CatalogRepo {
       this.gameIdByKey.set(r.norm_key, r.id)
       if (r.has_primary) this.primaryKeys.add(r.norm_key)
     }
+  }
+
+  /**
+   * Build the game-key maps ahead of the first clustering, in pages with yields (the synchronous
+   * load reads every game at once). Discarded if a synchronous load happened meanwhile: every write
+   * that changes them goes through loadGameMaps() first.
+   */
+  async preloadGameMaps(yieldFn: () => Promise<void> = () => new Promise((r) => setImmediate(r))): Promise<void> {
+    if (this.gameIdByKey) return
+    const byKey = new Map<string, number>()
+    const primary = new Set<string>()
+    for (let after = 0; ; ) {
+      const page = this.all<{ id: number; norm_key: string; has_primary: number }>(`SELECT id, norm_key, has_primary FROM games WHERE id > ? ORDER BY id LIMIT 5000`, after)
+      for (const r of page) {
+        byKey.set(r.norm_key, r.id)
+        if (r.has_primary) primary.add(r.norm_key)
+      }
+      if (page.length < 5000) break
+      after = page[page.length - 1].id
+      await yieldFn()
+      if (this.gameIdByKey) return
+    }
+    if (this.gameIdByKey) return
+    this.gameIdByKey = byKey
+    this.primaryKeys = primary
   }
 
   private gameIdFor(key: string, seedTitle: string): number {
@@ -722,22 +813,33 @@ export class CatalogRepo {
   }
 
   /**
-   * Full re-cluster over every album (end of an index crawl). Yields between chunks so the main
-   * process stays responsive.
+   * Full re-cluster over every album (end of an index crawl). Runs in the catalog worker; reads are
+   * paged and every loop is time-sliced (`yieldFn` at least every few ms) so Browse requests keep
+   * being answered, and write transactions stay small so the main process' library writes (another
+   * connection) never wait long for the lock.
    */
-  async reclusterAll(yieldFn: () => Promise<void> = () => new Promise((r) => setImmediate(r))): Promise<void> {
-    const rows = this.all<{ id: number; title: string; kind: AlbumKind; game_id: number | null; game_key: string | null }>(
-      `SELECT id, title, kind, game_id, game_key FROM albums WHERE gone = 0`
-    )
+  async reclusterAll(yieldFn: () => Promise<void> = writerPause): Promise<void> {
+    const slice = timeSlicer(yieldFn)
+    type Row = { id: number; title: string; kind: AlbumKind; game_id: number | null; game_key: string | null }
+    const rows: Row[] = []
+    for (let after = 0; ; ) {
+      const page = this.all<Row>(`SELECT id, title, kind, game_id, game_key FROM albums WHERE gone = 0 AND id > ? ORDER BY id LIMIT 5000`, after)
+      for (const r of page) rows.push(r)
+      if (page.length < 5000) break
+      after = page[page.length - 1].id
+      await slice()
+    }
     const keys = new Map<number, string>()
     const primary = new Set<string>()
     for (let i = 0; i < rows.length; i++) {
       const k = rows[i].game_key ?? gameKey(rows[i].title)
       keys.set(rows[i].id, k)
       if (!MERGEABLE_KINDS.has(rows[i].kind)) primary.add(k)
-      if (i % 4000 === 3999) await yieldFn()
+      if ((i & 255) === 255) await slice()
     }
-    for (const r of rows) {
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      if ((i & 255) === 255) await slice()
       if (r.game_key || !MERGEABLE_KINDS.has(r.kind) || primary.has(keys.get(r.id)!)) continue
       const h = headKey(r.title)
       if (h && primary.has(h)) keys.set(r.id, h)
@@ -745,9 +847,9 @@ export class CatalogRepo {
     await yieldFn()
     const moved: number[] = []
     const touched = new Set<number>()
-    for (let i = 0; i < rows.length; i += 2000) {
+    for (let i = 0; i < rows.length; i += 1000) {
       this.tx(() => {
-        for (const r of rows.slice(i, i + 2000)) {
+        for (const r of rows.slice(i, i + 1000)) {
           const gid = this.gameIdFor(keys.get(r.id)!, r.title)
           if (r.game_id !== gid) {
             this.run(`UPDATE albums SET game_id = ? WHERE id = ?`, gid, r.id)
@@ -761,16 +863,17 @@ export class CatalogRepo {
     }
     // Orphans (games whose albums all moved away) are deleted by refreshGames.
     for (const r of this.all<{ id: number }>(`SELECT g.id FROM games g WHERE NOT EXISTS (SELECT 1 FROM albums a WHERE a.game_id = g.id AND a.gone = 0)`)) touched.add(r.id)
+    await yieldFn()
     const t = [...touched]
     const dirty = new Set<number>(moved)
-    for (let i = 0; i < t.length; i += 1000) {
-      for (const id of this.refreshGames(t.slice(i, i + 1000))) dirty.add(id)
+    for (let i = 0; i < t.length; i += 400) {
+      for (const id of this.refreshGames(t.slice(i, i + 400))) dirty.add(id)
       await yieldFn()
     }
     for (const id of await this.refreshFranchises(yieldFn)) dirty.add(id)
     const d = [...dirty]
-    for (let i = 0; i < d.length; i += 1000) {
-      this.updateAlbumFts(d.slice(i, i + 1000))
+    for (let i = 0; i < d.length; i += 400) {
+      this.updateAlbumFts(d.slice(i, i + 400))
       await yieldFn()
     }
     this.revision++
@@ -778,10 +881,21 @@ export class CatalogRepo {
 
   /** Heuristic franchises: a shared head ("Final Fantasy" from "Final Fantasy VI") across ≥2 games. */
   async refreshFranchises(yieldFn: () => Promise<void> = async () => {}): Promise<number[]> {
-    const games = this.all<{ id: number; name: string; franchise_guess: string | null; igdb_json: string | null }>(`SELECT id, name, franchise_guess, igdb_json FROM games`)
+    const slice = timeSlicer(yieldFn)
+    type Row = { id: number; name: string; franchise_guess: string | null; igdb_json: string | null }
+    const games: Row[] = []
+    for (let after = 0; ; ) {
+      const page = this.all<Row>(`SELECT id, name, franchise_guess, igdb_json FROM games WHERE id > ? ORDER BY id LIMIT 5000`, after)
+      for (const g of page) games.push(g)
+      if (page.length < 5000) break
+      after = page[page.length - 1].id
+      await slice()
+    }
     const byKey = new Map<string, { ids: number[]; names: Map<string, number> }>()
     const guessOf = new Map<number, string>()
-    for (const g of games) {
+    for (let i = 0; i < games.length; i++) {
+      if ((i & 255) === 255) await slice()
+      const g = games[i]
       const guess = franchiseGuess(g.name)
       if (!guess) continue
       const k = keyOf(guess)
@@ -802,21 +916,27 @@ export class CatalogRepo {
       })[0][0]
       display.set(k, best)
     }
-    const changed: number[] = []
-    this.tx(() => {
-      for (const g of games) {
-        const k = guessOf.get(g.id)
-        const guess = (k && display.get(k)) || null
-        if (guess === g.franchise_guess) continue
-        changed.push(g.id)
-        const igdbFr = j<IgdbData | null>(g.igdb_json, null)?.franchise ?? null
-        this.run(`UPDATE games SET franchise_guess = ?, franchise = ? WHERE id = ?`, guess, igdbFr ?? guess, g.id)
-      }
-    })
+    const changed: { id: number; guess: string | null; franchise: string | null }[] = []
+    for (let i = 0; i < games.length; i++) {
+      if ((i & 255) === 255) await slice()
+      const g = games[i]
+      const k = guessOf.get(g.id)
+      const guess = (k && display.get(k)) || null
+      if (guess === g.franchise_guess) continue
+      const igdbFr = j<IgdbData | null>(g.igdb_json, null)?.franchise ?? null
+      changed.push({ id: g.id, guess, franchise: igdbFr ?? guess })
+    }
+    for (let i = 0; i < changed.length; i += 1000) {
+      this.tx(() => {
+        for (const c of changed.slice(i, i + 1000)) this.run(`UPDATE games SET franchise_guess = ?, franchise = ? WHERE id = ?`, c.guess, c.franchise, c.id)
+      })
+      await yieldFn()
+    }
     const albums: number[] = []
     for (let i = 0; i < changed.length; i += 500) {
-      const c = changed.slice(i, i + 500)
+      const c = changed.slice(i, i + 500).map((x) => x.id)
       for (const r of this.all<{ id: number }>(`SELECT id FROM albums WHERE game_id IN (${c.map(() => '?').join(',')})`, ...c)) albums.push(r.id)
+      await slice()
     }
     return albums
   }

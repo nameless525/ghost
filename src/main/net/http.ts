@@ -23,10 +23,14 @@ export const TTL = {
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
-/** `fetch` through Electron's Chromium network stack. Imported lazily so tests can run in Node. */
+/**
+ * `fetch` through Electron's Chromium network stack (main process only). Imported lazily so tests
+ * and the catalog worker can load this module. Chromium's HTTP cache is bypassed: callers keep their
+ * own disk caches (HTML, art), and Chromium's had grown to hundreds of MB duplicating them.
+ */
 export const electronFetch: FetchLike = async (url, init) => {
   const { net } = await import('electron')
-  return net.fetch(url, init as Parameters<typeof net.fetch>[1])
+  return net.fetch(url, { cache: 'no-store', ...(init ?? {}) } as Parameters<typeof net.fetch>[1])
 }
 
 export interface HostPolicy {

@@ -24,6 +24,7 @@ import type {
   LoopMode,
   PlayContext,
   PlayerState,
+  PlayerStateEvent,
   Playlist,
   PlaylistDetail,
   RepeatMode,
@@ -131,7 +132,8 @@ export interface SystemAPI {
 
 /** Events pushed from main to renderer. */
 export interface GhostEvents {
-  'player:state': PlayerState
+  /** The queue is omitted when unchanged since the previous broadcast (see PlayerStateEvent). */
+  'player:state': PlayerStateEvent
   'catalog:status': CatalogStatus
   'downloads:changed': DownloadItem[]
   'library:changed': { kind: 'playlists' | 'likes' | 'history' | 'downloaded'; id?: ID }
@@ -143,6 +145,11 @@ export type GhostEventName = keyof GhostEvents
 export interface AnalysisAPI {
   /** Latest real-time analysis frame, or null when nothing is playing. Synchronous; call per rAF. */
   read(): AnalysisFrame | null
+  /**
+   * The same frame packed into one Float32Array (layout: PACKED_FRAME in types.ts), or null.
+   * Cheaper across the context bridge than read(); optional (older preloads / the web mock).
+   */
+  readPacked?(): Float32Array | null
 }
 
 export interface GhostAPI {

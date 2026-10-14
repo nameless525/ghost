@@ -12,7 +12,7 @@ import type { DB } from '../db'
 import { isNetError } from '../net/errors'
 import { CHIP_ID, chipAlbumHit, JOSHW_SOURCES, type ChipProvider, type ChipSet, type JoshwSource } from '../providers/chip'
 import { gameKey, keyOf, sortKey } from './normalize'
-import type { CatalogRepo } from './repo'
+import { writerPause, type CatalogRepo } from './repo'
 
 /** joshw listings barely change: re-read them monthly. */
 export const CHIP_REFRESH_MS = 30 * 24 * 3600_000
@@ -229,7 +229,12 @@ export class ChipIndexer {
         try {
           const res = await p.fetch(signal)
           const fresh = res.sets.length - this.knownRefs(res.sets.map((x) => x.ref))
-          const ids = this.attach(res.sets)
+          // In small transactions with pauses (see writerPause).
+          const ids: number[] = []
+          for (let i = 0; i < res.sets.length; i += 40) {
+            if (i) await writerPause()
+            for (const id of this.attach(res.sets.slice(i, i + 40))) ids.push(id)
+          }
           added += ids.length
           this.record(p.source, p.key, res.sets.length, res.skipped, null)
           step(label)

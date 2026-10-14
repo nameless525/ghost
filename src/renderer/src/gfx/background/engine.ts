@@ -3,8 +3,13 @@
 // Vignette and film grain are static CSS layers above the canvas (zero per-frame cost).
 // Rendering is driven by the global ticker (no Pixi ticker), so it shares the one rAF loop
 // and stops while the window is hidden.
+//
+// Resolution: everything on this canvas is soft (pre-blurred art, blurred gradient blobs, soft
+// pixel sprites; the sharp art is ≤1600 px and already upscaled to cover the window), so it
+// renders at CSS-pixel resolution (BG_RES) and the compositor scales it up: on a 2× display
+// that is a quarter of the fill, with no visible difference. Grain and vignette are sharp CSS
+// layers on top.
 import { autoDetectRenderer, Container, Sprite, type Renderer } from 'pixi.js'
-import { artUrl } from '../../lib/art'
 import { beat } from '../../motion/beat'
 import { damp } from '../../motion/easing'
 import { levels, retainLevels } from '../../motion/frame'
@@ -18,6 +23,8 @@ import { PixelField } from './pixels'
 import { makeBlobTexture, makePixelTexture } from './textures'
 
 const BASE_COLOR = 0x0f0d17
+/** Canvas resolution (device px per CSS px) per blur quality, capped at devicePixelRatio. */
+const BG_RES: Record<'low' | 'high', number> = { high: 1, low: 0.75 }
 
 export class BackgroundEngine {
   private renderer: Renderer | null = null
@@ -43,7 +50,7 @@ export class BackgroundEngine {
   }
 
   private resolutionFor(q: 'low' | 'high'): number {
-    return q === 'high' ? Math.min(2, window.devicePixelRatio || 1) : 1
+    return Math.min(BG_RES[q], window.devicePixelRatio || 1)
   }
 
   private async init(): Promise<void> {
@@ -132,8 +139,9 @@ export class BackgroundEngine {
     this.pixels?.layout(w, h)
   }
 
+  /** Raw art URL (the art layer requests the sizes it needs through ghost-art://). */
   setArt(url: string | null): void {
-    void this.ready.then(() => this.art.setArt(artUrl(url)))
+    void this.ready.then(() => this.art.setArt(url))
   }
 
   setDim(dim: number, blur: number): void {
@@ -141,6 +149,7 @@ export class BackgroundEngine {
   }
 
   setQuality(q: 'low' | 'high'): void {
+    if (q !== this.art.quality) this.art.clearCache()
     this.quality = q
     this.art.quality = q
     this.resize()
@@ -197,6 +206,19 @@ export class BackgroundEngine {
 }
 
 let engine: BackgroundEngine | null = null
+
+// Dev handle for A/B-ing the resolution: window.__ghostGfx.bgRes = 2
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  const g = ((window as unknown as { __ghostGfx?: Record<string, unknown> }).__ghostGfx ??= {})
+  Object.defineProperty(g, 'bgRes', {
+    configurable: true,
+    get: () => BG_RES.high,
+    set: (v: number) => {
+      BG_RES.high = v
+      ;(engine as unknown as { resize(): void } | null)?.resize()
+    }
+  })
+}
 
 /** The app-wide background engine (created on first use). */
 export function getBackgroundEngine(): BackgroundEngine {

@@ -5,7 +5,7 @@
 
 import { isNetError } from '../net/errors'
 import type { IndexProvider, IndexSection } from '../providers/types'
-import type { CatalogRepo } from './repo'
+import { writerPause, type CatalogRepo } from './repo'
 
 export const INDEX_MAX_AGE_MS = 7 * 24 * 3600_000
 const BLOCK_PAUSE_MS = 10 * 60_000
@@ -36,6 +36,8 @@ export interface CrawlerDeps {
   /** Limit pages per section (smoke tests). */
   maxPagesPerSection?: number
 }
+
+const tick = () => new Promise<void>((r) => setImmediate(r))
 
 export class Crawler {
   running = false
@@ -189,8 +191,12 @@ export class Crawler {
             continue
           }
           failures = 0
-          const ids = repo.upsertHits(res.items, { initial: !!job.initial })
-          repo.assignGames(ids)
+          // Small write transactions with pauses between them: Browse requests are answered and the
+          // main process' library writes get the lock in between.
+          await tick()
+          const ids = await repo.upsertHitsPaced(res.items, { initial: !!job.initial })
+          await writerPause()
+          await repo.assignGamesPaced(ids)
           repo.revision++
           repo.run(
             `INSERT INTO crawl_pages (job_id, section, page, total_pages, items, fetched_at) VALUES (?, ?, ?, ?, ?, ?)

@@ -300,7 +300,7 @@ export class LocalLibrary {
             return { f, row: rowFromTags(f.path, root, f.st, {}, this.now()), error: (e as Error).message.slice(0, 300) }
           }
         })
-        this.db.exec('BEGIN')
+        this.db.exec('BEGIN IMMEDIATE')
         try {
           for (const { f, row: r, error } of rows) {
             upsert.run(r.path, r.root, r.mtime_ms, r.size, r.title, r.album, r.artist, r.album_artist, r.composer, r.track_no, r.disc_no, r.duration_ms, r.format, r.bitrate, r.lossless, r.title_key, r.album_key, r.scanned_at, error)
@@ -317,7 +317,7 @@ export class LocalLibrary {
       const gone = [...existing.keys()].filter((p) => !seen.has(p))
       if (gone.length && res.files < this.maxFiles) {
         const del = this.db.prepare(`DELETE FROM local_files WHERE path = ?`)
-        this.db.exec('BEGIN')
+        this.db.exec('BEGIN IMMEDIATE')
         for (const p of gone) del.run(p)
         this.db.exec('COMMIT')
         res.removed += gone.length

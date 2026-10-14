@@ -8,7 +8,7 @@
 
 import type { DB } from '../db'
 
-export const CATALOG_SCHEMA_VERSION = 1
+export const CATALOG_SCHEMA_VERSION = 2
 
 /** Sentinels used by sort columns for unknown values (sort last in ascending order). */
 export const UNKNOWN_YEAR = 9999
@@ -113,6 +113,9 @@ CREATE INDEX IF NOT EXISTS albums_sort_intensity ON albums(sort_intensity, sort_
 CREATE INDEX IF NOT EXISTS albums_rnd ON albums(rnd);
 CREATE INDEX IF NOT EXISTS albums_kind ON albums(kind);
 CREATE INDEX IF NOT EXISTS albums_year ON albums(year);
+-- Narrow copy of the columns Browse aggregates and shuffles over (bucket groupings, 'random' sort),
+-- so those scans don't walk the wide album rows.
+CREATE INDEX IF NOT EXISTS albums_facts ON albums(id, gone, year, sort_year, sort_added, total_ms, intensity, kind_rank, game_id, cover);
 
 CREATE TABLE IF NOT EXISTS album_platforms (
   album_id  INTEGER NOT NULL,
@@ -224,6 +227,61 @@ CREATE TABLE IF NOT EXISTS crawl_pages (
 );
 `
 
+/**
+ * Row counts for the status line, kept by triggers so 'catalog:status' never needs a COUNT(*) over
+ * the whole catalog (~20 ms warm, ~350 ms cold on a 100k-album catalog).
+ */
+export const COUNTS_TRIGGERS_DDL = `
+CREATE TRIGGER IF NOT EXISTS games_count_ins AFTER INSERT ON games
+  BEGIN UPDATE catalog_counts SET n = n + 1 WHERE k = 'games'; END;
+CREATE TRIGGER IF NOT EXISTS games_count_del AFTER DELETE ON games
+  BEGIN UPDATE catalog_counts SET n = n - 1 WHERE k = 'games'; END;
+CREATE TRIGGER IF NOT EXISTS albums_count_ins AFTER INSERT ON albums WHEN NEW.gone = 0
+  BEGIN UPDATE catalog_counts SET n = n + 1 WHERE k = 'albums'; END;
+CREATE TRIGGER IF NOT EXISTS albums_count_del AFTER DELETE ON albums WHEN OLD.gone = 0
+  BEGIN UPDATE catalog_counts SET n = n - 1 WHERE k = 'albums'; END;
+CREATE TRIGGER IF NOT EXISTS albums_count_upd AFTER UPDATE OF gone ON albums WHEN (OLD.gone = 0) <> (NEW.gone = 0)
+  BEGIN UPDATE catalog_counts SET n = n + CASE WHEN NEW.gone = 0 THEN 1 ELSE -1 END WHERE k = 'albums'; END;
+CREATE TRIGGER IF NOT EXISTS tracks_count_ins AFTER INSERT ON tracks WHEN NEW.removed = 0
+  BEGIN UPDATE catalog_counts SET n = n + 1 WHERE k = 'tracks'; END;
+CREATE TRIGGER IF NOT EXISTS tracks_count_del AFTER DELETE ON tracks WHEN OLD.removed = 0
+  BEGIN UPDATE catalog_counts SET n = n - 1 WHERE k = 'tracks'; END;
+CREATE TRIGGER IF NOT EXISTS tracks_count_upd AFTER UPDATE OF removed ON tracks WHEN (OLD.removed = 0) <> (NEW.removed = 0)
+  BEGIN UPDATE catalog_counts SET n = n + CASE WHEN NEW.removed = 0 THEN 1 ELSE -1 END WHERE k = 'tracks'; END;
+`
+
+const COUNT_KEYS = ['games', 'albums', 'tracks']
+
+/** (Re)compute the maintained counts from the tables. One full count; call inside a transaction. */
+export function recountCatalog(db: DB): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS catalog_counts (k TEXT PRIMARY KEY, n INTEGER NOT NULL)`)
+  db.exec(`DELETE FROM catalog_counts`)
+  db.exec(
+    `INSERT INTO catalog_counts(k, n)
+       SELECT 'games', COUNT(*) FROM games
+       UNION ALL SELECT 'albums', COUNT(*) FROM albums WHERE gone = 0
+       UNION ALL SELECT 'tracks', COUNT(*) FROM tracks WHERE removed = 0`
+  )
+}
+
+function ensureCounts(db: DB): void {
+  const names = [...COUNTS_TRIGGERS_DDL.matchAll(/TRIGGER IF NOT EXISTS (\w+)/g)].map((m) => m[1])
+  const have = (db.prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN (${names.map(() => '?').join(',')})`).get(...names) as { n: number }).n
+  const rows = have === names.length ? (db.prepare(`SELECT COUNT(*) AS n FROM catalog_counts WHERE k IN ('games', 'albums', 'tracks')`).get() as { n: number }).n : 0
+  if (have === names.length && rows === COUNT_KEYS.length) return
+  // Count and install the triggers atomically, so no write lands between the two.
+  const own = !db.isTransaction
+  if (own) db.exec('BEGIN IMMEDIATE')
+  try {
+    recountCatalog(db)
+    db.exec(COUNTS_TRIGGERS_DDL)
+    if (own) db.exec('COMMIT')
+  } catch (e) {
+    if (own) db.exec('ROLLBACK')
+    throw e
+  }
+}
+
 /** Columns added after a table first shipped: [table, column, definition]. */
 const ADDED_COLUMNS: [string, string, string][] = [
   ['sources', 'needs_refresh', 'INTEGER NOT NULL DEFAULT 0'],
@@ -244,5 +302,6 @@ export function ensureCatalogSchema(db: DB): void {
     const cols = db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table) as { name: string }[]
     if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
   }
+  ensureCounts(db)
   db.prepare(`INSERT INTO catalog_meta(key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(CATALOG_SCHEMA_VERSION))
 }

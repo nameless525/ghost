@@ -229,7 +229,7 @@ export function InfoWedge() {
         {hero && <div key={hero} className="bw__hero-art" style={{ backgroundImage: `url("${hero}")` }} />}
         <div className="bw__hero-shade" />
         <div className="bw__cover">
-          <CoverArt src={v?.cover ?? null} size="100%" radius={12} hue={v?.accent ?? undefined} />
+          <CoverArt src={v?.cover ?? null} size="100%" w={188} radius={12} hue={v?.accent ?? undefined} />
           {previewing && (
             <div className="bw__previewing" title={`Previewing ${preview!.track.title}`}>
               <AudioLines />

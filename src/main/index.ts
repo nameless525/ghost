@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { registerIpc, broadcast } from './ipc'
 import { perfStats, startMainPerf } from './perf'
+import { migrateLegacyCache } from './paths'
+import { onPlayerState } from './power'
 import { createServices, type ServicesHandle } from './services'
 import { handleArtProtocol, registerArtScheme } from './net/art-protocol'
 
@@ -53,11 +55,15 @@ startMainPerf()
 app.whenReady().then(async () => {
   handleArtProtocol()
   if (!app.isPackaged && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources/icon.png'))
-  handle = await createServices(broadcast)
+  handle = await createServices(((event, payload) => {
+    if (event === 'player:state') onPlayerState(payload as Parameters<typeof onPlayerState>[0])
+    broadcast(event, payload)
+  }) as typeof broadcast)
   registerIpc(handle.services)
   // Debug: main-process stall / slow-SQL stats for profiling (scripts/cdp.mjs eval).
   ipcMain.handle('ghost:perf', (_e, reset?: boolean) => perfStats(!!reset))
   createWindow(handle.preloadArgs)
+  setTimeout(() => void migrateLegacyCache(), 10_000)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(handle!.preloadArgs)
   })
