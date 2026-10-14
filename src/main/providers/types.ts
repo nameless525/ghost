@@ -40,6 +40,11 @@ export interface AlbumHit {
   catalogNo: string | null
   /** When the provider says the album was added (epoch ms), if listed. */
   addedAt: number | null
+  /**
+   * Index crawls keep this album only when the catalog already has a game of that name (a source
+   * whose listings mix game rips with musicians' originals, e.g. Modland's named NSF folders).
+   */
+  onlyForKnownGame?: boolean
 }
 
 export interface ProviderTrackFile {

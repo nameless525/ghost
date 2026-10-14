@@ -56,6 +56,8 @@ export interface CatalogInternals {
   ytdlp?: () => Promise<YtDlp>
   /** fetch for archive.org's JSON APIs. */
   sourceFetch?: typeof fetch
+  /** Where sources keep downloaded indexes (Modland's file list); without it Modland is off. */
+  sourcesCacheDir?: string
   /** Don't scan settings.sources.localFolders. */
   disableLocalScan?: boolean
   /** Chiptune rip index (joshw.info / vgmrips.net): `false` = never crawl; otherwise options. */
@@ -133,6 +135,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       ytdlp: internals.ytdlp,
       fetch: internals.sourceFetch,
       inspectArchive: deps.inspectArchive,
+      cacheDir: internals.sourcesCacheDir,
       log: (m) => log(`sources: ${m}`)
     }))
   const quality = () => deps.getSettings().sources.quality

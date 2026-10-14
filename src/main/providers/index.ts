@@ -24,6 +24,7 @@ import { BandcampProvider } from './bandcamp'
 import { ChipProvider } from './chip'
 import { KhinsiderProvider } from './khinsider'
 import { LocalLibrary, LocalProvider } from './local'
+import { ModlandProvider } from './modland'
 import type { Provider } from './types'
 import { YouTubeProvider } from './youtube'
 import { ZopharProvider } from './zophar'
@@ -70,6 +71,8 @@ export interface RegistryDeps {
   fetch?: typeof fetch
   /** The engine's archive lister, for chiptune rip sets (without it their albums can't open). */
   inspectArchive?: (source: EngineSource) => Promise<ArchiveListing>
+  /** Where sources keep downloaded indexes (Modland's file list). Without it there is no Modland. */
+  cacheDir?: string
   log?: (msg: string) => void
 }
 
@@ -77,13 +80,13 @@ export function createDefaultRegistry(http: HttpClient, deps: RegistryDeps = {})
   const log = deps.log ?? ((m: string) => console.log(`[sources] ${m}`))
   const r = new ProviderRegistry()
   if (deps.db) r.register(new LocalProvider(new LocalLibrary(deps.db, { log })))
-  return r
-    .register(new ChipProvider({ http, inspectArchive: deps.inspectArchive, log: (m) => log(`chip: ${m}`) }))
+  r.register(new ChipProvider({ http, inspectArchive: deps.inspectArchive, log: (m) => log(`chip: ${m}`) }))
     .register(new BandcampProvider(http))
     .register(new KhinsiderProvider(http))
     .register(new ZopharProvider(http))
-    .register(new ArchiveProvider({ fetch: deps.fetch }))
-    .register(new YouTubeProvider(deps.ytdlp ?? sharedYtDlp, { log }))
+  const cacheDir = deps.cacheDir
+  if (cacheDir) r.register(new ModlandProvider({ http, cacheDir, log: (m) => log(`modland: ${m}`) }))
+  return r.register(new ArchiveProvider({ fetch: deps.fetch })).register(new YouTubeProvider(deps.ytdlp ?? sharedYtDlp, { log }))
 }
 
 export type { Provider } from './types'

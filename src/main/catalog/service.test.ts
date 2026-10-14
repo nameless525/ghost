@@ -293,10 +293,12 @@ describe('several index sources', () => {
       indexSections: () => [{ key: 'all', label: 'All' }],
       async fetchIndexPage(_k: string, page: number) {
         calls.push(`${id}:${page}`)
-        const items = titles[page - 1].map((title) => ({
+        const items = titles[page - 1].map((t) => ({
+          // '?Title': only wanted when the catalog already knows the game
+          ...(t.startsWith('?') ? { onlyForKnownGame: true } : {}),
           provider: id,
-          ref: `${id}-${title}`,
-          title,
+          ref: `${id}-${t}`,
+          title: t.replace(/^\?/, ''),
           titleFromRef: false,
           platforms: [],
           kind: 'gamerip' as const,
@@ -319,7 +321,7 @@ describe('several index sources', () => {
     const calls: string[] = []
     const settings: Settings = defaultSettings('/tmp/ghost-dl')
     const primary = fakeIndex('main', [['Chrono Trigger OST', 'Hollow Knight OST'], ['Ys OST']], calls)
-    const extra = fakeIndex('extra', [['Chrono Trigger (Gamerip)', 'Mother 3 (Gamerip)']], calls)
+    const extra = fakeIndex('extra', [['Chrono Trigger (Gamerip)', 'Mother 3 (Gamerip)', '?Hollow Knight (NSF cover)', '?My Chiptune Album']], calls)
     const muted = fakeIndex('muted', [['Never Crawled']], calls)
     const svc = createCatalogService(
       { db: memoryDb(), broadcast: (() => {}) as never, getSettings: () => ({ ...settings, sources: { ...settings.sources, disabled: ['muted'] } }) },
@@ -333,7 +335,7 @@ describe('several index sources', () => {
     // the second source's Chrono Trigger rip joins the existing game; Mother 3 is new
     expect(games.groups.map((g) => [g.title, g.albumCount])).toEqual([
       ['Chrono Trigger', 2],
-      ['Hollow Knight', 1],
+      ['Hollow Knight', 2],
       ['Mother 3', 1],
       ['Ys', 1]
     ])

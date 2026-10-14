@@ -207,7 +207,8 @@ export class Crawler {
           // Small write transactions with pauses between them: Browse requests are answered and the
           // main process' library writes get the lock in between.
           await tick()
-          const ids = await repo.upsertHitsPaced(res.items, { initial: !!job.initial })
+          const items = res.items.filter((h) => !h.onlyForKnownGame || repo.findGameKey(h.title, { scanAltNames: false }) != null)
+          const ids = await repo.upsertHitsPaced(items, { initial: !!job.initial })
           await writerPause()
           await repo.assignGamesPaced(ids)
           repo.revision++

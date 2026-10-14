@@ -1,0 +1,124 @@
+259547	Ace Tracker/505/bekiffte maschinen.am
+116994	Ace Tracker/505/blazing wings.am
+66144	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/101 - presentiment.spc
+66152	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/102 - chrono trigger (looped).spc
+66144	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/102 - chrono trigger.spc
+66144	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/103 - morning sunlight.spc
+66152	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/104 - peaceful days.spc
+66152	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/105 - memories of green.spc
+66152	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/106 - guardia millennial fair.spc
+66216	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/107 - gato's song.spc
+66216	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/108 - a strange happening.spc
+66152	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/109 - wind scene.spc
+66144	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/110 - goodnight.spc
+66216	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/111 - secret of the forest.spc
+66152	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/301 - singing mountain.spc
+66216	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/302 - tyran castle.spc
+66088	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/blackbird (inside).spc
+66088	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/blackbird (outside).spc
+66088	Nintendo SPC/Yasunori Mitsuda/Chrono Trigger/ocean waves.spc
+66196	Nintendo SPC/Akio Ohmori/Earthbound/a bad dream.spc
+66196	Nintendo SPC/Akio Ohmori/Earthbound/a flash of memory.spc
+66188	Nintendo SPC/Akio Ohmori/Earthbound/a good buddy.spc
+66188	Nintendo SPC/Akio Ohmori/Earthbound/a good night's rest.spc
+66048	Nintendo SPC/Keiichi Suzuki/Earthbound/earthbound (annoyingknock2).spc
+66048	Nintendo SPC/Keiichi Suzuki/Earthbound/earthbound (appleofenlightenment).spc
+66048	Nintendo SPC/Keiichi Suzuki/Earthbound/earthbound (arcade).spc
+66048	Nintendo SPC/Keiichi Suzuki/Earthbound/earthbound (battle01).spc
+66100	Nintendo SPC/Tim Follin/coop-Geoff Follin/Plok!/plok! - akrillic.spc
+66100	Nintendo SPC/Tim Follin/coop-Geoff Follin/Plok!/plok! - beach.spc
+66100	Nintendo SPC/Tim Follin/coop-Geoff Follin/Plok!/plok! - bonus level.spc
+66100	Nintendo SPC/Tim Follin/coop-Geoff Follin/Plok!/plok! - boss.spc
+66100	Nintendo SPC/Tim Follin/coop-Geoff Follin/Plok!/plok! - boxing glove.spc
+66048	Nintendo SPC/Datam/Makeruna! Makendou/makeruna! makendou (01).spc
+66048	Nintendo SPC/Datam/Makeruna! Makendou/makeruna! makendou (02).spc
+66048	Nintendo SPC/Datam/Makeruna! Makendou/makeruna! makendou (03).spc
+66048	Nintendo SPC/Datam/Makeruna! Makendou/makeruna! makendou (04).spc
+66088	Nintendo SPC/- unknown/Mahou Poi Poi Poitto!/mppp-01.spc
+66088	Nintendo SPC/- unknown/Mahou Poi Poi Poitto!/mppp-02.spc
+66088	Nintendo SPC/- unknown/Mahou Poi Poi Poitto!/mppp-03.spc
+66108	Nintendo SPC/Mark Ortiz/A Bug's Life (SGB)/01 - main theme.spc
+66108	Nintendo SPC/Mark Ortiz/A Bug's Life (SGB)/02 - level theme 1.spc
+66108	Nintendo SPC/Mark Ortiz/A Bug's Life (SGB)/03 - level theme 2.spc
+66160	Nintendo SPC/Nobuo Uematsu/Front Mission - Gun Hazard/front mission gun hazard - 202.spc
+66160	Nintendo SPC/Nobuo Uematsu/Front Mission - Gun Hazard/front mission gun hazard - approach to a shrine.spc
+66160	Nintendo SPC/Nobuo Uematsu/Front Mission - Gun Hazard/front mission gun hazard - a-r-k.spc
+66160	Nintendo SPC/Nobuo Uematsu/Front Mission - Gun Hazard/front mission gun hazard - a running fight.spc
+66164	Nintendo SPC/Takanori Arisawa/Bishoujo Senshi Sailor Moon R/v13 - sailormercury shabão spray freezing.spc
+66096	Nintendo SPC/Lode Runner Twin/lrt-01.spc
+66096	Nintendo SPC/Lode Runner Twin/lrt-02.spc
+66201	Nintendo SPC/- unknown/- misc/anthrox crackers theme.spc
+66192	Nintendo SPC/- unknown/- misc/anthrox intro-1.spc
+66048	Nintendo SPC/Fletcher Beasley/Spider-Man/spider-man (alpha) (const).spc
+66048	Nintendo SPC/Fletcher Beasley/Spider-Man/spider-man (alpha) (lab).spc
+66108	Nintendo SPC/Joe Perry/Spider-Man/01 - theme of spider-man.spc
+66116	Nintendo SPC/Joe Perry/Spider-Man/02 - danger.spc
+49760	Nintendo Sound Format/Koji Kondo/doki doki panic (fds).nsf
+4416	Nintendo Sound Format/Koji Kondo/ice hockey (fds).nsf
+4416	Nintendo Sound Format/Koji Kondo/ice hockey.nsf
+21394	Nintendo Sound Format/Koji Kondo/legend of zelda.nsf
+41278	Nintendo Sound Format/Koji Kondo/nazo no murasamejou.nsf
+24794	Nintendo Sound Format/Koji Kondo/shin onigashima (fds).nsf
+2879	Nintendo Sound Format/Koji Kondo/soccer.nsf
+16512	Nintendo Sound Format/Koji Kondo/super mario bros 1, 2, vs extra tracks (fds).nsf
+15120	Nintendo Sound Format/Koji Kondo/super mario bros 1, 2, vs extra tracks.nsf
+24704	Nintendo Sound Format/Koji Kondo/super mario bros 2.nsf
+36992	Nintendo Sound Format/Koji Kondo/super mario bros 3.nsf
+17084	Nintendo Sound Format/Koji Kondo/super mario bros.nsf
+21832	Nintendo Sound Format/Koji Kondo/zelda no densetsu.nsf
+24576	Nintendo Sound Format/Tsu Ryu/coop-K. Manami/hokuto no ken - tough boy.nsf
+24576	Nintendo Sound Format/Tsu Ryu/coop-K. Manami/whirlwind - raika fanfare.nsf
+8330	Nintendo Sound Format/Hirohiko Takayama/king of kings (n106).nsf
+3758	Nintendo Sound Format/Hirokazu Tanaka/balloon fight (vs).nsf
+1529	Nintendo Sound Format/Junko Ozawa/battle city (vs).nsf
+21888	Nintendo Sound Format/Kuhneghetz/cybernoid ii (vrc7).nsf
+14987	Nintendo Sound Format/Kuhneghetz/duck tales - the moon (vrc7).nsf
+24576	Nintendo Sound Format/Necocat/the hustler #05.nsf
+122880	Nintendo Sound Format/Robokabuto/romancing saga 3 - 4 devils battle 2 (n106).nsf
+24576	Nintendo Sound Format/Robokabuto/romancing saga - opening (n106).nsf
+13402	Nintendo Sound Format/- unknown/10000000-in-1 (menu).nsf
+6743	Nintendo Sound Format/- unknown/100-in-1-contra function 16.nsf
+14497	Nintendo Sound Format/- unknown/100 man $ kid - maboroshi no teiou hen.nsf
+10049	Gameboy Sound System/Allister Brimble/casper.gbs
+7027	Gameboy Sound System/CYM/black forest tale.gbs
+6269	Gameboy Sound System/Heatbeat/lightforce intro #1.gbs
+14176	Gameboy Sound System/M. Maekawa/adventure island 2.gbs
+9904	Gameboy Sound System/- unknown/casper.gbs
+59736	Video Game Music/Sega Megadrive/YK-2/Beyond Oasis/beyond oasis - 01 - introduction.vgz
+5974	Video Game Music/Sega Megadrive/YK-2/Beyond Oasis/beyond oasis - 02 - awakening.vgz
+31895	Video Game Music/Sega Megadrive/YK-2/Beyond Oasis/beyond oasis - 03 - to begin.vgz
+37209	Video Game Music/Sega Megadrive/YK-2/Beyond Oasis/beyond oasis - 04 - battle.vgz
+14115	Video Game Music/Sega Megadrive/- unknown/Shougi No Hoshi/01 opening theme.vgz
+2088	Video Game Music/Sega Megadrive/- unknown/Shougi No Hoshi/02.vgz
+5843	Video Game Music/Sega Megadrive/- unknown/Shougi No Hoshi/03.vgz
+6682	Video Game Music/Sega Master System/T. Sawada/Land Of Illusion/01 intro.vgz
+3123	Video Game Music/Sega Master System/T. Sawada/Land Of Illusion/02 title screen.vgz
+2393	Video Game Music/Sega Game Gear/Gabor Foltan/ecco 2 - the tides of time (gg) - atlantis.vgz
+2363	Video Game Music/Sega Game Gear/Gabor Foltan/ecco 2 - the tides of time (gg) - main theme.vgz
+21353	Video Game Music/MSX1/Motoaki Furukawa/coop-Masahiro Ikariko/Nemesis 2/above the horizon (opening theme).vgz
+21863	Video Game Music/MSX1/Motoaki Furukawa/coop-Masahiro Ikariko/Nemesis 2/a dream of dreamer (ending theme).vgz
+9804	Video Game Music/MSX2/Nobuo Uematsu/coop-Tadahiro Nitta/Final Fantasy/airship.vgz
+29376	Video Game Music/MSX2/Nobuo Uematsu/coop-Tadahiro Nitta/Final Fantasy/battle scene.vgz
+6035	Video Game Music/Sega 32X/Adam Salkeld/Darxide/01.vgz
+11892	Video Game Music/Sega 32X/Adam Salkeld/Darxide/02.vgz
+323818	Video Game Music/Sharp X68000/Karu-chan/(Kyuukyoku Senki Gikadiver) Transitional Age (Name Entry).vgm
+7319	Video Game Music/Nintendo Virtual Boy/Ken Kojima/Golf/course theme.vgz
+5594	Video Game Music/Nintendo Virtual Boy/Ken Kojima/Golf/ending ~ staff roll.vgz
+73728	HES/4-57/final fantasy 1 main theme.hes
+73728	HES/4-57/final fantasy 2 town.hes
+48231	KSS/Airborne/all that she wants.kss
+45985	KSS/Airborne/between good and evil.kss
+151	SGC/Allister Brimble/Desert Speedtrap/01 BGM #01.m3u
+152	SGC/Allister Brimble/Desert Speedtrap/02 BGM #02.m3u
+16736	SGC/Allister Brimble/Desert Speedtrap/Desert Speedtrap.sgc
+371923	Playstation Sound Format/Akari Kaida/coop-Yoshino Aoki/Breath Of Fire 3/101 opening.psf
+1221	MDX/Hideki Awata/Shufflepuck Cafe (X68000)/Biff Raunsch.mdx
+32896	Nintendo Sound Format/Kinuyo Yamashita/castlevania.nsf
+32896	Nintendo Sound Format/- unknown/castlevania.nsf
+16000	Nintendo Sound Format/Graa/castlevania.nsf
+41000	Nintendo Sound Format/- unknown/Mother.nsfe
+66196	Nintendo SPC/- unknown/EarthBound/a bad dream.spc
+66100	Nintendo SPC/植松伸夫/ファイナルファンタジーIV/01 - プレリュード.spc
+66100	Nintendo SPC/植松伸夫/ファイナルファンタジーIV/02 - 赤い翼.spc
+59736	Video Game Music/Sega Megadrive/Yūzō Koshiro/Bare Knuckle/01 - fête.vgz
+12000	Video Game Music/Sega Megadrive/Yūzō Koshiro/Bare Knuckle/notes.txt

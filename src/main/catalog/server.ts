@@ -177,6 +177,7 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
           // The main process trims the art cache (it owns it).
           trimArtCache: async () => {},
           bucketStaleMs: BUCKET_STALE_MS,
+          sourcesCacheDir: join(data.dataDir, 'ghost-cache', 'sources'),
           log,
           ...opts.internals
         }
