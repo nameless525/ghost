@@ -1,0 +1,29 @@
+[package]
+name = "ghost-node"
+description = "napi-rs bindings for the GHOST audio engine, plus the shared-memory analysis channel"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ghost-engine = { path = "../ghost-engine" }
+ghost-analysis = { path = "../ghost-analysis" }
+napi = { version = "3", features = ["napi8"] }
+napi-derive = "3"
+memmap2 = "0.9"
+crossbeam-channel = "0.5"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+napi-build = "2"
+
+[features]
+# Adds `GhostEngine._debugEmitAllEvents()` (one of every EngineEvent variant through the real
+# event path) for binding smoke tests. Never enable in app builds.
+debug-events = []
