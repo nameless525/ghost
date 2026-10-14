@@ -164,6 +164,11 @@ export interface CatalogStatus {
   lastIndexedAt: number | null
   message: string | null
   enrichment: { igdb: boolean; steamGridDb: boolean }
+  /**
+   * Increments whenever catalog data shown in Browse changed (index pages, album details, art,
+   * enrichment). Refetch the visible page when it moves. Optional for older mocks.
+   */
+  revision?: number
 }
 
 // ---------------------------------------------------------------------------
