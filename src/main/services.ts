@@ -87,6 +87,7 @@ function unavailableCatalog(reason: string): CatalogService {
     tracks: async () => [],
     searchTracks: async () => [],
     random: async () => null,
+    suggest: async () => [],
     getAnalysis: async () => null,
     recordAnalysis: () => {},
     resolveSources: async () => [],
@@ -244,6 +245,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
       tracks: async (ids) => library.decorate(await catalog.tracks(ids)),
       searchTracks: async (text, limit) => library.decorate(await catalog.searchTracks(text, limit)),
       random: (text) => catalog.random(text),
+      suggest: (text, limit) => catalog.suggest(text, limit),
       searchExternal: (query, providers) => catalog.searchExternal(query, providers),
       importExternal: async (hit, opts) => {
         const d = await catalog.importExternal(hit, opts)

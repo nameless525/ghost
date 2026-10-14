@@ -6,6 +6,7 @@
 //   node scripts/cdp.mjs key <Key> [mods]              press a key (mods: shift,ctrl,alt,meta)
 //   node scripts/cdp.mjs type "<text>"                 type text
 //   node scripts/cdp.mjs click <x> <y>                 click at CSS px
+//   node scripts/cdp.mjs wheel <x> <y> <dy>            mouse wheel at CSS px (dy > 0 scrolls down)
 //   node scripts/cdp.mjs logs                          print buffered console errors (installs hook)
 import { writeFileSync } from 'node:fs'
 
@@ -62,6 +63,11 @@ if (cmd === 'eval') {
   const [x, y] = args.map(Number)
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 })
   console.log('clicked', x, y)
+} else if (cmd === 'wheel') {
+  const [x, y, dy] = args.map(Number)
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+  await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy })
+  console.log('wheel', x, y, dy)
 } else if (cmd === 'logs') {
   const r = await send('Runtime.evaluate', {
     returnByValue: true,

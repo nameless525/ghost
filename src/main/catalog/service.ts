@@ -17,7 +17,8 @@ import { AccentWorker, Enricher } from './enrich'
 import type { CatalogDeps, CatalogService } from './index'
 import { QueryEngine, reseedRandom } from './query'
 import { baseTitle } from './normalize'
-import { CatalogRepo } from './repo'
+import { CatalogRepo, writerPause } from './repo'
+import { CLUSTER_VERSION } from './schema'
 import { SourceResolver } from './resolver'
 
 const DETAIL_TTL_MS = 7 * 24 * 3600_000
@@ -451,6 +452,33 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     return service.album(String(albumId))
   }
 
+  /**
+   * After an update changed the search-text format or the clustering rules: rebuild the FTS
+   * documents / re-cluster once, in the background (paced; Browse keeps answering meanwhile).
+   * A crawl that is about to run re-clusters at its end anyway.
+   */
+  async function upgradeIndexes(): Promise<void> {
+    try {
+      if (repo.ftsStale()) {
+        const t0 = now()
+        if (!(await repo.rebuildFts(writerPause, () => stopped))) return
+        log(`search index rebuilt in ${Math.round((now() - t0) / 100) / 10} s`)
+        repo.revision++
+        notify()
+      }
+      if (repo.meta('cluster_version') !== String(CLUSTER_VERSION)) {
+        if (!crawler?.running && repo.counts().albums > 0) {
+          const t0 = now()
+          await repo.reclusterAll()
+          log(`games re-clustered in ${Math.round((now() - t0) / 100) / 10} s`)
+          notify()
+        } else if (!crawler?.running) repo.setMeta('cluster_version', String(CLUSTER_VERSION))
+      }
+    } catch (e) {
+      log(`index upgrade failed: ${(e as Error).message}`)
+    }
+  }
+
   // --- lifecycle --------------------------------------------------------------------------------
   let stopped = false
   const timers: ReturnType<typeof setTimeout>[] = []
@@ -486,6 +514,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
           if (stopped) return
           // Fresh shuffle for 'random' sort each launch (a seeded hash order; no rows are rewritten).
           reseedRandom()
+          void upgradeIndexes()
           const c = getCrawler()
           if (c?.start()) log('index crawl started')
           else {
@@ -540,6 +569,10 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       afterBrowse(page)
       if (q.text) maybeSiteSearch(q.text)
       return page
+    },
+
+    async suggest(text, limit) {
+      return qe.suggest(text, limit)
     },
 
     async groupAlbums(groupKey, q) {

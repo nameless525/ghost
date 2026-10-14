@@ -51,6 +51,8 @@ export interface CatalogAPI {
   importExternal(hit: ExternalAlbumHit, opts?: { gameName?: string }): Promise<AlbumDetail>
   /** Pick a random group (and album) matching the query, for F2. */
   random(text?: string): Promise<{ groupKey: string; albumId: ID | null } | null>
+  /** "Did you mean …?": game names close to a query that found nothing (typo-tolerant). */
+  suggest(text: string, limit?: number): Promise<string[]>
 }
 
 export interface PlayerAPI {
@@ -174,6 +176,7 @@ export const API_METHODS = [
   'catalog.tracks',
   'catalog.searchTracks',
   'catalog.random',
+  'catalog.suggest',
   'catalog.searchExternal',
   'catalog.importExternal',
   'player.getState',

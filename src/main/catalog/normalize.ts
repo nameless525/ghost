@@ -39,6 +39,8 @@ const TAIL_MARKERS: RegExp[] = [
   /\s*[-–—:~|/,.]+\s*$/
 ]
 
+const SOFT_TAIL = /\s+(?:music|score|bgm|sounds|songs|sound\s+effects)\s*$/i
+
 /** "music from X" / "a tribute to X": the game is X. */
 const ABOUT_GAME: RegExp[] = [
   /(?:^|[:\-–—~]\s*|\s)(?:music|songs|melodies|themes|selections)\s+(?:from|of|inspired\s+by)\s+(?:the\s+game\s+)?(.{2,})$/i,
@@ -111,6 +113,13 @@ function cleanTitle(title: string, brackets: boolean): string {
     for (const re of TAIL_MARKERS) {
       const next = s.replace(re, '').trim()
       if (next.replace(/[^\p{L}\p{N}]/gu, '').length >= 1) s = next
+    }
+    // "… Over the Nexus Music", "… Falsebound Kingdom Score": a bare trailing music word, but only
+    // after a name of two or more words ("Wii Music" is a game).
+    const bare = SOFT_TAIL.exec(s)
+    if (bare) {
+      const head = s.slice(0, bare.index).replace(/[\s\-–—:~,]+$/, '')
+      if (head.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length >= 2) s = head
     }
     if (s === before) break
   }

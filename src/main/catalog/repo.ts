@@ -9,27 +9,34 @@ import type { DB } from '../db'
 import type { OfflineAnalysisResult } from '../engine/types'
 import type { AlbumHit, PlatformRef, ProviderAlbum, ProviderTrackFile } from '../providers/types'
 import { LOSSLESS_FORMATS } from '../providers/types'
+import { ftsFold, GAME_ALIASES, searchAliases, TITLE_ALIASES } from './aliases'
 import { baseTitle, clusterKeys, franchiseGuess, gameKey, headKey, keyOf, kindRank, MERGEABLE_KINDS, pickGameName, sortKey } from './normalize'
-import { ensureCatalogSchema, recountCatalog, UNKNOWN_INTENSITY, UNKNOWN_LEN, UNKNOWN_YEAR } from './schema'
+import { CLUSTER_VERSION, ensureCatalogSchema, FTS_VERSION, recountCatalog, UNKNOWN_INTENSITY, UNKNOWN_LEN, UNKNOWN_YEAR } from './schema'
 
 export type Quality = Settings['sources']['quality']
 
 /**
- * Text as stored in (and queried against) the FTS indexes: folded, punctuation → spaces.
- * Query terms go through the same function so phrases still line up.
+ * Text as stored in (and queried against) the FTS indexes (see ./aliases). Query terms go through
+ * the same function so phrases still line up.
  */
-export function ftsFold(s: string): string {
-  return foldText(s)
-    .replace(/[^\p{L}\p{N}\p{M}\s]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+export { ftsFold }
 
 /** An FTS column value: items separated by ' \n ' (so phrases can't span items), space-padded so
  * every word is preceded by a space (lets 2-character terms match as indexed word prefixes). */
 export function ftsDoc(items: (string | null | undefined)[]): string {
   const parts = items.map((x) => (x ? ftsFold(x) : '')).filter(Boolean)
   return parts.length ? ` ${parts.join(' \n ')} ` : ''
+}
+
+/** A game's searchable names: its name and alternative names plus their aliases (deduplicated). */
+export function gameSearchNames(name: string | null, alt: string[]): string[] {
+  if (!name) return alt
+  const out = new Set<string>([name, ...searchAliases(name, GAME_ALIASES)])
+  for (const a of alt) {
+    out.add(a)
+    for (const x of searchAliases(a, TITLE_ALIASES)) out.add(x)
+  }
+  return [...out]
 }
 
 export function j<T>(s: unknown, fallback: T): T {
@@ -876,6 +883,7 @@ export class CatalogRepo {
       this.updateAlbumFts(d.slice(i, i + 400))
       await yieldFn()
     }
+    this.setMeta('cluster_version', String(CLUSTER_VERSION))
     this.revision++
   }
 
@@ -994,9 +1002,9 @@ export class CatalogRepo {
           if (r.gone) continue
           ins.run(
             r.id,
-            ftsDoc([r.game_name, ...j<string[]>(r.game_alt, [])]),
-            ftsDoc([r.title, ...j<string[]>(r.alt_titles, []), r.catalog_no, r.type_label, ...j<string[]>(r.developers, []), ...j<string[]>(r.publishers, [])]),
-            ftsDoc(tracksBy.get(r.id) ?? []),
+            ftsDoc(gameSearchNames(r.game_name, j<string[]>(r.game_alt, []))),
+            ftsDoc([r.title, ...searchAliases(r.title, TITLE_ALIASES), ...j<string[]>(r.alt_titles, []), r.catalog_no, r.type_label, ...j<string[]>(r.developers, []), ...j<string[]>(r.publishers, [])]),
+            ftsDoc((tracksBy.get(r.id) ?? []).flatMap((t) => [t, ...searchAliases(t)])),
             ftsDoc([...j<string[]>(r.composers, []), ...(trackComposers.get(r.id) ?? [])]),
             ftsDoc([r.franchise]),
             ftsDoc(plat.get(r.id) ?? [])
@@ -1015,11 +1023,14 @@ export class CatalogRepo {
       )
       const del = this.st(`DELETE FROM track_fts WHERE rowid = ?`)
       const ins = this.st(`INSERT INTO track_fts(rowid, title, album, game, composers) VALUES (?, ?, ?, ?, ?)`)
+      const first = rows[0]
+      const albumDoc = first ? ftsDoc([first.album_title, ...searchAliases(first.album_title, TITLE_ALIASES)]) : ''
+      const gameDoc = first ? ftsDoc(gameSearchNames(first.game_name, [])) : ''
       for (const r of rows) {
         del.run(r.id)
         if (r.removed) continue
         const comps = j<string[]>(r.composers, [])
-        ins.run(r.id, ftsDoc([r.title]), ftsDoc([r.album_title]), ftsDoc([r.game_name]), ftsDoc(comps.length ? comps : j<string[]>(r.album_composers, [])))
+        ins.run(r.id, ftsDoc([r.title, ...searchAliases(r.title)]), albumDoc, gameDoc, ftsDoc(comps.length ? comps : j<string[]>(r.album_composers, [])))
       }
     })
   }
@@ -1027,6 +1038,36 @@ export class CatalogRepo {
   /** Refresh track FTS rows for every album of a game (after its name changed). */
   updateTrackFtsForGame(gameId: number): void {
     for (const r of this.all<{ id: number }>(`SELECT id FROM albums WHERE game_id = ? AND detail_at IS NOT NULL`, gameId)) this.updateTrackFts(r.id)
+  }
+
+  /** True when the FTS documents were written by an older search-text format (see FTS_VERSION). */
+  ftsStale(): boolean {
+    return this.meta('fts_version') !== String(FTS_VERSION)
+  }
+
+  /**
+   * Rewrite every FTS document in small transactions (after the search-text format changed).
+   * Returns false if `stop()` interrupted it; the next run starts over.
+   */
+  async rebuildFts(pause: () => Promise<void> = writerPause, stop: () => boolean = () => false): Promise<boolean> {
+    if (!this.get(`SELECT 1 FROM albums LIMIT 1`)) {
+      this.setMeta('fts_version', String(FTS_VERSION))
+      return true
+    }
+    const albums = this.all<{ id: number }>(`SELECT id FROM albums WHERE gone = 0 ORDER BY id`).map((r) => r.id)
+    for (let i = 0; i < albums.length; i += 250) {
+      if (stop()) return false
+      this.updateAlbumFts(albums.slice(i, i + 250))
+      await pause()
+    }
+    const withTracks = this.all<{ id: number }>(`SELECT DISTINCT album_id AS id FROM tracks WHERE removed = 0`).map((r) => r.id)
+    for (let i = 0; i < withTracks.length; i++) {
+      if (stop()) return false
+      this.updateTrackFts(withTracks[i])
+      if (i % 20 === 19) await pause()
+    }
+    this.setMeta('fts_version', String(FTS_VERSION))
+    return true
   }
 
   // ---------------------------------------------------------------------------

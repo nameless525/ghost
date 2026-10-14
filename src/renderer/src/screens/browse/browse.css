@@ -739,6 +739,32 @@
   width: 46%;
   animation-delay: 0.2s;
 }
+.bw__tips {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.bw__tips li {
+  position: relative;
+  padding-left: 18px;
+}
+.bw__tips li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: rgb(var(--accent-rgb) / 0.7);
+}
 .bw__empty {
   display: flex;
   align-items: center;
@@ -1017,6 +1043,13 @@
 .bs__hint--example {
   font-family: var(--font-sans);
   outline: none;
+  word-spacing: 4px;
+}
+/* The example isn't overlaid on the input, so its value chips can breathe. */
+.bs__hint--example .bs-tok--value {
+  padding: 0 4px;
+  margin: 0 1px;
+  word-spacing: normal;
 }
 .bs__error {
   color: var(--danger);
@@ -1177,17 +1210,72 @@
 /* =========================================================================
  * Empty / few results
  * ========================================================================= */
+/* Between the search panel and the footer (both measured, see --browse-top/--browse-bottom): the
+ * header stays put and only the external results scroll, never under the footer. */
 .be {
   position: absolute;
   left: 43%;
   right: 3%;
-  top: 30%;
+  top: calc(var(--browse-top, 180px) + 28px);
+  bottom: calc(var(--browse-bottom, 80px) + 6px);
   z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: safe center;
   gap: 12px;
+  min-height: 0;
   text-align: center;
+  /* centred a little above the middle while it's just the message */
+  padding-bottom: 6vh;
+  transition: padding 400ms var(--ease-out-quint);
+}
+.be > * {
+  flex: none;
+}
+.be--results {
+  justify-content: flex-start;
+  padding-bottom: 0;
+}
+.be--results .be__mark {
+  display: none;
+}
+.be--results .be__title {
+  font-size: var(--fs-xl);
+}
+.be__suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 720px;
+  margin-bottom: 6px;
+}
+.be__suggest-label {
+  color: var(--fg-2);
+  margin-right: 2px;
+}
+.be__chip {
+  height: 30px;
+  max-width: 340px;
+  padding: 0 14px;
+  border-radius: 15px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg-0);
+  font-weight: var(--fw-semibold);
+  background: rgb(var(--accent-rgb) / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.4);
+  transition:
+    background-color var(--dur-hover) var(--ease-out-quint),
+    transform var(--dur-hover) var(--ease-out-quint);
+}
+.be__chip:hover,
+.be__chip:focus-visible {
+  background: rgb(var(--accent-rgb) / 0.3);
+  transform: translateY(-1px);
 }
 .be__mark {
   width: 64px;
@@ -1221,8 +1309,21 @@
   margin-bottom: 8px;
 }
 .be .bx {
-  width: min(680px, 100%);
+  flex: 0 1 auto;
+  min-height: 0;
+  width: min(760px, 100%);
   text-align: left;
+}
+.be .bx__list {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* room for hover shadows and the provider badge; the edges fade instead of cutting rows */
+  margin: 0 -14px;
+  padding: 8px 14px 22px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 24px), transparent 100%);
 }
 
 .bfew {
@@ -1301,6 +1402,7 @@
   gap: 8px;
 }
 .bx-hit {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 14px;

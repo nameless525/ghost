@@ -41,7 +41,7 @@ export function ProviderIcon({ provider }: { provider: ExternalAlbumHit['provide
   )
 }
 
-type Phase = 'idle' | 'loading' | 'done' | 'error'
+export type Phase = 'idle' | 'loading' | 'done' | 'error'
 
 export interface ExternalSearchProps {
   query: string
@@ -49,10 +49,15 @@ export interface ExternalSearchProps {
   auto?: boolean
   onImported: (detail: AlbumDetail) => void
   compact?: boolean
+  /** Told when the search starts / finishes (the empty state compacts its header for results). */
+  onPhase?: (phase: Phase) => void
 }
 
-export function ExternalSearch({ query, auto, onImported, compact }: ExternalSearchProps) {
+export function ExternalSearch({ query, auto, onImported, compact, onPhase }: ExternalSearchProps) {
   const [phase, setPhase] = useState<Phase>(auto && query.trim() ? 'loading' : 'idle')
+  const onPhaseRef = useRef(onPhase)
+  onPhaseRef.current = onPhase
+  useEffect(() => onPhaseRef.current?.(phase), [phase])
   const [hits, setHits] = useState<ExternalAlbumHit[]>([])
   const [error, setError] = useState<string | null>(null)
   const [importing, setImporting] = useState<string | null>(null)

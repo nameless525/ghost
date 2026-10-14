@@ -609,6 +609,11 @@ export function installMockGhost(): void {
         const g = pool[Math.floor(Math.random() * pool.length)]
         const as = albums.filter((a) => a.gameId === g.id)
         return delay({ groupKey: `game:${g.id}`, albumId: as[Math.floor(Math.random() * as.length)]?.id ?? null })
+      },
+      suggest: (text, limit = 5) => {
+        // Crude stand-in for the trigram matcher: names sharing the query's first three letters.
+        const head = text.trim().toLowerCase().slice(0, 3)
+        return delay(head.length < 3 ? [] : games.filter((g) => g.name.toLowerCase().includes(head)).slice(0, limit).map((g) => g.name))
       }
     },
     player: {

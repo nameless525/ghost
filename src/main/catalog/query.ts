@@ -24,6 +24,12 @@ export interface Compiled {
   trackMatch: string | null
   /** No filters at all (fast path). */
   empty: boolean
+  /**
+   * FTS expression for "strong" matches: every free-text word as a whole word of the game or album
+   * name (or one of its aliases). Those rank ahead of substring-only matches ("botw" → Breath of
+   * the Wild before "Robot Wars"). Null without free text.
+   */
+  strong: string | null
 }
 
 const cpLen = (s: string) => [...s].length
@@ -31,6 +37,14 @@ const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff\uff66-\uff9f]
 const phrase = (t: string) => `"${t.replace(/"/g, '""')}"`
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => '\\' + c)}%`
 const ph = (n: number) => Array.from({ length: n }, () => '?').join(',')
+
+/** Trigrams of the text with spaces removed and padded ("chrono" → " ch", "chr", …, "no "). */
+function compactGrams(s: string): Set<string> {
+  const c = [...` ${s.replace(/ /g, '')} `]
+  const out = new Set<string>()
+  for (let i = 0; i + 3 <= c.length; i++) out.add(c.slice(i, i + 3).join(''))
+  return out
+}
 
 /** Common alternate spellings → KHInsider platform names / slugs (folded). */
 const PLATFORM_ALIASES: Record<string, string[]> = {
@@ -172,10 +186,12 @@ export class QueryEngine {
      * 1 character: alone, game/album title starts with it (index range); among other words, that
      * whole word (" 2 "). Short CJK: LIKE on plain tables.
      */
+    const strong: string[] = []
     const term = (raw: string, negate: boolean, col: 'any' | 'game' | 'composers' | 'franchise', onTrack: boolean) => {
       const t = ftsFold(raw)
       if (!t) return
       const n = cpLen(t)
+      if (!negate && (col === 'any' || col === 'game') && !CJK.test(t)) strong.push(phrase(` ${t} `))
       const pos = onTrack ? trackPos : albumPos
       const neg = onTrack ? trackNeg : albumNeg
       const colPrefix = col === 'any' ? '' : `{${col}} : `
@@ -320,7 +336,7 @@ export class QueryEngine {
         params.push(...tParams)
       }
     }
-    return { where, params, trackMatch, empty: where.length === 0 }
+    return { where, params, trackMatch, empty: where.length === 0, strong: strong.length ? `{game album} : (${strong.join(' AND ')})` : null }
   }
 
   // ---------------------------------------------------------------------------
@@ -359,7 +375,16 @@ export class QueryEngine {
             limit,
             offset
           )
-        : this.repo.all<GameGroupRow>(`SELECT ${cols} FROM games g ${f.sql} ORDER BY ${gameOrder(sort)} LIMIT ? OFFSET ?`, ...f.params, limit, offset)
+        : c.strong
+          ? this.repo.all<GameGroupRow>(
+              `SELECT ${cols} FROM games g ${f.sql}
+               ORDER BY (g.id IN (SELECT a.game_id FROM albums a WHERE a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?))) DESC, ${gameOrder(sort)} LIMIT ? OFFSET ?`,
+              ...f.params,
+              c.strong,
+              limit,
+              offset
+            )
+          : this.repo.all<GameGroupRow>(`SELECT ${cols} FROM games g ${f.sql} ORDER BY ${gameOrder(sort)} LIMIT ? OFFSET ?`, ...f.params, limit, offset)
     return { total, offset, groups: rows.map(gameGroup) }
   }
 
@@ -377,8 +402,10 @@ export class QueryEngine {
             offset
           )
         : this.repo.all<AlbumGroupRow>(
-            `SELECT ${cols} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where} ORDER BY ${albumOrder(sort)} LIMIT ? OFFSET ?`,
+            `SELECT ${cols} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where}
+             ORDER BY ${c.strong ? '(a.id IN (SELECT rowid FROM album_fts WHERE album_fts MATCH ?)) DESC, ' : ''}${albumOrder(sort)} LIMIT ? OFFSET ?`,
             ...c.params,
+            ...(c.strong ? [c.strong] : []),
             limit,
             offset
           )
@@ -620,6 +647,65 @@ export class QueryEngine {
     )
     return rows.map(toAlbum)
   }
+
+  /**
+   * "Did you mean …?" for a query that found nothing: game names sharing the most of its rarer
+   * trigrams (FTS over the game column), re-ranked by trigram overlap with the whole name.
+   * Typos ("kingdon hearts", "chrno triger") still land on the right game. ~20–35 ms on 100k albums.
+   */
+  suggest(text: string, limit = 5): string[] {
+    const q = ftsFold(parseSearch(text).terms.join(' '))
+    const qGrams = compactGrams(q)
+    if (qGrams.size < 3 || CJK.test(q)) return []
+    const words = new Set<string>()
+    for (const w of q.split(' ')) {
+      const c = [...w]
+      for (let i = 0; i + 3 <= c.length; i++) words.add(c.slice(i, i + 3).join(''))
+    }
+    if (!words.size) return []
+    if (!this.vocabReady) {
+      this.repo.run(`CREATE VIRTUAL TABLE IF NOT EXISTS temp.album_fts_vocab USING fts5vocab(main, album_fts, 'row')`)
+      this.vocabReady = true
+    }
+    const list = [...words]
+    // The rarest trigrams carry the signal (and keep the OR query small); typo'd ones simply don't exist.
+    const rare = this.repo
+      .all<{ term: string; doc: number }>(`SELECT term, doc FROM temp.album_fts_vocab WHERE term IN (${ph(list.length)})`, ...list)
+      .filter((r) => r.doc > 0)
+      .sort((a, b) => a.doc - b.doc)
+      .slice(0, 10)
+      .map((r) => r.term)
+    if (!rare.length) return []
+    const rows = this.repo.all<{ name: string; n: number }>(
+      `SELECT g.name, g.album_count AS n
+       FROM (SELECT rowid FROM album_fts WHERE album_fts MATCH ? ORDER BY rank LIMIT 300) m
+       JOIN albums a ON a.id = m.rowid AND a.gone = 0 JOIN games g ON g.id = a.game_id
+       GROUP BY g.id`,
+      `{game} : (${rare.map(phrase).join(' OR ')})`
+    )
+    const scored = rows
+      .map((r) => {
+        const ng = compactGrams(ftsFold(r.name))
+        let inter = 0
+        for (const g of qGrams) if (ng.has(g)) inter++
+        const cover = inter / qGrams.size
+        const dice = (2 * inter) / (qGrams.size + ng.size)
+        return { name: r.name, s: cover * 0.6 + dice * 0.4 + Math.min(0.05, Math.log10(1 + r.n) * 0.03) }
+      })
+      .filter((r) => r.s >= 0.45)
+      .sort((a, b) => b.s - a.s)
+    const out: string[] = []
+    const seen = new Set<string>()
+    for (const r of scored) {
+      const k = ftsFold(r.name)
+      if (seen.has(k) || k === q) continue
+      seen.add(k)
+      out.push(r.name)
+      if (out.length >= limit) break
+    }
+    return out
+  }
+  private vocabReady = false
 
   /** Random game (and album in it) matching the query, for F2. */
   random(text = ''): { groupKey: string; albumId: string | null } | null {

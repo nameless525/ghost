@@ -9,6 +9,13 @@
 import type { DB } from '../db'
 
 export const CATALOG_SCHEMA_VERSION = 2
+/**
+ * Format of the FTS documents (ftsFold + search aliases). Bump it when that changes: existing
+ * catalogs rebuild their FTS rows in the background on the next start.
+ */
+export const FTS_VERSION = 2
+/** Version of the album → game clustering rules (normalize.ts). A change re-clusters on next start. */
+export const CLUSTER_VERSION = 2
 
 /** Sentinels used by sort columns for unknown values (sort last in ascending order). */
 export const UNKNOWN_YEAR = 9999

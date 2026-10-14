@@ -1,7 +1,7 @@
 // Browse: GHOST's song select. Info wedge (left), the Game ▸ Albums ▸ Tracks carousel (right),
 // the filter bar (top right) and the sheared footer. See carousel.ts for the virtualised engine.
 import { Download, ListEnd, ListStart, Play, Shuffle, Telescope } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AlbumDetail } from '@shared/types'
 import { ghost } from '../../ghost'
 import { albumMenuItems, trackMenuItems } from '../../lib/track-actions'
@@ -14,6 +14,7 @@ import { usePlayer } from '../../state/player'
 import { updateSettings, useSettings } from '../../state/settings'
 import { anyModalOverlay, DEFAULT_ACCENT, useUI } from '../../state/ui'
 import { openContextMenu, type MenuItem } from '../../ui/ContextMenu'
+import { cx } from '../../ui/util'
 import type { SearchInputHandle } from '../../ui/SearchInput'
 import {
   addSelectionToPlaylist,
@@ -29,7 +30,7 @@ import {
   togglePreview
 } from './actions'
 import { activeCarousel, Carousel } from './carousel'
-import { ExternalSearch, ExternalSearchDialog } from './ExternalSearch'
+import { ExternalSearch, ExternalSearchDialog, type Phase } from './ExternalSearch'
 import { Footer } from './Footer'
 import { InfoWedge } from './InfoWedge'
 import { browseModel } from './model'
@@ -118,13 +119,27 @@ function EmptyState() {
   const query = browseModel.query.text
   const status = useBrowse((s) => s.status)
   const ref = useRef<HTMLDivElement>(null)
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const show = total === 0 && !loading
   useEffect(() => {
     if (show && ref.current) tween(ref.current).clear().set({ opacity: 0, y: 18 }).fadeIn(300, 'outQuad').moveToY(0, 600, 'outQuint')
   }, [show, query])
+  useEffect(() => {
+    setSuggestions([])
+    if (!show || !query) return
+    let live = true
+    ghost()
+      .catalog.suggest(naturalQuery(query), 5)
+      .then((s) => live && setSuggestions(s))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [show, query])
   if (!show) return null
   return (
-    <div className="be" ref={ref}>
+    <div className={cx('be', query && phase !== 'idle' && 'be--results')} ref={ref}>
       <div className="be__mark">
         <svg viewBox="0 0 24 24" aria-hidden>
           <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="1.6" />
@@ -136,8 +151,27 @@ function EmptyState() {
           <h2 className="be__title">
             Nothing in your catalog matches <span className="be__q">“{query}”</span>
           </h2>
-          <p className="be__sub">Check the filters, or look further afield. Imports land straight in Browse.</p>
-          <ExternalSearch query={naturalQuery(query)} onImported={(d) => void revealImported(d)} />
+          {suggestions.length > 0 ? (
+            <div className="be__suggest" role="group" aria-label="Did you mean">
+              <span className="be__suggest-label">Did you mean</span>
+              {suggestions.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className="be__chip"
+                  onClick={() => {
+                    sfx.play('select', { volume: 0.5 })
+                    setSearchText(name, true)
+                  }}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="be__sub">Check the spelling and filters, or look further afield. Imports land straight in Browse.</p>
+          )}
+          <ExternalSearch key={query} query={naturalQuery(query)} onPhase={setPhase} onImported={(d) => void revealImported(d)} />
         </>
       ) : (
         <>
@@ -147,6 +181,15 @@ function EmptyState() {
       )}
     </div>
   )
+}
+
+/** With nothing in the carousel, arrow / page keys scroll the external results instead. */
+function scrollEmptyResults(dir: number, page = false): boolean {
+  if (useBrowse.getState().total !== 0) return false
+  const list = document.querySelector<HTMLElement>('.be .bx__list')
+  if (!list) return false
+  list.scrollBy({ top: dir * (page ? list.clientHeight * 0.85 : 84), behavior: 'smooth' })
+  return true
 }
 
 /** A few results: offer the wider search under the carousel. */
@@ -302,24 +345,34 @@ export default function BrowseScreen(props: BrowseScreenProps) {
     }
   }, [])
 
-  // ---- carousel insets follow the real search bar / footer sizes
+  // ---- carousel insets follow the real search bar / footer sizes. Layout offsets, not
+  // getBoundingClientRect: the enter choreography translates both while the first measure runs.
   useLayoutEffect(() => {
+    const host = searchWrap.current?.parentElement
+    /** Top of `el` within the screen, ignoring transforms. */
+    const topIn = (el: HTMLElement): number => {
+      let y = 0
+      for (let n: HTMLElement | null = el; n && n !== host; n = n.offsetParent as HTMLElement | null) y += n.offsetTop
+      return y
+    }
     const measure = () => {
-      const s = (searchWrap.current?.querySelector('.bs') ?? searchWrap.current)?.getBoundingClientRect()
-      const f = footerWrap.current?.getBoundingClientRect()
-      const host = searchWrap.current?.parentElement?.getBoundingClientRect()
-      if (!s || !f || !host) return
-      activeCarousel?.setInsets(Math.round(s.bottom - host.top + 6), Math.round(host.bottom - f.top + 4))
+      const sw = searchWrap.current
+      const fw = footerWrap.current
+      if (!sw || !fw || !host) return
+      const bs = sw.querySelector<HTMLElement>('.bs') ?? sw
+      const top = Math.round(topIn(bs) + bs.offsetHeight + 6)
+      const bottom = Math.round(host.clientHeight - topIn(fw) + 4)
+      activeCarousel?.setInsets(top, bottom)
+      // The empty state / external results live between the search panel and the footer too.
+      host.style.setProperty('--browse-top', `${top}px`)
+      host.style.setProperty('--browse-bottom', `${bottom}px`)
     }
     measure()
     const ro = new ResizeObserver(measure)
     if (searchWrap.current) ro.observe(searchWrap.current)
     if (footerWrap.current) ro.observe(footerWrap.current)
-    window.addEventListener('resize', measure)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener('resize', measure)
-    }
+    if (host) ro.observe(host)
+    return () => ro.disconnect()
   }, [])
 
   // ---- typing anywhere searches (osu!); Q/L/P stay commands while the box isn't focused
@@ -344,12 +397,12 @@ export default function BrowseScreen(props: BrowseScreenProps) {
   const sel = () => useBrowse.getState().sel
   const c = () => activeCarousel
   const blurSearch = () => input.current?.blur()
-  useKeybinding('ArrowDown', () => void c()?.move(1), { allowInInput: true })
-  useKeybinding('ArrowUp', () => void c()?.move(-1), { allowInInput: true })
+  useKeybinding('ArrowDown', () => void (scrollEmptyResults(1) || c()?.move(1)), { allowInInput: true })
+  useKeybinding('ArrowUp', () => void (scrollEmptyResults(-1) || c()?.move(-1)), { allowInInput: true })
   useKeybinding('ArrowLeft', () => void c()?.left())
   useKeybinding('ArrowRight', () => void c()?.right())
-  useKeybinding('PageDown', () => void c()?.page(1), { allowInInput: true })
-  useKeybinding('PageUp', () => void c()?.page(-1), { allowInInput: true })
+  useKeybinding('PageDown', () => void (scrollEmptyResults(1, true) || c()?.page(1)), { allowInInput: true })
+  useKeybinding('PageUp', () => void (scrollEmptyResults(-1, true) || c()?.page(-1)), { allowInInput: true })
   useKeybinding('Home', () => void c()?.edge(false))
   useKeybinding('End', () => void c()?.edge(true))
   useKeybinding('Enter', () => void playSelection(sel()), { repeat: false })

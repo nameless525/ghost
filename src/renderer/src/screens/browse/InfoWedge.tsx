@@ -1,8 +1,9 @@
 // The lazer-style info wedge (left): big cover over the hero art, title (original/romanised),
 // credits, stats for the selection, which source will play, and the group's album list.
 // Content changes cross-slide (old layer slides out while the new one slides in).
-import { AudioLines, Disc3, Gamepad2 } from 'lucide-react'
+import { AudioLines, Disc3, Gamepad2, SearchX } from 'lucide-react'
 import { useMemo, useReducer, useRef, type ReactNode } from 'react'
+import { parseSearch } from '@shared/search'
 import type { Album, SourceSummary } from '@shared/types'
 import { artUrl } from '../../lib/art'
 import { usePlayer } from '../../state/player'
@@ -12,13 +13,6 @@ import { IntensityBadge, SourceBadge } from '../../ui/Badges'
 import { formatTime } from '../../ui/format'
 import { GhostMark } from '../../ui/GhostMark'
 
-/** The format that will actually play, given the streaming-quality setting. */
-function preferredFormat(formats: Album['formats']): Album['formats'][number] | null {
-  if (!formats.length) return null
-  const q = useSettings.getState().sources.quality
-  const order = q === 'lossless' ? ['flac', 'wav', 'm4a', 'mp3', 'ogg', 'opus'] : ['mp3', 'm4a', 'ogg', 'opus', 'flac', 'wav']
-  return [...formats].sort((a, b) => (order.indexOf(a) + 99) % 99 - (order.indexOf(b) + 99) % 99)[0] ?? formats[0]
-}
 import { LoadingRing } from '../../ui/LoadingRing'
 import { Wedge } from '../../ui/Panel'
 import { cx } from '../../ui/util'
@@ -26,6 +20,14 @@ import { previewAlbumId } from './actions'
 import { browseModel } from './model'
 import { KIND_LABEL, plural } from './panels'
 import { GROUP_LABELS, providerName, useBrowse, type SelInfo } from './store'
+
+/** The format that will actually play, given the streaming-quality setting. */
+function preferredFormat(formats: Album['formats']): Album['formats'][number] | null {
+  if (!formats.length) return null
+  const q = useSettings.getState().sources.quality
+  const order = q === 'lossless' ? ['flac', 'wav', 'm4a', 'mp3', 'ogg', 'opus'] : ['mp3', 'm4a', 'ogg', 'opus', 'flac', 'wav']
+  return [...formats].sort((a, b) => (order.indexOf(a) + 99) % 99 - (order.indexOf(b) + 99) % 99)[0] ?? formats[0]
+}
 
 interface Stat {
   label: string
@@ -220,6 +222,10 @@ export function InfoWedge() {
   const preview = usePlayer((s) => s.preview)
   const v = useMemo(() => (sel ? describe(sel, preferOrig) : null), [sel, preferOrig])
 
+  const catalogGames = useBrowse((s) => s.status?.games ?? null)
+  const noMatch = !sel && !loading && total === 0 && !!text
+  const hasFilters = useMemo(() => (noMatch ? parseSearch(text).filters.length > 0 : false), [noMatch, text])
+
   const previewing = !!(preview && sel && (sel.track ? preview.track.id === sel.track.id : preview.track.albumId === previewAlbumId(sel)))
   const hero = artUrl(v?.hero ?? v?.cover ?? null, { w: 720 })
 
@@ -256,15 +262,33 @@ export function InfoWedge() {
               <span />
               <span />
             </div>
+          ) : noMatch ? (
+            <>
+              <div className="bw__kicker">
+                <SearchX />
+                No matches
+              </div>
+              <h1 className={cx('bw__title', text.length > 30 && 'bw__title--long')} title={text}>
+                “{text}”
+              </h1>
+              {catalogGames != null && catalogGames > 0 && <div className="bw__line">{catalogGames.toLocaleString()} games searched</div>}
+            </>
           ) : (
             <div className="bw__empty">
               <GhostMark />
-              <div>{loading || total == null ? 'Loading the catalog…' : text ? 'Nothing matches that search' : 'Your catalog is empty'}</div>
+              <div>{loading || total == null ? 'Loading the catalog…' : 'Your catalog is empty'}</div>
             </div>
           )}
         </Swap>
       </div>
-      <Swap id={(sel?.id ?? 'none') + (v?.stats.length ?? 0)} className="bw__body">
+      <Swap id={noMatch ? 'no-match' : (sel?.id ?? 'none') + (v?.stats.length ?? 0)} className="bw__body">
+        {noMatch && (
+          <ul className="bw__tips">
+            <li>Spelling is forgiving: punctuation, accents and spaces don’t matter (“yugioh” finds Yu-Gi-Oh!) and sequel numbers match either way (FF7, VII).</li>
+            <li>Fewer words usually help. Try just the series name.</li>
+            {hasFilters && <li>Filters in the query narrow the search. Remove them to widen it.</li>}
+          </ul>
+        )}
         {v && v.title && (
           <>
             {v.facts.length > 0 && (
