@@ -4,3 +4,9 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+realfft = "3.5"
+ebur128 = "0.1"
+rayon = "1.10"
+
+[dev-dependencies]
+symphonia = { version = "0.5", features = ["all"] }

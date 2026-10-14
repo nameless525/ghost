@@ -30,58 +30,12 @@ impl Default for AnalysisFrame {
     }
 }
 
-pub mod realtime {
-    use super::AnalysisFrame;
+/// Real-time analysis (`RealtimeAnalyzer`): feed post-gain output samples; call `compute` at
+/// display rate (or a fixed hop). Allocation-free after `new`. See `src/realtime.rs`.
+pub mod realtime;
 
-    /// Feed post-gain output samples; call `compute` at display rate (or a fixed hop).
-    pub struct RealtimeAnalyzer {
-        _sample_rate: u32,
-    }
+/// Offline whole-track analysis (`analyze`, `loudness`, `OfflineAnalysis`). See
+/// `src/offline/mod.rs`.
+pub mod offline;
 
-    impl RealtimeAnalyzer {
-        pub fn new(sample_rate: u32) -> Self {
-            Self { _sample_rate: sample_rate }
-        }
-        /// Push interleaved samples (any channel count; mixed to mono internally).
-        pub fn push_interleaved(&mut self, _samples: &[f32], _channels: usize) {}
-        /// Compute the latest frame from the most recent samples. `dt_sec` is the time since the
-        /// previous call, used for attack/release smoothing.
-        pub fn compute(&mut self, _dt_sec: f32, _out: &mut AnalysisFrame) {}
-        /// Clear history (on seek / track change) so smoothing doesn't smear across tracks.
-        pub fn reset(&mut self) {}
-    }
-}
-
-pub mod offline {
-    /// Full-track analysis, stored in the catalog DB.
-    #[derive(Clone, Debug, Default)]
-    pub struct OfflineAnalysis {
-        pub integrated_lufs: Option<f32>,
-        pub loudness_range: Option<f32>,
-        pub true_peak_db: Option<f32>,
-        pub bpm: Option<f32>,
-        /// 0..1
-        pub bpm_confidence: f32,
-        /// Beat times in seconds (empty when confidence is low).
-        pub beats: Vec<f32>,
-        pub downbeats: Vec<f32>,
-        /// High-energy sections, [start, end] seconds.
-        pub kiai: Vec<(f32, f32)>,
-        /// ENERGY_POINTS values, 0..1.
-        pub energy: Vec<f32>,
-        /// 0..10 osu!-style stars.
-        pub intensity: Option<f32>,
-        pub duration_ms: u64,
-    }
-
-    /// Analyse a whole decoded track. `samples` are interleaved f32 at `sample_rate`.
-    pub fn analyze(_samples: &[f32], _channels: usize, sample_rate: u32) -> OfflineAnalysis {
-        let _ = sample_rate;
-        OfflineAnalysis::default()
-    }
-
-    /// Loudness only (fast path for normalisation before the full analysis is done).
-    pub fn loudness(_samples: &[f32], _channels: usize, _sample_rate: u32) -> (Option<f32>, Option<f32>) {
-        (None, None)
-    }
-}
+mod dsp;
