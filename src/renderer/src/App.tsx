@@ -1,14 +1,55 @@
-// Placeholder root; replaced by the shell workstream (theme, background layer, toolbar, screens).
-import { usePlayer } from './state/player'
+// Root composition: GPU background, screen stack, overlays, toolbar, toasts, floating-UI
+// hosts, keyboard root and OS media session. Accent + background follow the player.
+import { lazy, Suspense, useEffect } from 'react'
+import './theme'
+import { startAccentDriver } from './theme'
+import './motion'
+import { BackgroundLayer } from './gfx/background'
+import { useMediaSession, usePlayerThemeSync } from './hooks'
+import { applyDeepLinks, FpsMeter, GlobalKeys, initNotifications, OverlayHost, ScreenStack, ToastStack, Toolbar } from './shell'
+import { useSettings } from './state/settings'
+import { UIHosts } from './ui'
+
+// ?screen=…&overlay=… deep links, before the first render
+applyDeepLinks()
+
+/** ?kit shows the UI kit gallery instead of the screens (a living reference for every workstream). */
+const showKit = new URLSearchParams(window.location.search).has('kit')
+const Gallery = lazy(() => import('./ui/Gallery'))
+
+function useUiScale(): void {
+  const scale = useSettings((s) => s.interface.uiScale)
+  useEffect(() => {
+    const el = document.getElementById('g-app')
+    if (el) el.style.zoom = scale && scale !== 1 ? String(scale) : ''
+  }, [scale])
+}
 
 export default function App() {
-  const status = usePlayer((s) => s.status)
+  useEffect(() => startAccentDriver(), [])
+  useEffect(() => initNotifications(), [])
+  usePlayerThemeSync()
+  useMediaSession()
+  useUiScale()
+
   return (
-    <div style={{ height: '100vh', display: 'grid', placeItems: 'center', background: '#0f0d17', color: '#e8e4f8', fontFamily: 'Outfit Variable, sans-serif' }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 64, fontWeight: 700, letterSpacing: 8 }}>GHOST</div>
-        <div style={{ opacity: 0.6 }}>Game Haven OST · player {status}</div>
+    <>
+      <BackgroundLayer />
+      <div id="g-app" className="g-app">
+        {showKit ? (
+          <Suspense fallback={null}>
+            <Gallery />
+          </Suspense>
+        ) : (
+          <ScreenStack />
+        )}
+        <OverlayHost />
+        <Toolbar />
+        <ToastStack />
+        <FpsMeter />
+        <UIHosts />
       </div>
-    </div>
+      <GlobalKeys />
+    </>
   )
 }

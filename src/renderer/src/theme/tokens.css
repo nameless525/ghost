@@ -1,0 +1,156 @@
+/*
+ * GHOST design tokens. Everything visual reads from these custom properties.
+ * The accent family (--accent*) is rewritten at runtime by theme/accent.ts, which
+ * interpolates smoothly (~600 ms, OKLab) whenever useUI.accent changes.
+ *
+ * Colour usage:  color: var(--fg-1)            solid
+ *                background: rgb(var(--accent-rgb) / 0.2)   translucent accent
+ */
+:root {
+  color-scheme: dark;
+
+  /* ---- base: deep plum-navy, layered surfaces (each step a little lighter) ---- */
+  --bg-0: #0a0910; /* deepest: behind everything, letterbox */
+  --bg-1: #0f0d17; /* app base */
+  --bg-2: #15121f; /* panels, overlays */
+  --bg-3: #1c1828; /* raised: cards, inputs */
+  --bg-4: #241f33; /* hover on raised */
+  --bg-5: #2e2840; /* pressed / selected */
+  --bg-1-rgb: 15 13 23;
+  --bg-2-rgb: 21 18 31;
+  --bg-3-rgb: 28 24 40;
+
+  /* glassy surfaces used over the animated background */
+  --glass-1: rgb(21 18 31 / 0.72);
+  --glass-2: rgb(28 24 40 / 0.82);
+  --glass-line: rgb(255 255 255 / 0.07);
+
+  /* ---- text ---- */
+  --fg-0: #ffffff;
+  --fg-1: #ece8f8; /* primary */
+  --fg-2: #b9b2d0; /* secondary */
+  --fg-3: #847d9e; /* muted */
+  --fg-4: #5b5573; /* disabled */
+
+  /* ---- lines ---- */
+  --line-1: rgb(255 255 255 / 0.06);
+  --line-2: rgb(255 255 255 / 0.1);
+  --line-3: rgb(255 255 255 / 0.16);
+
+  /* ---- accent (runtime-driven; these are the defaults) ---- */
+  --accent: #ff66aa;
+  --accent-rgb: 255 102 170;
+  --accent-hi: #ff8cc0; /* lighter, for text/icons on dark */
+  --accent-hi-rgb: 255 140 192;
+  --accent-lo: #b23a78; /* deeper, for gradients */
+  --accent-lo-rgb: 178 58 120;
+  --accent-ink: #ffffff; /* text on an accent fill */
+
+  /* ---- per-overlay hues (osu!-style: each overlay owns a colour) ---- */
+  --hue-browse: #ff66aa;
+  --hue-browse-rgb: 255 102 170;
+  --hue-library: #5aa8ff;
+  --hue-library-rgb: 90 168 255;
+  --hue-downloads: #4fe0a0;
+  --hue-downloads-rgb: 79 224 160;
+  --hue-settings: #a983ff;
+  --hue-settings-rgb: 169 131 255;
+  --hue-radio: #ffb35c;
+  --hue-radio-rgb: 255 179 92;
+  --hue-notifications: #ffd166;
+  --hue-notifications-rgb: 255 209 102;
+
+  /* ---- semantic ---- */
+  --success: #5ee6a0;
+  --success-rgb: 94 230 160;
+  --warning: #ffcc55;
+  --warning-rgb: 255 204 85;
+  --danger: #ff5f7a;
+  --danger-rgb: 255 95 122;
+  --info: #5fb8ff;
+  --info-rgb: 95 184 255;
+
+  /* ---- typography ---- */
+  --font-sans: 'Outfit Variable', 'Outfit', 'M PLUS Rounded 1c', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-jp: 'M PLUS Rounded 1c', 'Outfit Variable', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12.5px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 19px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+  --fs-4xl: 44px;
+  --fs-display: 64px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-black: 800;
+  --lh-tight: 1.15;
+  --lh-normal: 1.4;
+  --tracking-wide: 0.06em;
+  --tracking-caps: 0.14em;
+
+  /* ---- shape ---- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* lazer-style shear: panels skewX(var(--shear)), content skewX(var(--unshear)) */
+  --shear: -0.15rad;
+  --unshear: 0.15rad;
+  /* tan(0.15): horizontal offset per px of height; use to pad sheared content */
+  --shear-k: 0.1511;
+
+  /* ---- depth ---- */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 8px rgb(0 0 0 / 0.18);
+  --shadow-2: 0 4px 14px rgb(0 0 0 / 0.32), 0 1px 3px rgb(0 0 0 / 0.3);
+  --shadow-3: 0 18px 50px rgb(0 0 0 / 0.45), 0 4px 14px rgb(0 0 0 / 0.3);
+  --shadow-pop: 0 24px 70px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.06);
+  --glow-accent: 0 0 0 1px rgb(var(--accent-rgb) / 0.55), 0 0 18px rgb(var(--accent-rgb) / 0.35);
+  --glow-accent-strong: 0 0 0 1.5px rgb(var(--accent-rgb) / 0.85), 0 0 28px rgb(var(--accent-rgb) / 0.55);
+  --glow-soft: 0 0 24px rgb(var(--accent-rgb) / 0.25);
+
+  /* ---- motion (CSS equivalents of motion/easing.ts) ---- */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out-quint: cubic-bezier(0.83, 0, 0.17, 1);
+  --ease-in-quint: cubic-bezier(0.64, 0, 0.78, 0);
+  --dur-fast: 120ms;
+  --dur-hover: 200ms;
+  --dur-slide: 400ms;
+  --dur-screen: 500ms;
+
+  /* ---- layout ---- */
+  --toolbar-h: 44px;
+  --mac-traffic-lights: 80px;
+
+  /* ---- z layers ---- */
+  --z-bg: 0;
+  --z-screen: 10;
+  --z-overlay-dim: 40;
+  --z-overlay: 50;
+  --z-toolbar: 60;
+  --z-popover: 70;
+  --z-toast: 80;
+  --z-dialog: 90;
+  --z-menu: 100;
+  --z-tooltip: 110;
+  --z-debug: 120;
+}
+
+/* Reduced motion: CSS transitions collapse to near-instant (JS motion is handled in motion/prefs.ts). */
+html.reduce-motion {
+  --dur-fast: 1ms;
+  --dur-hover: 1ms;
+  --dur-slide: 1ms;
+  --dur-screen: 1ms;
+}

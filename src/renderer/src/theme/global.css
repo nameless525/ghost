@@ -1,0 +1,247 @@
+/* Global reset + app-wide behaviour. Imported once by theme/index.ts. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background: var(--bg-1);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  overflow: hidden;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: var(--lh-normal);
+  font-weight: var(--fw-regular);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* desktop-app feel: nothing selectable unless it opts in */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure,
+blockquote,
+dl,
+dd,
+ul,
+ol {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+a {
+  color: var(--accent-hi);
+  text-decoration: none;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-3);
+  opacity: 1;
+}
+
+[contenteditable='true'],
+.g-selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+::selection {
+  background: rgb(var(--accent-rgb) / 0.38);
+  color: var(--fg-0);
+}
+
+/* ---- focus: visible rings for keyboard users only ---- */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.9);
+  outline-offset: 2px;
+}
+
+/* ---- scrollbars: thin, rounded, translucent ---- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.13);
+  border: 3px solid transparent;
+  border-radius: 10px;
+  background-clip: padding-box;
+  min-height: 40px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(255 255 255 / 0.24);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: rgb(var(--accent-rgb) / 0.6);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---- window chrome regions (Electron frameless window) ---- */
+.g-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.g-no-drag,
+.g-drag button,
+.g-drag a,
+.g-drag input,
+.g-drag [role='button'],
+.g-drag [data-no-drag] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* ---- typography helpers ---- */
+.tnum,
+.g-tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.g-caps {
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.g-muted {
+  color: var(--fg-3);
+}
+
+.g-ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+:lang(ja),
+.g-jp {
+  font-family: var(--font-jp);
+}
+
+.g-visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- shear helpers (lazer style) ---- */
+.g-shear {
+  transform: skewX(var(--shear));
+}
+
+.g-unshear {
+  transform: skewX(var(--unshear));
+}
+
+/* Reduced motion: also neuter CSS keyframe/transition durations (spinners opt out with .g-keep-motion). */
+html.reduce-motion *:not(.g-keep-motion),
+html.reduce-motion *:not(.g-keep-motion)::before,
+html.reduce-motion *:not(.g-keep-motion)::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}
