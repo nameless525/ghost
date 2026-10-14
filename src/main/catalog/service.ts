@@ -136,7 +136,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       log: (m) => log(`sources: ${m}`)
     }))
   const quality = () => deps.getSettings().sources.quality
-  const qe = new QueryEngine(repo, quality, { bucketStaleMs: internals.bucketStaleMs ?? 0 })
+  const qe = new QueryEngine(repo, quality, { bucketStaleMs: internals.bucketStaleMs ?? 0, sourceOrder: () => deps.getSettings().sources.order })
   const resolver = new SourceResolver({ repo, registry: lazyRegistry(getRegistry), getSettings: deps.getSettings, now, log })
 
   // --- status broadcast (throttled) -----------------------------------------------------------

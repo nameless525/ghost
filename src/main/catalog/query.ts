@@ -122,6 +122,8 @@ export interface QueryEngineOptions {
   bucketStaleMs?: number
   /** Album ids per chunk for background aggregations (default BUCKET_CHUNK). */
   bucketChunk?: number
+  /** The user's source priority (settings.sources.order): breaks ties between copies of an album. */
+  sourceOrder?: () => string[]
   now?: () => number
 }
 
@@ -642,13 +644,22 @@ export class QueryEngine {
     const c = this.compile(parseSearch(q.text), 'album')
     const scope = bucketScope(kind, value)
     const where = ['a.gone = 0', scope.sql, ...c.where].join(' AND ')
-    const order = kind === 'game' && (q.sort === 'title' || q.sort === 'year') ? 'a.kind_rank, a.sort_year, a.sort_title, a.id' : albumOrder(q.sort)
+    // Within a game: OSTs before rips, earliest first; the same release from two sources follows
+    // the user's source priority (a KHInsider rip before Zophar's copy of it).
+    const order = kind === 'game' && (q.sort === 'title' || q.sort === 'year') ? `a.kind_rank, a.sort_year, ${this.providerRank()}a.sort_title, a.id` : albumOrder(q.sort)
     const rows = this.repo.all<AlbumRowLite>(
       `SELECT ${ALBUM_COLUMNS} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where} ORDER BY ${order} LIMIT 1000`,
       ...scope.params,
       ...c.params
     )
     return rows.map(toAlbum)
+  }
+
+  /** ORDER BY term (with trailing ", ") ranking `a.provider` in the user's source order; '' without one. */
+  private providerRank(): string {
+    const ids = (this.opts.sourceOrder?.() ?? []).filter((id) => /^[a-z0-9_-]+$/.test(id))
+    if (!ids.length) return ''
+    return `CASE a.provider ${ids.map((id, i) => `WHEN '${id}' THEN ${i}`).join(' ')} ELSE ${ids.length} END, `
   }
 
   /**

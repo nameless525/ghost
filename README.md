@@ -2,13 +2,17 @@
 
 A private desktop app for streaming (and downloading) the soundtrack of any video game, wrapped in an osu!-inspired, beat-reactive interface. The design lives in [docs/DESIGN.md](docs/DESIGN.md).
 
-- **Sources:**
-  - KHInsider, the main catalog, indexed automatically on first launch.
-  - YouTube (through yt-dlp, fetched automatically from the official release).
+- **Catalog sources:** indexed automatically in the background, one after another.
+  - KHInsider: the main catalog, MP3 and FLAC album rips.
+  - Zophar's Domain: per-track MP3 rips, including PlayStation, DS, GBA and N64 sets that can't be emulated.
+  - Modland: original SNES/NES/Game Boy/PC Engine/MSX/Sega sound files (SPC, NSF, GBS, VGM, …), emulated live with real loop points.
+  - The Internet Archive's curated game-soundtrack collections.
+  - vgmrips chiptune packs. joshw.info rip sets are opt-in, because its robots.txt asks crawlers to stay out.
+  - Your own music folders.
+- **Last resorts:** searched on demand with "Search elsewhere" and imported into the catalog:
+  - YouTube and SoundCloud (through yt-dlp, fetched automatically from the official release).
   - Internet Archive.
   - Bandcamp.
-  - Your own music folders.
-  - Original-hardware chiptune rips (NSF, SPC, GBS, VGM, …) played straight from `.7z`/`.zip` sets.
 - **Engine:** written in Rust.
   - Streams through a disk cache that fetches only the parts it needs.
   - Sample-exact gapless playback, even when resampling; optional crossfade.
@@ -39,7 +43,9 @@ npm run dev
 
 `build:native` compiles the Rust engine (`native/`) into `native/dist/ghost.node`. The first build takes a few minutes; after that it's incremental.
 
-The first launch builds the catalog in the background, which takes about 6 to 7 minutes. Searching works straight away.
+The first launch builds the catalog in the background. KHInsider takes about 6 to 7 minutes, and the other sources follow it. Searching works straight away.
+
+Search is forgiving: "yugioh" finds Yu-Gi-Oh!, "ff7" finds Final Fantasy VII, and typos get a "Did you mean …?".
 
 ### Optional keys (Settings → Integrations)
 - **IGDB** (Twitch developer app client ID + secret): game metadata and cover art.
