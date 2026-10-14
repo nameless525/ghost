@@ -18,6 +18,12 @@ const MARKERS: RegExp[] = [
   /\bmusic\s+(?:collection|selection|box)\b/i,
   /\barrang(?:e|ed|ement)\s+(?:version|album|tracks|collection|soundtrack)s?\b/i,
   /\b(?:piano|orchestral|jazz|acoustic|guitar|rock|metal|chiptune|8-?bit|vocal|symphonic|lo-?fi)\s+(?:arrange(?:ment)?s?|collection|covers?|album|versions?|selections?)\b/i,
+  // Fan re-renders and arrangement series: "X Famicom Sound Version 3", "X on Piano", "X Piano Music".
+  /\b(?:(?:super\s+)?famicom|nes|snes|genesis|mega\s+drive|game\s*boy|chiptune|8-?bit|16-?bit|midi)\s+sound\s+versions?\b/i,
+  /\bsound\s+versions?\b/i,
+  /\bon\s+(?:piano|guitar|harp|organ|strings)\b/i,
+  /\b(?:piano|guitar)\s+(?:music|solos?|sheets?|works|pieces|medley)\b/i,
+  /\b(?:orchestral|symphonic|live)\s+(?:concert|suite|selections?|album|performance)\b/i,
   /(?:オリジナル[・･\s]*)?(?:サウンド[・･\s]*トラック|サントラ)/
 ]
 
@@ -25,6 +31,7 @@ const MARKERS: RegExp[] = [
 const TAIL_MARKERS: RegExp[] = [
   /\s*[-–—:~]?\s*\b(?:the\s+)?(?:complete|deluxe|special|limited|collector'?s|expanded|digital|definitive|anniversary|remastered|extended)\s+edition\s*$/i,
   /\s*[-–—:~]?\s*\b(?:remix(?:es)?|arrangements?|covers?|remastered|ost|osv)\s*(?:album|collection|edition)?\s*$/i,
+  /\s*[-–—:~]?\s*\b(?:arranged|remixed|re-?orchestrated|reimagined|rearranged)\s*$/i,
   /\s*[-–—:~,]?\s*\b(?:vol(?:ume)?\.?\s*(?:\d+|[ivx]+)|dis[ck]\s*\d+|cd\s*\d+)\s*$/i,
   /\s+[-–—:~]\s+(?:19|20)\d\d\s*$/,
   /\s+[-–—]\s+[^-–—]*\bdlc\b.*$/i,
@@ -35,7 +42,9 @@ const TAIL_MARKERS: RegExp[] = [
 /** "music from X" / "a tribute to X": the game is X. */
 const ABOUT_GAME: RegExp[] = [
   /(?:^|[:\-–—~]\s*|\s)(?:music|songs|melodies|themes|selections)\s+(?:from|of|inspired\s+by)\s+(?:the\s+game\s+)?(.{2,})$/i,
-  /(?:^|[:\-–—~]\s*|\s)(?:an?\s+)?(?:[\w-]+\s+){0,2}tribute\s+to\s+(.{2,})$/i
+  /(?:^|[:\-–—~]\s*|\s)(?:an?\s+)?(?:[\w-]+\s+){0,2}tribute\s+to\s+(.{2,})$/i,
+  // "Chronicles of Time: A Chrono Trigger Arrangement Project" → the game is in the subtitle.
+  /[:：\-–—~]\s*(?:an?\s+|the\s+)?(.{2,}?)\s+(?:arrangement|remix|tribute|cover|piano|orchestral|fan)\s+(?:project|album|collection|ep)s?$/i
 ]
 
 const STOPWORDS = new Set(['a', 'an', 'the', 'of', 'and', 'my', 'la', 'le', 'el', 'die', 'der', 'das', 'in', 'on', 'to'])

@@ -148,3 +148,19 @@ describe('clustering', () => {
     expect(new Set(bird.map(([, k]) => k)).size).toBe(1)
   })
 })
+
+describe('fan arrangement series fold into the game', () => {
+  it.each([
+    ['Chrono Trigger Famicom Sound Version 2', 'chrono trigger'],
+    ['Chrono Trigger Famicom Sound Version', 'chrono trigger'],
+    ['Chrono Trigger on Piano', 'chrono trigger'],
+    ['Chrono Trigger Piano Music', 'chrono trigger'],
+    ['Chrono Trigger Arranged', 'chrono trigger'],
+    ['CHRONO TRIGGER Orchestral Concert -Melodies Across Time', 'chrono trigger'],
+    ['Chronicles of Time: A Chrono Trigger Arrangement Project', 'chrono trigger'],
+    ['Final Fantasy VI Original Sound Version', 'final fantasy vi'],
+    ['Sound Voltex', 'sound voltex']
+  ])('%s → %s', (title, key) => {
+    expect(gameKey(title)).toBe(key)
+  })
+})
