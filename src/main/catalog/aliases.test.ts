@@ -58,7 +58,10 @@ describe('search finds names however they are typed', () => {
       hit('ac', "Assassin's Creed II", 'ost', 2009, []),
       hit('mmx', 'Mega Man X (SNES)', 'gamerip', 1993, [P.snes]),
       hit('botw', 'The Legend of Zelda: Breath of the Wild Original Soundtrack', 'ost', 2017, [P.switch]),
-      hit('robot-wars', 'Battle Rage: The Robot Wars', 'gamerip', 2008, [])
+      hit('robot-wars', 'Battle Rage: The Robot Wars', 'gamerip', 2008, []),
+      hit('mother-3', 'Mother 3', 'gamerip', 2006, []),
+      hit('cave-story-mother-3', 'Cave Story (Mother 3)', 'remix', 2006, []),
+      hit('cave-story', 'Cave Story', 'gamerip', 2004, [])
     ],
     { initial: true }
   )
@@ -86,6 +89,17 @@ describe('search finds names however they are typed', () => {
   it('whole-word matches rank ahead of substring matches', () => {
     // "botw" is also inside "robotwars" (a word-pair alias); the initialism match comes first.
     expect(titles('botw')).toEqual(['The Legend of Zelda: Breath of the Wild', 'Battle Rage: The Robot Wars'])
+    // a game's own name beats an album title that mentions it
+    expect(titles('mother 3')).toEqual(['Mother 3', 'Cave Story'])
+  })
+
+  it('suggests close game names for typos', () => {
+    expect(qe.suggest('ratchit and clank')[0]).toBe('Ratchet & Clank')
+    expect(qe.suggest('legend of zelda breth of the wild')[0]).toBe('The Legend of Zelda: Breath of the Wild')
+    expect(qe.suggest('mega mna')).toContain('Mega Man X')
+    // nothing close, or too short to judge
+    expect(qe.suggest('qwxz')).toEqual([])
+    expect(qe.suggest('zz')).toEqual([])
   })
 
   it('rebuilds stale documents in the background', async () => {

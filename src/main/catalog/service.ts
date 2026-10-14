@@ -268,6 +268,15 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     }
   }
 
+  /** When the chiptune rip listings were last read (they keep their own page log). */
+  function chipLastRead(): number | null {
+    try {
+      return repo.get<{ t: number | null }>(`SELECT MAX(fetched_at) AS t FROM chip_pages WHERE error IS NULL`)?.t ?? null
+    } catch {
+      return null // no chip tables yet
+    }
+  }
+
   function status(): CatalogStatus {
     const c = counts()
     const cr = crawler
@@ -617,7 +626,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       return [...ids].map((id) => {
         const p = getRegistry().get(id)
         const c = p && isIndexProvider(p) ? crawlerFor(p) : null
-        return { id, albums: albums.get(id) ?? 0, lastIndexedAt: c?.lastFinished() ?? null, indexing: !!c?.running || (id === CHIP_ID && !!chipIndexer?.running) }
+        if (id === CHIP_ID) return { id, albums: albums.get(id) ?? 0, lastIndexedAt: chipLastRead(), indexing: !!chipIndexer?.running }
+        return { id, albums: albums.get(id) ?? 0, lastIndexedAt: c?.lastFinished() ?? null, indexing: !!c?.running }
       })
     },
 

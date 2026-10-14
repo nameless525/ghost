@@ -627,7 +627,9 @@
 }
 .bw__hero-art {
   position: absolute;
-  inset: -12px;
+  /* bleeds past the top and sides, but stops at the shade's bottom edge: an unshaded strip of
+   * art used to show under the facts line */
+  inset: -12px -12px 0;
   z-index: -2;
   background-size: cover;
   background-position: center 30%;

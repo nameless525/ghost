@@ -388,9 +388,17 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 
 ### 7.6 Search syntax
 Free text plus `key op value` filters. Operators: `=` `!=` `>` `<` `>=` `<=`.
-- Keys: `composer` `game` `franchise` `platform` `year` `length` `bpm` `intensity` `source` (flac|chip|yt|…) `kind` (ost|gamerip|arrange) `liked` `downloaded`.
+- Keys: `composer` `game` `franchise` `platform` `year` `length` `bpm` `intensity` `source` (flac|chip|yt|zophar|modland|…) `kind` (ost|gamerip|arrange) `liked` `downloaded`.
 - Example: `boss platform=snes intensity>5 length<4m`
 - A saved search is a smart playlist.
+
+Spelling is forgiving (`src/main/catalog/aliases.ts`). Case, accents, apostrophes and punctuation don't matter, and `&` reads as "and". Each name is also indexed under extra spellings:
+- Punctuation-joined runs: "yugioh" finds Yu-Gi-Oh!, "spiderman" finds Spider-Man.
+- Word pairs run together: "megaman".
+- Roman and arabic sequel numbers: "final fantasy 7" finds VII.
+- Per-segment initialisms: "ff7", "kh2", "mgs3", "botw".
+
+Results where every word is a whole word of the game's name rank first. Next come whole words of an album title, then substring matches; the chosen sort applies within each tier. A query that finds nothing offers "Did you mean …?": game names that share the query's rarer trigrams (from `fts5vocab`), re-ranked by trigram overlap, so typos like "kingdon hearts" still land on Kingdom Hearts. When the search-text format changes, `FTS_VERSION` rebuilds the index in the background, and `CLUSTER_VERSION` re-clusters games in the same way.
 
 ---
 
