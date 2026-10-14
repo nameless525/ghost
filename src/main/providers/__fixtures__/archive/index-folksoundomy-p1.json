@@ -1,0 +1,404 @@
+{
+ "responseHeader": {
+  "status": 0,
+  "QTime": 463,
+  "params": {
+   "query": "collection:folksoundomy_gamesoundtracks",
+   "qin": "collection:folksoundomy_gamesoundtracks",
+   "fields": "identifier,title,creator,date,year,subject,description,format,mediatype",
+   "wt": "json",
+   "sort": "identifier asc",
+   "rows": 500,
+   "start": 0
+  }
+ },
+ "response": {
+  "numFound": 1556,
+  "start": 0,
+  "docs": [
+   {
+    "creator": "ALcot",
+    "date": "2006-04-28T00:00:00Z",
+    "description": "The soundtrack of the eroge, Triptych",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "ZIP"
+    ],
+    "identifier": "00-label",
+    "mediatype": "audio",
+    "subject": [
+     "eroge",
+     "triptych",
+     "soundtrack",
+     "ost",
+     "hentai",
+     "nukige",
+     "anime",
+     "anime game",
+     "hentai game",
+     "visual novel"
+    ],
+    "title": "Triptych Special Disk",
+    "year": 2006
+   },
+   {
+    "description": "0005",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "0005_20231115",
+    "mediatype": "audio",
+    "subject": "0005",
+    "title": "0005"
+   },
+   {
+    "creator": "B.B. Queens",
+    "date": "1992-01-01T00:00:00Z",
+    "description": "https://vgmdb.net/album/2070",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "01-teddy-boy-blues",
+    "mediatype": "audio",
+    "subject": [
+     "#b.b queens",
+     "#tokuhiko uwabo",
+     "#hiroshi kawaguchi",
+     "#teddy boy blues",
+     "#naofumi hataya",
+     "#golden axe ii",
+     "#super monaco gp ii",
+     "#mecano associates"
+    ],
+    "title": "[BVRR-1] B.B. QUEENS: SING!! SEGA Game Music presented by B.B. Queens (1992)",
+    "year": 1992
+   },
+   {
+    "creator": "Video Games Music",
+    "date": "2020-09-01T00:00:00Z",
+    "description": "Splat",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "01.-splattack",
+    "mediatype": "audio",
+    "subject": "Now",
+    "title": "01. Splattack!",
+    "year": 2020
+   },
+   {
+    "creator": "KONAMI KuKeiHa CLUB (コナミ矩形波倶楽部)",
+    "date": "1990-01-01T00:00:00Z",
+    "description": "Soundtrack for the PAL release of Castlevania II: Simon's Quest . Split, adjusted and converted to MP3 with Audacity. https://www.youtube.com/watch?v=uK-wy2fmGOM",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "03-bloody-tears",
+    "mediatype": "audio",
+    "subject": [
+     "#castlevania ii: simon's quest",
+     "#dracula ii: noroi no fuiin",
+     "#nintendo entertainment system",
+     "#nes",
+     "#konami",
+     "#pal region",
+     "#castlevania",
+     "#akumajo dracula",
+     "#kenichi matsubara",
+     "#bloody tears"
+    ],
+    "title": "Castlevania II: Simon's Quest ~PAL Version~ Game Rip (1990)",
+    "year": 1990
+   },
+   {
+    "creator": "NINTENDO SOUND TEAM (任天堂サウンドチーム)",
+    "date": "1988-10-21T00:00:00Z",
+    "description": "Original upload by Nijipoop. https://vgmdb.net/album/2303 Uploaded for preservation purposes .",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "05-smb-3-original-ver.",
+    "mediatype": "audio",
+    "subject": [
+     "#nintendo",
+     "#nintendo entertainment system",
+     "#nes",
+     "#family computer",
+     "#famicom",
+     "#fc",
+     "#1990s",
+     "#old-school",
+     "#video game music",
+     "#arrangement",
+     "#remix",
+     "#koji kondo",
+     "#super mario bros. 3",
+     "#yoshihiro kunimoto",
+     "#pony canyon",
+     "#scitron"
+    ],
+    "title": "NINTENDO: Super Mario Bros. 3 -G.S.M. (FC) Nintendo 1- / スーパーマリオブラザーズ 3 -G.S.M. (FC) Nintendo 1- / Sūpāmarioburazāzu 3 - G. S. M. (FC) Nintendo 1 - (1988)",
+    "year": 1988
+   },
+   {
+    "creator": "Justin Burnett",
+    "date": "2008-01-01T00:00:00Z",
+    "description": "Lista de todos los archivos de música de juegos de xxx.joshw.info Archivos de música de PC http://pc.joshw.info/ Archivo de música de FM Towns http://fmtowns.joshw.info/ Archivos de música de Hoot http://hoot.joshw.info/ Archivos de música de S98 http://s98.joshw.info/ Archivos de música de MSX http://kss.joshw.info/ Archivos de música de NES http://nsf.joshw.info/ Archivos de música de SNES http://spc.joshw.info/ Nintendo 64 http://usf.joshw.info/ Gamecube http://gcn.joshw.info/ Nintendo Wii http://wii.joshw.info/ Nintendo Wii U http://wiiu.joshw.info/ Segacd/Sega Mega Drive http://smd.joshw.",
+    "format": [
+     "7z",
+     "AC-3",
+     "Archive BitTorrent",
+     "Atrac3",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "186-mc-2-1-hi",
+    "mediatype": "audio",
+    "subject": [
+     "soundtrack",
+     "arab",
+     "neo psychedelia"
+    ],
+    "title": "Socom Confrontation full Soundtrack (PS3,Windows) (gamerip) (2008, Justin Burnett)",
+    "year": 2008
+   },
+   {
+    "creator": "Emilia Sameyn",
+    "date": "2024-07-01T00:00:00Z",
+    "description": "Inspired by the video game Earthbound and Carl Sagan. The lyrics are a mix of the first few songs of the album, of course this song is also a 'good bye'. However, it is not the last song of the album.… Stay tuned! Made using AI Concept, lyrics and editing by me, Emilia Sameyn ----------------------------------- Geïnspireerd door de videogame Earthbound en Carl Sagan. De teksten zijn een mix van de eerste paar nummers van het album, Dit nummer is ook een 'tot ziens', een 'good bye'. Het is echter niet het laatste nummer van het album.… Blijf volgen! ;) Gemaakt met behulp van AI Concept, tekst e",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "MPEG4",
+     "Metadata",
+     "Thumbnail"
+    ],
+    "identifier": "19-pale-blue-ending",
+    "mediatype": "audio",
+    "subject": [
+     "earthbound",
+     "music",
+     "song",
+     "lied",
+     "liederen",
+     "good",
+     "bye",
+     "songs",
+     "track",
+     "choir",
+     "opera",
+     "classic",
+     "classical",
+     "film",
+     "ost"
+    ],
+    "title": "19/20 Pale Blue Ending",
+    "year": 2024
+   },
+   {
+    "creator": "Westwood Studios, Inc.",
+    "date": "1994-10-01T00:00:00Z",
+    "description": "(1994) The Lion King [Super Nintendo Entertainment System] You think you want to be King? Get real. You're starting life as Simba, the cub. To survive and grow into a powerful adult lion, you must perfect your savage pounce, reckless roar and master fighting with all four paws. If you survive the challenge, you'll grow into a strong, ferocious adult lion. So prepare to scrap with hyenas. Blast through an elephant graveyard. Battle an in-your-face stampede of trampling wildebeests. And you'd better quit hanging with slackers like Timon and Pumbaa, unless you want to be scarfing bugs the rest of",
+    "format": [
+     "Archive BitTorrent",
+     "Item Image",
+     "Item Tile",
+     "Metadata",
+     "PNG",
+     "Real Audio",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "1994_The_Lion_King_-_Soundtrack_Nintendo_Super_Famicom_Super_Nintendo_Entertainment_System",
+    "mediatype": "audio",
+    "subject": [
+     "The Lion King - Soundtrack",
+     "Game",
+     "Nintendo Super Famicom",
+     "SFC",
+     "Super Nintendo Entertainment System",
+     "SNES",
+     "Music",
+     "SPC",
+     "MP3"
+    ],
+    "title": "(1994) The Lion King - Soundtrack [Nintendo Super Famicom / Super Nintendo Entertainment System]",
+    "year": 1994
+   },
+   {
+    "creator": "Microsoft",
+    "date": "2003-01-01T00:00:00Z",
+    "description": "Ambience files from the Xbox game.",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "WAVE"
+    ],
+    "identifier": "20201010_20201010_0226",
+    "mediatype": "audio",
+    "subject": [
+     "Crimson Skies: High Road to Revenge",
+     "ambience",
+     "files"
+    ],
+    "title": "Crimson Skies: High Road to Revenge ambience files",
+    "year": 2003
+   },
+   {
+    "creator": "Seven Arcs",
+    "date": "2004-11-24T00:00:00Z",
+    "description": "The very first Lyrical Nanoha sound stage. English translation PDF included. Translation by nagumo19",
+    "format": [
+     "Animated GIF",
+     "Archive BitTorrent",
+     "Cue Sheet",
+     "DjVuTXT",
+     "Djvu XML",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "Monkey's Audio",
+     "OCR Page Index",
+     "OCR Search Text",
+     "PNG",
+     "Page Numbers JSON",
+     "Scandata",
+     "Single Page Processed JP2 ZIP",
+     "Spectrogram",
+     "Text",
+     "Text PDF",
+     "VBR MP3",
+     "ZIP",
+     "chOCR",
+     "hOCR"
+    ],
+    "identifier": "20230721_20230721_1922",
+    "mediatype": "audio",
+    "subject": [
+     "Lyrical Nanoha",
+     "Sound Stage",
+     "CD",
+     "Nanoha",
+     "Magical Girl Lyrical Nanoha",
+     "Magical Girl",
+     "Audio Drama",
+     "KICA-666"
+    ],
+    "title": "Lyrical Nanoha Sound Stage 01",
+    "year": 2004
+   },
+   {
+    "creator": "HUDSON SOFT",
+    "date": "1998-07-17T00:00:00Z",
+    "description": "Source(s):  https://www.youtube.com/watch?v=V6Ar7Wt2AZs https://mega.nz/file/TlYwVCgA#93gQlt4vrMVOqFyp4Xb1hV-8MUiGBRpjcXwQ_f-GUiM https://vgmdb.net/album/3571",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "21-citadel",
+    "mediatype": "audio",
+    "subject": [
+     "#hudson soft",
+     "#shmup",
+     "#shoot 'em up",
+     "#nintendo 64",
+     "#ichiro shimakura",
+     "#shimakura ichiro",
+     "#嶋倉 一朗",
+     "#しまくら いちろう",
+     "#1990s",
+     "#1998",
+     "#video game",
+     "#video game music",
+     "#soundtrack"
+    ],
+    "title": "HUDSON SOFT: STAR SOLDIER [Vanishing Earth] ORIGINAL & ARRANGED SOUNDTRACK (1998)",
+    "year": 1998
+   },
+   {
+    "date": "2022-01-28T00:00:00Z",
+    "description": "The Pokemon Legends Arceus Definitive Soundtrack",
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "1-88-jubilife-village-complete-medley",
+    "mediatype": "audio",
+    "subject": [
+     "Pokemon",
+     "OST",
+     "FLAC"
+    ],
+    "title": "Pokemon Legends Arceus OST FLAC",
+    "year": 2022
+   }
+  ]
+ }
+}

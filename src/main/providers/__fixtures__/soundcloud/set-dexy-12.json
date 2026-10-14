@@ -1,0 +1,1703 @@
+{
+ "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+ "album_artist": "DEXY",
+ "album_type": "playlist",
+ "uploader": "DEXY",
+ "uploader_id": "326215385",
+ "uploader_url": "https://soundcloud.com/dante-mangone",
+ "timestamp": 1624081860,
+ "release_timestamp": 1624081860,
+ "modified_timestamp": 1791415561,
+ "duration": 53963.829,
+ "license": "all-rights-reserved",
+ "like_count": 15,
+ "repost_count": 1,
+ "genres": [
+  "Videogame"
+ ],
+ "thumbnails": [
+  {
+   "id": "large",
+   "url": "https://i1.sndcdn.com/artworks-wtWv3fuvysSTQbqt-q847zg-large.jpg",
+   "width": 100,
+   "height": 100,
+   "resolution": "100x100"
+  },
+  {
+   "id": "t500x500",
+   "url": "https://i1.sndcdn.com/artworks-wtWv3fuvysSTQbqt-q847zg-t500x500.jpg",
+   "width": 500,
+   "height": 500,
+   "resolution": "500x500"
+  }
+ ],
+ "id": "1274736982",
+ "title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+ "description": "",
+ "_type": "playlist",
+ "entries": [
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624035537,
+   "title": "Digimon World 3 OST - Suzaku City",
+   "track": "Digimon World 3 OST - Suzaku City",
+   "description": "",
+   "duration": 145.22,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-suzaku-city",
+   "license": "all-rights-reserved",
+   "view_count": 1179,
+   "like_count": 13,
+   "comment_count": 0,
+   "repost_count": 0,
+   "modified_timestamp": 1624035538,
+   "genres": [
+    "Digimon"
+   ],
+   "artists": [
+    "Satoshi Ishikawa"
+   ],
+   "id": "1071379063",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-AEdyLro6VAlQm4bX-U1hzzg-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-AEdyLro6VAlQm4bX-U1hzzg-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/ygaOaY4vAEGO/aac_96k/88aa4d1b-ecb6-4f3f-b484-d1398a765f60/playlist.m3u8?expires=1792024310&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1742639,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/ygaOaY4vAEGO/aac_160k/898400d7-4485-429c-8e72-1be4698e6359/playlist.m3u8?expires=1792024310&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 2904400,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-suzaku-city",
+   "webpage_url_basename": "digimon-world-3-ost-suzaku-city",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 1,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 1,
+   "thumbnail": "https://i1.sndcdn.com/artworks-AEdyLro6VAlQm4bX-U1hzzg-original.jpg",
+   "display_id": "1071379063",
+   "fulltitle": "Digimon World 3 OST - Suzaku City",
+   "duration_string": "2:25",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Satoshi Ishikawa",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/ygaOaY4vAEGO/aac_160k/898400d7-4485-429c-8e72-1be4698e6359/playlist.m3u8?expires=1792024310&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 2904400,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624036497,
+   "title": "Digimon World 3 OST - Save Screen",
+   "track": "Digimon World 3 OST - Save Screen",
+   "description": "",
+   "duration": 117.713,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-save-screen",
+   "license": "all-rights-reserved",
+   "view_count": 2896,
+   "like_count": 41,
+   "comment_count": 1,
+   "repost_count": 0,
+   "modified_timestamp": 1624036498,
+   "genres": [
+    "Digimon"
+   ],
+   "tags": [
+    "RPG"
+   ],
+   "artists": [
+    "Satoshi Ishikawa"
+   ],
+   "id": "1071387337",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-WFexbHEAnOp15Hlh-rOxMlw-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-WFexbHEAnOp15Hlh-rOxMlw-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/xqfnzbcwRTEP/aac_96k/92418d26-a027-4071-a844-91e9887fb88c/playlist.m3u8?expires=1792024284&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1412556,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/xqfnzbcwRTEP/aac_160k/2ecb6eec-494e-4c28-ac0a-344a94265103/playlist.m3u8?expires=1792024283&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 2354259,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-save-screen",
+   "webpage_url_basename": "digimon-world-3-ost-save-screen",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 2,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 2,
+   "thumbnail": "https://i1.sndcdn.com/artworks-WFexbHEAnOp15Hlh-rOxMlw-original.jpg",
+   "display_id": "1071387337",
+   "fulltitle": "Digimon World 3 OST - Save Screen",
+   "duration_string": "1:57",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Satoshi Ishikawa",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/xqfnzbcwRTEP/aac_160k/2ecb6eec-494e-4c28-ac0a-344a94265103/playlist.m3u8?expires=1792024283&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 2354259,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624038973,
+   "title": "Digimon World 3 OST - Seabed",
+   "track": "Digimon World 3 OST - Seabed",
+   "description": "",
+   "duration": 141.573,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-seabed",
+   "license": "all-rights-reserved",
+   "view_count": 1145,
+   "like_count": 18,
+   "comment_count": 0,
+   "repost_count": 1,
+   "modified_timestamp": 1624038975,
+   "genres": [
+    "Digimon"
+   ],
+   "tags": [
+    "RPG"
+   ],
+   "artists": [
+    "Satoshi Ishikawa"
+   ],
+   "id": "1071407296",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-u1pJXqRy931TXhMy-i1sC7w-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-u1pJXqRy931TXhMy-i1sC7w-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/Hxy9C8vzkUTH/aac_96k/5f8bdabe-7532-4862-9e6e-79a36ad35bef/playlist.m3u8?expires=1792024308&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1698876,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/Hxy9C8vzkUTH/aac_160k/4d284149-b5e7-41aa-8012-aa1127fb439d/playlist.m3u8?expires=1792024308&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 2831460,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-seabed",
+   "webpage_url_basename": "digimon-world-3-ost-seabed",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 3,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 3,
+   "thumbnail": "https://i1.sndcdn.com/artworks-u1pJXqRy931TXhMy-i1sC7w-original.jpg",
+   "display_id": "1071407296",
+   "fulltitle": "Digimon World 3 OST - Seabed",
+   "duration_string": "2:21",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Satoshi Ishikawa",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/Hxy9C8vzkUTH/aac_160k/4d284149-b5e7-41aa-8012-aa1127fb439d/playlist.m3u8?expires=1792024308&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 2831460,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624039429,
+   "title": "Digimon World 3 OST - Reliability Spot",
+   "track": "Digimon World 3 OST - Reliability Spot",
+   "description": "",
+   "duration": 125.425,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-reliability-spot",
+   "license": "all-rights-reserved",
+   "view_count": 570,
+   "like_count": 4,
+   "comment_count": 1,
+   "repost_count": 0,
+   "modified_timestamp": 1624039431,
+   "genres": [
+    "Digimon"
+   ],
+   "tags": [
+    "RPG"
+   ],
+   "artists": [
+    "Satoshi Ishikawa"
+   ],
+   "id": "1071410812",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-9Kdmo9v4dUzHwAJP-nuOExQ-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-9Kdmo9v4dUzHwAJP-nuOExQ-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/VzPh47G1OSej/aac_96k/f1862614-95c0-43b4-8eb9-68315ff0dc8d/playlist.m3u8?expires=1792024293&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1505100,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/VzPh47G1OSej/aac_160k/31d76979-cdcb-4793-9932-c611f0f0e377/playlist.m3u8?expires=1792024293&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 2508500,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-reliability-spot",
+   "webpage_url_basename": "digimon-world-3-ost-reliability-spot",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 4,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 4,
+   "thumbnail": "https://i1.sndcdn.com/artworks-9Kdmo9v4dUzHwAJP-nuOExQ-original.jpg",
+   "display_id": "1071410812",
+   "fulltitle": "Digimon World 3 OST - Reliability Spot",
+   "duration_string": "2:05",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Satoshi Ishikawa",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/VzPh47G1OSej/aac_160k/31d76979-cdcb-4793-9932-c611f0f0e377/playlist.m3u8?expires=1792024293&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 2508500,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624039904,
+   "title": "Digimon World 3  OST - Central Park",
+   "track": "Digimon World 3  OST - Central Park",
+   "description": "",
+   "duration": 108.85,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-central-park",
+   "license": "all-rights-reserved",
+   "view_count": 1742,
+   "like_count": 27,
+   "comment_count": 0,
+   "repost_count": 1,
+   "modified_timestamp": 1624039905,
+   "genres": [
+    "Digimon"
+   ],
+   "tags": [
+    "RPG"
+   ],
+   "artists": [
+    "Satoshi Ishikawa"
+   ],
+   "id": "1071413965",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-FYZXyc1mPM7gmrJu-lcJSNw-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-FYZXyc1mPM7gmrJu-lcJSNw-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/8igrFTPiaPAo/aac_96k/f3b42e2f-5cc7-4785-b295-71a966c22c50/playlist.m3u8?expires=1792024278&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1306199,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/8igrFTPiaPAo/aac_160k/4e06285d-3b27-480e-b810-70ce91affb10/playlist.m3u8?expires=1792024278&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 2177000,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://soundcloud.com/dante-mangone/digimon-world-3-ost-central-park",
+   "webpage_url_basename": "digimon-world-3-ost-central-park",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 5,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 5,
+   "thumbnail": "https://i1.sndcdn.com/artworks-FYZXyc1mPM7gmrJu-lcJSNw-original.jpg",
+   "display_id": "1071413965",
+   "fulltitle": "Digimon World 3  OST - Central Park",
+   "duration_string": "1:48",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Satoshi Ishikawa",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/8igrFTPiaPAo/aac_160k/4e06285d-3b27-480e-b810-70ce91affb10/playlist.m3u8?expires=1792024278&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 2177000,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624040759,
+   "title": "Yu-Gi-Oh! Forbidden Memories OST - Inside the Puzzle",
+   "track": "Yu-Gi-Oh! Forbidden Memories OST - Inside the Puzzle",
+   "description": "",
+   "duration": 116.578,
+   "webpage_url": "https://soundcloud.com/dante-mangone/yu-gi-oh-forbidden-memories-ost-inside-the-puzzle",
+   "license": "all-rights-reserved",
+   "view_count": 4390,
+   "like_count": 52,
+   "comment_count": 2,
+   "repost_count": 0,
+   "modified_timestamp": 1624040763,
+   "genres": [
+    "Yu-Gi-Oh"
+   ],
+   "tags": [
+    "Yu-Gi-Oh!",
+    "Forbidden",
+    "Memories"
+   ],
+   "artists": [
+    "Yu-Gi-Oh! Forbidden Memories"
+   ],
+   "id": "1071421225",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-P9MWraU1LNbrAw67-mXpbjQ-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-P9MWraU1LNbrAw67-mXpbjQ-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/YPnWtxNTn73t/aac_96k/f5defc01-2595-47f4-aa2d-47ef31289954/playlist.m3u8?expires=1792024286&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1398936,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://api-v2.soundcloud.com/tracks/1071421225",
+   "webpage_url_basename": "yu-gi-oh-forbidden-memories-ost-inside-the-puzzle",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 6,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 6,
+   "thumbnail": "https://i1.sndcdn.com/artworks-P9MWraU1LNbrAw67-mXpbjQ-original.jpg",
+   "display_id": "1071421225",
+   "fulltitle": "Yu-Gi-Oh! Forbidden Memories OST - Inside the Puzzle",
+   "duration_string": "1:56",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Yu-Gi-Oh! Forbidden Memories",
+   "genre": "Yu-Gi-Oh",
+   "_has_drm": null,
+   "format_id": "hls_aac_96k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/YPnWtxNTn73t/aac_96k/f5defc01-2595-47f4-aa2d-47ef31289954/playlist.m3u8?expires=1792024286&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 96,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": -1,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 96,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 1398936,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_96k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624040901,
+   "title": "Yu-Gi-Oh! Forbidden Memories OST - Card Shop (Modern Times)",
+   "track": "Yu-Gi-Oh! Forbidden Memories OST - Card Shop (Modern Times)",
+   "description": "",
+   "duration": 129.587,
+   "webpage_url": "https://soundcloud.com/dante-mangone/yu-gi-oh-forbidden-memories-ost-card-shop-modern-times",
+   "license": "all-rights-reserved",
+   "view_count": 2859,
+   "like_count": 32,
+   "comment_count": 0,
+   "repost_count": 0,
+   "modified_timestamp": 1624040905,
+   "genres": [
+    "Yu-Gi-Oh"
+   ],
+   "tags": [
+    "Yu-Gi-Oh!",
+    "Forbidden",
+    "Memories"
+   ],
+   "artists": [
+    "Yu-Gi-Oh! Forbidden Memories"
+   ],
+   "id": "1071422260",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-exLooPWsA0WbZ1M4-vDWf9Q-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-exLooPWsA0WbZ1M4-vDWf9Q-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/7YcIcKi6fXVm/aac_96k/e1ba5423-4f6e-430b-94ca-3dde2eeb7fdb/playlist.m3u8?expires=1792024300&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1555043,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://api-v2.soundcloud.com/tracks/1071422260",
+   "webpage_url_basename": "yu-gi-oh-forbidden-memories-ost-card-shop-modern-times",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 7,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 7,
+   "thumbnail": "https://i1.sndcdn.com/artworks-exLooPWsA0WbZ1M4-vDWf9Q-original.jpg",
+   "display_id": "1071422260",
+   "fulltitle": "Yu-Gi-Oh! Forbidden Memories OST - Card Shop (Modern Times)",
+   "duration_string": "2:09",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Yu-Gi-Oh! Forbidden Memories",
+   "genre": "Yu-Gi-Oh",
+   "_has_drm": null,
+   "format_id": "hls_aac_96k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/7YcIcKi6fXVm/aac_96k/e1ba5423-4f6e-430b-94ca-3dde2eeb7fdb/playlist.m3u8?expires=1792024300&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 96,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": -1,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 96,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 1555043,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_96k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624041751,
+   "title": "Yu-Gi-Oh! Forbidden Memories OST - Password",
+   "track": "Yu-Gi-Oh! Forbidden Memories OST - Password",
+   "description": "",
+   "duration": 120.766,
+   "webpage_url": "https://soundcloud.com/dante-mangone/yu-gi-oh-forbidden-memories-ost-password",
+   "license": "all-rights-reserved",
+   "view_count": 4791,
+   "like_count": 41,
+   "comment_count": 1,
+   "repost_count": 0,
+   "modified_timestamp": 1624041755,
+   "genres": [
+    "Yu-Gi-Oh"
+   ],
+   "tags": [
+    "Yu-Gi-Oh!",
+    "Forbidden",
+    "Memories"
+   ],
+   "artists": [
+    "Yu-Gi-Oh! Forbidden Memories"
+   ],
+   "id": "1071428926",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-Xty9MJzhWyISazQH-d44Dxw-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-Xty9MJzhWyISazQH-d44Dxw-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/X7u69wFLVac9/aac_96k/c9f9d0e8-88b1-4711-aa56-dea5da977fd2/playlist.m3u8?expires=1792024292&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1449192,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/X7u69wFLVac9/aac_160k/55a399f6-f4b6-44d8-9473-f9527fa0bc89/playlist.m3u8?expires=1792024292&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 2415320,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://api-v2.soundcloud.com/tracks/1071428926",
+   "webpage_url_basename": "yu-gi-oh-forbidden-memories-ost-password",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 8,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 8,
+   "thumbnail": "https://i1.sndcdn.com/artworks-Xty9MJzhWyISazQH-d44Dxw-original.jpg",
+   "display_id": "1071428926",
+   "fulltitle": "Yu-Gi-Oh! Forbidden Memories OST - Password",
+   "duration_string": "2:00",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Yu-Gi-Oh! Forbidden Memories",
+   "genre": "Yu-Gi-Oh",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/X7u69wFLVac9/aac_160k/55a399f6-f4b6-44d8-9473-f9527fa0bc89/playlist.m3u8?expires=1792024292&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 2415320,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624042277,
+   "title": "Yu-Gi-Oh! Forbidden Memories OST - Finals",
+   "track": "Yu-Gi-Oh! Forbidden Memories OST - Finals",
+   "description": "",
+   "duration": 142.779,
+   "webpage_url": "https://soundcloud.com/dante-mangone/yu-gi-oh-forbidden-memories-ost-finals",
+   "license": "all-rights-reserved",
+   "view_count": 4182,
+   "like_count": 34,
+   "comment_count": 2,
+   "repost_count": 3,
+   "modified_timestamp": 1624042281,
+   "genres": [
+    "Yu-Gi-Oh"
+   ],
+   "tags": [
+    "Yu-Gi-Oh!",
+    "Forbidden",
+    "Memories"
+   ],
+   "artists": [
+    "Yu-Gi-Oh! Forbidden Memories"
+   ],
+   "id": "1071432643",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-exLooPWsA0WbZ1M4-vDWf9Q-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-exLooPWsA0WbZ1M4-vDWf9Q-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/PPDg8pwMQ7mE/aac_96k/43cef36b-14a8-41e4-90ff-5f64f851653f/playlist.m3u8?expires=1792024315&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1713348,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://api-v2.soundcloud.com/tracks/1071432643",
+   "webpage_url_basename": "yu-gi-oh-forbidden-memories-ost-finals",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 9,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 9,
+   "thumbnail": "https://i1.sndcdn.com/artworks-exLooPWsA0WbZ1M4-vDWf9Q-original.jpg",
+   "display_id": "1071432643",
+   "fulltitle": "Yu-Gi-Oh! Forbidden Memories OST - Finals",
+   "duration_string": "2:22",
+   "upload_date": "20210618",
+   "modified_date": "20210618",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Yu-Gi-Oh! Forbidden Memories",
+   "genre": "Yu-Gi-Oh",
+   "_has_drm": null,
+   "format_id": "hls_aac_96k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/PPDg8pwMQ7mE/aac_96k/43cef36b-14a8-41e4-90ff-5f64f851653f/playlist.m3u8?expires=1792024315&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 96,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": -1,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 96,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 1713348,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_96k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624067499,
+   "title": "Digital Monster Ver. S Digimon Tamers OST - Internet Theme",
+   "track": "Digital Monster Ver. S Digimon Tamers OST - Internet Theme",
+   "description": "",
+   "duration": 391.755,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digital-monster-ver-s-digimon-tamers-ost-internet-theme",
+   "license": "all-rights-reserved",
+   "view_count": 201,
+   "like_count": 4,
+   "comment_count": 0,
+   "repost_count": 0,
+   "modified_timestamp": 1624067501,
+   "genres": [
+    "Digimon"
+   ],
+   "tags": [
+    "Digital",
+    "Monster",
+    "Ver.",
+    "S",
+    "Digimon",
+    "Tamers"
+   ],
+   "artists": [
+    "Backlog Game Reviews"
+   ],
+   "id": "1071592057",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-W2LZiyIyZm82Cah9-s8Ey1Q-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-W2LZiyIyZm82Cah9-s8Ey1Q-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/BHq4aDzxuEst/aac_96k/1ba20399-03c9-4ef7-9c65-552cc6adfd9e/playlist.m3u8?expires=1792024565&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 4701059,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/BHq4aDzxuEst/aac_160k/528ce0e1-9a2b-44d5-b771-ff2464f3fd83/playlist.m3u8?expires=1792024565&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 7835100,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://api-v2.soundcloud.com/tracks/1071592057",
+   "webpage_url_basename": "digital-monster-ver-s-digimon-tamers-ost-internet-theme",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 10,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 10,
+   "thumbnail": "https://i1.sndcdn.com/artworks-W2LZiyIyZm82Cah9-s8Ey1Q-original.jpg",
+   "display_id": "1071592057",
+   "fulltitle": "Digital Monster Ver. S Digimon Tamers OST - Internet Theme",
+   "duration_string": "6:31",
+   "upload_date": "20210619",
+   "modified_date": "20210619",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Backlog Game Reviews",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/BHq4aDzxuEst/aac_160k/528ce0e1-9a2b-44d5-b771-ff2464f3fd83/playlist.m3u8?expires=1792024565&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 7835100,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624067753,
+   "title": "Digital Monster Ver. S Digimon Tamers OST - Where are the snacks?",
+   "track": "Digital Monster Ver. S Digimon Tamers OST - Where are the snacks?",
+   "description": "",
+   "duration": 368.875,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digital-monster-ver-s-digimon-tamers-ost-where-are-the-snacks",
+   "license": "all-rights-reserved",
+   "view_count": 114,
+   "like_count": 0,
+   "comment_count": 0,
+   "repost_count": 0,
+   "modified_timestamp": 1624067755,
+   "genres": [
+    "Digimon"
+   ],
+   "tags": [
+    "Digital",
+    "Monster",
+    "Ver.",
+    "S",
+    "Digimon",
+    "Tamers",
+    "OST",
+    "Where",
+    "are",
+    "the",
+    "snacks?"
+   ],
+   "artists": [
+    "Backlog Game Reviews"
+   ],
+   "id": "1071593311",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-W2LZiyIyZm82Cah9-s8Ey1Q-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-W2LZiyIyZm82Cah9-s8Ey1Q-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_mp3_0_1",
+     "url": "https://cf-hls-media.sndcdn.com/playlist/AF8MeM5CnhQd.128.mp3/playlist.m3u8?Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "mp3",
+     "acodec": "mp3",
+     "vcodec": "none",
+     "abr": 128,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 5902000,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "http_mp3_0_1",
+     "url": "https://cf-media.sndcdn.com/AF8MeM5CnhQd.128.mp3?Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "mp3",
+     "acodec": "mp3",
+     "vcodec": "none",
+     "abr": 128,
+     "protocol": "http",
+     "quality": -1,
+     "filesize_approx": 5902000,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://api-v2.soundcloud.com/tracks/1071593311",
+   "webpage_url_basename": "digital-monster-ver-s-digimon-tamers-ost-where-are-the-snacks",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 11,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 11,
+   "thumbnail": "https://i1.sndcdn.com/artworks-W2LZiyIyZm82Cah9-s8Ey1Q-original.jpg",
+   "display_id": "1071593311",
+   "fulltitle": "Digital Monster Ver. S Digimon Tamers OST - Where are the snacks?",
+   "duration_string": "6:08",
+   "upload_date": "20210619",
+   "modified_date": "20210619",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Backlog Game Reviews",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "http_mp3_0_1",
+   "url": "https://cf-media.sndcdn.com/AF8MeM5CnhQd.128.mp3?Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "mp3",
+   "acodec": "mp3",
+   "vcodec": "none",
+   "abr": 128,
+   "protocol": "http",
+   "container": null,
+   "quality": -1,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "mp3",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 128,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 5902000,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "http_mp3_0_1 - audio only"
+  },
+  {
+   "uploader": "DEXY",
+   "uploader_id": "326215385",
+   "uploader_url": "https://soundcloud.com/dante-mangone",
+   "timestamp": 1624069363,
+   "title": "Digimon Digital Card Battle OST - Battle Cafe Phase 1",
+   "track": "Digimon Digital Card Battle OST - Battle Cafe Phase 1",
+   "description": "",
+   "duration": 165.755,
+   "webpage_url": "https://soundcloud.com/dante-mangone/digimon-digital-card-battle-ost-battle-cafe-phase-1",
+   "license": "all-rights-reserved",
+   "view_count": 454,
+   "like_count": 9,
+   "comment_count": 0,
+   "repost_count": 0,
+   "modified_timestamp": 1624069365,
+   "genres": [
+    "Digimon"
+   ],
+   "tags": [
+    "Digimon",
+    "Digital",
+    "Card",
+    "Battle",
+    "OST",
+    "-",
+    "Cafe",
+    "Phase",
+    "1"
+   ],
+   "artists": [
+    "Vloud Leonhart"
+   ],
+   "id": "1071602914",
+   "thumbnails": [
+    {
+     "id": "large",
+     "url": "https://i1.sndcdn.com/artworks-o0FXt8VmywFUmvEt-yXtaHA-large.jpg",
+     "width": 100,
+     "height": 100,
+     "resolution": "100x100"
+    },
+    {
+     "id": "t500x500",
+     "url": "https://i1.sndcdn.com/artworks-o0FXt8VmywFUmvEt-yXtaHA-t500x500.jpg",
+     "width": 500,
+     "height": 500,
+     "resolution": "500x500"
+    }
+   ],
+   "formats": [
+    {
+     "format_id": "hls_aac_96k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/YHcR7WE56lgj/aac_96k/018e40c9-0f26-4427-862e-ea1323ba4117/playlist.m3u8?expires=1792024341&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 96,
+     "protocol": "m3u8_native",
+     "quality": -1,
+     "filesize_approx": 1989060,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    },
+    {
+     "format_id": "hls_aac_160k",
+     "url": "https://playback.media-streaming.soundcloud.cloud/YHcR7WE56lgj/aac_160k/f5262b1c-def8-47df-b584-ead39b7ae914/playlist.m3u8?expires=1792024341&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+     "ext": "m4a",
+     "acodec": "mp4a.40.2",
+     "vcodec": "none",
+     "abr": 160,
+     "protocol": "m3u8_native",
+     "quality": 0,
+     "filesize_approx": 3315100,
+     "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-us,en;q=0.5",
+      "Sec-Fetch-Mode": "navigate"
+     }
+    }
+   ],
+   "original_url": "https://api-v2.soundcloud.com/tracks/1071602914",
+   "webpage_url_basename": "digimon-digital-card-battle-ost-battle-cafe-phase-1",
+   "webpage_url_domain": "soundcloud.com",
+   "extractor": "soundcloud",
+   "extractor_key": "Soundcloud",
+   "album": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "album_artist": "DEXY",
+   "album_type": "playlist",
+   "playlist_count": 226,
+   "playlist": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_id": "1274736982",
+   "playlist_title": "0101_VideoGames_OST_/*/_JRPG_AMBIENT_LOWPOLY_PSG_CHILL_/*/_0101",
+   "playlist_uploader": "DEXY",
+   "playlist_uploader_id": "326215385",
+   "playlist_channel": null,
+   "playlist_channel_id": null,
+   "playlist_webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+   "n_entries": 12,
+   "playlist_index": 12,
+   "__last_playlist_index": 12,
+   "playlist_autonumber": 12,
+   "thumbnail": "https://i1.sndcdn.com/artworks-o0FXt8VmywFUmvEt-yXtaHA-original.jpg",
+   "display_id": "1071602914",
+   "fulltitle": "Digimon Digital Card Battle OST - Battle Cafe Phase 1",
+   "duration_string": "2:45",
+   "upload_date": "20210619",
+   "modified_date": "20210619",
+   "release_year": null,
+   "album_artists": [
+    "DEXY"
+   ],
+   "artist": "Vloud Leonhart",
+   "genre": "Digimon",
+   "_has_drm": null,
+   "format_id": "hls_aac_160k",
+   "url": "https://playback.media-streaming.soundcloud.cloud/YHcR7WE56lgj/aac_160k/f5262b1c-def8-47df-b584-ead39b7ae914/playlist.m3u8?expires=1792024341&Policy=REDACTED&Signature=REDACTED&Key-Pair-Id=REDACTED",
+   "ext": "m4a",
+   "acodec": "mp4a.40.2",
+   "vcodec": "none",
+   "abr": 160,
+   "protocol": "m3u8_native",
+   "container": "m4a_dash",
+   "quality": 0,
+   "format_note": null,
+   "preference": null,
+   "audio_ext": "m4a",
+   "video_ext": "none",
+   "vbr": 0,
+   "tbr": 160,
+   "resolution": "audio only",
+   "aspect_ratio": null,
+   "filesize_approx": 3315100,
+   "http_headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-us,en;q=0.5",
+    "Sec-Fetch-Mode": "navigate"
+   },
+   "format": "hls_aac_160k - audio only"
+  }
+ ],
+ "webpage_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+ "original_url": "https://soundcloud.com/dante-mangone/sets/0101_videogames_ost",
+ "webpage_url_basename": "0101_videogames_ost",
+ "webpage_url_domain": "soundcloud.com",
+ "extractor": "soundcloud:set",
+ "extractor_key": "SoundcloudSet",
+ "duration_string": "14:59:23",
+ "upload_date": "20210619",
+ "release_date": "20210619",
+ "modified_date": "20261007",
+ "release_year": 2021,
+ "album_artists": [
+  "DEXY"
+ ],
+ "genre": "Videogame",
+ "requested_entries": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12
+ ],
+ "playlist_count": 226
+}

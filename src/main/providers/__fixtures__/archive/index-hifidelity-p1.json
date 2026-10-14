@@ -1,0 +1,594 @@
+{
+ "responseHeader": {
+  "status": 0,
+  "QTime": 232,
+  "params": {
+   "query": "collection:hifidelity_soundtracks",
+   "qin": "collection:hifidelity_soundtracks",
+   "fields": "identifier,title,creator,date,year,subject,description,format,mediatype",
+   "wt": "json",
+   "sort": "identifier asc",
+   "rows": 500,
+   "start": 0
+  }
+ },
+ "response": {
+  "numFound": 4487,
+  "start": 0,
+  "docs": [
+   {
+    "creator": "Electronic Arts",
+    "date": "2005-01-01T00:00:00Z",
+    "description": "Score Music Composed and Conducted by Christopher Lennertz Recorded and Mixed by Jeff Vaughn Performed by The London Philharmonic Orchestra Abbey Road Studios, London Produced and Mixed at Sonic Fuel Music Lead Guitar Theme Vic Flick Orchestra Contracted by Paul Talkington Score Producer James Jacobson Orchestrations by Christopher Lennertz Bill Boston Tim Davies James Jacobson Perry LaMarca Dana Niu Marcus Trumpp Additional Arrangements James Jacobson Corey A. Jackson Music Preparation Steven Juliani Music James Bond Theme Written by Monty Norman © 1962 Renewed 1990 UNITED ARTISTS LTD. All Ri",
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Log",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "007-from-russia-with-love-original-score",
+    "mediatype": "audio",
+    "subject": "Original Soundtrack",
+    "title": "007 From Russia With Love - Original Score",
+    "year": 2005
+   },
+   {
+    "creator": "Jeff Tymoschuk",
+    "date": "2002-01-01T00:00:00Z",
+    "description": "Original Score by Jeff Tymoschuk Contains portions of \"The James Bond Theme\" written by Monty Norman and published by EMI Unart Catalog Inc. (BMI) Arranged and performed by Jeff Tymoschuk Produced by Jennifer Lewis and Jeff Tymoschuk Mixed by Francois Lafleur",
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "007-nightfire-music-from-the-electronic-arts-game",
+    "mediatype": "audio",
+    "subject": [
+     "Original Soundtrack",
+     "Prototype/Unused"
+    ],
+    "title": "007 Nightfire - Music from the Electronic Arts Game",
+    "year": 2002
+   },
+   {
+    "creator": "Memo Dako Hamo",
+    "date": "2023-02-16T00:00:00Z",
+    "description": "Gameboy Kaset by Memo Dako Hamo",
+    "format": [
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "Word Document"
+    ],
+    "identifier": "009.-blaster-master-boy-walkthrough_202302",
+    "mediatype": "audio",
+    "subject": "Memo Dako Hamo",
+    "title": "009. Blaster Master Boy Walkthrough",
+    "year": 2023
+   },
+   {
+    "description": "Anime soundtrack",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "01-candy-candy-92-op-movie",
+    "mediatype": "audio",
+    "subject": [
+     "candy candy",
+     "anime",
+     "soundtrack"
+    ],
+    "title": "Candy Candy Anime Soundtrack"
+   },
+   {
+    "creator": "Cris Velasco, Sascha Dikiciyan, Jesper Kyd",
+    "date": "2012-11-21T00:00:00Z",
+    "description": "The original soundtrack for Borderlands 2, composed by Cris Velasco, Sascha Dikiciyan and Jesper Kyd. Released in 2012.",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "01-cris-velasco-and-sascha-dikiciyan-ascent",
+    "mediatype": "audio",
+    "subject": [
+     "Borderlands",
+     "game soundtrack",
+     "game ost",
+     "game music",
+     "Gearbox Software",
+     "2k Games",
+     "Sony Compute Entertainment",
+     "Randy Pitchford"
+    ],
+    "title": "Borderlands 2 Soundtrack (2012)",
+    "year": 2012
+   },
+   {
+    "date": "2011-01-01T00:00:00Z",
+    "description": "Drive (Original Motion Picture Soundtrack) FLAC",
+    "format": [
+     "Archive BitTorrent",
+     "Cue Sheet",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Log",
+     "M3U",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "01-kavinsky-lovefoxxx-nightcall",
+    "mediatype": "audio",
+    "subject": [
+     "music",
+     "movie",
+     "Drive"
+    ],
+    "title": "Drive (Original Motion Picture Soundtrack)",
+    "year": 2011
+   },
+   {
+    "creator": "The soundtrack cd",
+    "date": "2023-01-19T00:00:00Z",
+    "description": "The cd album",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "01-roxanne",
+    "mediatype": "audio",
+    "subject": "The very best of rock 🎸🥁",
+    "title": "01 Roxanne",
+    "year": 2023
+   },
+   {
+    "description": "Smash TV catJAM",
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "WAVE"
+    ],
+    "identifier": "01-title-first-circuit",
+    "mediatype": "audio",
+    "subject": [
+     "vgm",
+     "smash tv",
+     "catJAM",
+     "mega drive"
+    ],
+    "title": "Smash TV HD Soundtrack (Gen)"
+   },
+   {
+    "description": "Cortesía MUNDO ESTELAR",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "Ogg Vorbis",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "01.wheremyheartwilltakeme",
+    "mediatype": "audio",
+    "subject": [
+     "STAR TREK",
+     "SOUNDTRACK",
+     "ENTERPRISE",
+     "ENT"
+    ],
+    "title": "STAR TREK: ENTERPRISE - OST 2002"
+   },
+   {
+    "creator": "Yuu Miyake",
+    "date": "2004-01-01T00:00:00Z",
+    "description": "GRETETETETETETETS MUSIC, AGAIN, NOW IN HQ",
+    "format": [
+     "Archive BitTorrent",
+     "Cue Sheet",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "Log",
+     "M3U",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "02._20211122",
+    "mediatype": "audio",
+    "subject": [
+     "Namco",
+     "music",
+     "videogames",
+     "videogame music",
+     "soundtrack",
+     "katamari damacy",
+     "katamari",
+     "play station 2",
+     "early 2000's",
+     "j-pop",
+     "electronic"
+    ],
+    "title": "[FLAC] Katamari Fortissimo Damacy (Katamari Damacy OST)",
+    "year": 2004
+   },
+   {
+    "description": "The Warriors (1979) Original Motion Picture Soundtrack",
+    "format": [
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "04-echoes-in-my-mind",
+    "mediatype": "audio",
+    "subject": [
+     "Movie Soundtracks",
+     "Rare Soundtracks"
+    ],
+    "title": "The Warriors Original Motion Picture Soundtrack"
+   },
+   {
+    "creator": "Namco, Shinji Hosoe",
+    "date": "1995-01-01T00:00:00Z",
+    "description": "Soundtrack to the first Ridge Racer for arcades and the original Playstation",
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "WAVE"
+    ],
+    "identifier": "04.-rotterdam-nation",
+    "mediatype": "audio",
+    "subject": [
+     "ridge racer",
+     "psx",
+     "ps1",
+     "namco",
+     "shinji hosoe",
+     "vgm",
+     "video game music",
+     "electronic",
+     "retro",
+     "arcade",
+     "racing",
+     "techno"
+    ],
+    "title": "Ridge Racer (PSX) Soundtrack",
+    "year": 1995
+   },
+   {
+    "creator": "Walt Disney Records",
+    "date": "2006-03-15T00:00:00Z",
+    "description": "Purchased this a while ago on iTunes. Enjoy!!! :)",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "MPEG-4 Audio",
+     "Metadata",
+     "PNG"
+    ],
+    "identifier": "06-feels-like-home-original-version",
+    "mediatype": "audio",
+    "subject": [
+     "disney soundtracks",
+     "brother bear",
+     "melissa etheridge"
+    ],
+    "title": "Brother Bear 2 - Original Motion Picture Soundtrack (2006)",
+    "year": 2006
+   },
+   {
+    "creator": "Lena Raine",
+    "date": "2018-01-25T00:00:00Z",
+    "description": "i want to cry",
+    "format": [
+     "24bit Flac",
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "07-summit-no-more-running-mix",
+    "mediatype": "audio",
+    "subject": [
+     "lena raine",
+     "celeste",
+     "steam",
+     "music",
+     "videogame",
+     "videogame soundtrack"
+    ],
+    "title": "Celeste B-Sides - Lena Raine [FLAC]",
+    "year": 2018
+   },
+   {
+    "creator": "Masato Nakamura, Yukifumi Makino, Hiroshi Kubota",
+    "date": "1991-07-26T00:00:00Z",
+    "description": "Recorded from a real SEGA Mega Drive (Model 1, PAL, VA4). Title: Sonic The Hedgehog Platform: Sega Mega Drive Year of production: 1991 Published by: SEGA Developed by: Sonic Team Soundtrack by: Masato Nakamura, Yukifumi Makino, Hiroshi Kubota   01. SEGA 02. Green Hill Zone 03. Marble Zone 04. Spring Yard Zone 05. Labyrinth Zone 06. Star Light Zone 07. Scrap Brain Zone 08. Final Zone 09. Special Stage 10. Power Up 11. 1up 12. Title 13. All Clear 14. Stage Clear 15. Boss 16. Game Over 17. Continue 18. Staff Roll 19. Drowning 20. Chaos Emerald 21. Sound Effects PAL version. This soundtrack is rec",
+    "format": [
+     "24bit Flac",
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "JPEG",
+     "JPEG Thumb",
+     "M3U",
+     "Metadata",
+     "Ogg Vorbis",
+     "PNG",
+     "Spectrogram",
+     "Text",
+     "VBR MP3"
+    ],
+    "identifier": "07.ScrapBrainZone",
+    "mediatype": "audio",
+    "subject": [
+     "Sonic the Hedgehog",
+     "SEGA Mega Drive",
+     "SEGA Genesis",
+     "video game soundtrack"
+    ],
+    "title": "Sonic the Hedgehog - Full Soundtrack (PAL Version) [SEGA Mega Drive] (FLAC 24bit 96KHz)",
+    "year": 1991
+   },
+   {
+    "creator": "C418",
+    "date": "2011-01-01T00:00:00Z",
+    "description": "Official Description:  Minecraft is one of the most popular video games in recent history, and Volume Alpha is the first official soundtrack to the game. Critics like to compare the style of my album to Erik Satie, Roedelius, and Brian Eno. Aphex Twin also once said I stole his style. Minimalism was and is definitely key when it comes to the soundtrack. Although Minecraft in and of itself is a very frantic and wild experience, I wanted to give the game a contrast by essentially giving the player a pentatonic chill pill. Some fans actually like to listen to this album while they go to sleep, wh",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "08-minecraft_202302",
+    "mediatype": "audio",
+    "subject": [
+     "Music",
+     "C418",
+     "Minecraft",
+     "2011",
+     "Video games",
+     "Soundtrack"
+    ],
+    "title": "Minecraft: Volume Alpha Soundtrack",
+    "year": 2011
+   },
+   {
+    "creator": "Simon Withenshaw and Suddi Raval",
+    "date": "2013-01-01T00:00:00Z",
+    "description": "The original soundtracks for Lego City: Undercover were created by Simon Withenshaw and Suddi Raval. ",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "1-33-creditsalego-city-undercover-original-soundtrack-wii-u-2013",
+    "mediatype": "audio",
+    "subject": "Soundtrack",
+    "title": "Lego City Undercover Original Soundtrack (Wii U) (2013)",
+    "year": 2013
+   },
+   {
+    "creator": "Adrian Diaz",
+    "date": "2020-06-02T00:00:00Z",
+    "description": "My name is Adrian Diaz, I am a composer, guitarist and arranger of my own project called \"Dhalius\" , this path started in 2007 , after discovering the online platform musikaid.com created in Spain, with which I started to publish my electronic music, for that same year I registered on the nascent website called \"jamendo.com\" , with which I began to publish my first digital albums, in which I currently have more than 40 electronic, rock and acoustic music albums. In 2010 I started the project of south hills records , an independent label that will be in charge of distributing with free licenses",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "100_free_royalty_background_music_tracks",
+    "mediatype": "audio",
+    "subject": [
+     "free",
+     "background",
+     "music",
+     "royalty",
+     "tracks",
+     "audiofighter.com"
+    ],
+    "title": "100 Free Royalty Background Music tracks",
+    "year": 2020
+   },
+   {
+    "creator": "Nintendo of America",
+    "date": "1998-01-01T00:00:00Z",
+    "description": "Note: Official American Release from Nintendo of America. Track 04 has different lyrics probably due to the audience and context of the song. Music Composer: Kenta \"gon\" Nagata Sound Engineer: Hideaki Shimizu Lyrics/Vocals on \"Vacant Lives\" & \"Grasp Power\": Wataru Yamaguchi Additional Vocals & Special Thanks To: Wataru Yamaguchi & Michiko Yomo",
+    "format": [
+     "Archive BitTorrent",
+     "Cue Sheet",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Log",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "1080-snowboarding-original-sound-track",
+    "mediatype": "audio",
+    "subject": "Original Soundtrack",
+    "title": "1080° Snowboarding Original Sound Track",
+    "year": 1998
+   },
+   {
+    "description": "https://www.discogs.com/release/6456073-Various-Jesus-Christ-Superstar-The-Original-Motion-Picture-Soundtrack-Album",
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "12-andrew-lloyd-webber-the-temple",
+    "mediatype": "audio",
+    "subject": "Sound Tracks",
+    "title": "Jesus Christ Superstar SoundTrack"
+   },
+   {
+    "creator": "Atari",
+    "description": "OST for Alone in the Dark on PS3 and Xbox360",
+    "format": [
+     "7z",
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata"
+    ],
+    "identifier": "Aloneinthedarkost",
+    "mediatype": "audio",
+    "subject": [
+     "Alone in the dark",
+     "OST",
+     "SOundtrack",
+     "atari"
+    ],
+    "title": "Alone in the Dark OST Full Soundtrack"
+   },
+   {
+    "creator": "Technetium",
+    "description": "Track Summary Music Track Title:  Android ISRC:  US5UL1528034 Description:  Hot guitars is a powerful buildup. Adventurous, powerful and motivational. Best used in anything extreme or adventure movies. Military Powerful adventurous video games powerful, military, action, video games, soundtrack, movie theme song, extreme sports, ESPN Music Genre > Subgenre      Action Music           Action | Intense | Electro-Orchestral Extended Properties    Duration:  3:30    Tempo:  Medium    BPM:  120      Arrangement:  Synth Ensemble     Instruments:  Drums, Electric Guitar, Strings, Synthesizer     Voca",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "Ogg Vorbis",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "WAVE"
+    ],
+    "identifier": "android_202001",
+    "mediatype": "audio",
+    "subject": [
+     "Military Powerful adventurous video games powerful",
+     "military",
+     "action",
+     "video games",
+     "soundtrack",
+     "movie theme song",
+     "extreme sports",
+     "ESPN"
+    ],
+    "title": "ANDROID"
+   },
+   {
+    "creator": "Technetium",
+    "description": "ISRC:  US5UL0662322 Description:  Uplifting lounge music. Keywords:  Kids Video Games Lounge Music ambient soundtrack minimalist BBC ITV channel 4 5 trailer advertisement commercial meditative electronic electronica chill-out contemporary space electronic astronomy backdrop eerie peaceful trans-morphing asteroids astrology black holes cavernous cinematic cold computer games contemporary drones drifting epic fantasy flying flying saucer futuristic galaxies heaven light milky way minimalism misty panoramic polar regions religion Saturn Mars science new technology shimmering slow motion sound eff",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "Ogg Vorbis",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3",
+     "WAVE"
+    ],
+    "identifier": "aristotleTechnetium",
+    "mediatype": "audio",
+    "subject": [
+     "Technetium",
+     "technetium music",
+     "Aristotle",
+     "Nocturnal"
+    ],
+    "title": "ARISTOTLE"
+   }
+  ]
+ }
+}

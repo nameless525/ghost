@@ -76,7 +76,7 @@ export function classifyYtDlpError(stderr: string, fallback = 'yt-dlp failed'): 
   const lines = stderr.split(/\r?\n/).filter((l) => /^ERROR:/.test(l))
   const msg = (lines.at(-1) ?? stderr.trim().split(/\r?\n/).at(-1) ?? fallback).replace(/^ERROR:\s*/, '').slice(0, 300) || fallback
   if (/sign in to confirm|not a bot|po[\s_-]?token|login_required|use --cookies|cookies-from-browser|account.*(?:required|terminated)/i.test(stderr)) {
-    return new NetError('blocked', `YouTube wants a signed-in session for this video, which GHOST doesn't do: ${msg}`)
+    return new NetError('blocked', `The site wants a signed-in session for this upload, which GHOST doesn't do: ${msg}`)
   }
   if (/private video|video unavailable|has been removed|is not available|no longer available|members[- ]only|not available in your country|copyright|premieres in|live event will begin|does not exist|404: not found|playlist does not exist|this channel does not/i.test(stderr)) {
     return new NetError('not_found', msg)

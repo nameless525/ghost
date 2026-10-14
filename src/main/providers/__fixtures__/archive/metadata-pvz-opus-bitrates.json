@@ -1,0 +1,115 @@
+{
+ "metadata": {
+  "identifier": "pvz-ost-opus",
+  "title": "Plants vs. Zombies OST [Opus]",
+  "creator": "Laura Shigihara",
+  "subject": [
+   "Laura Shigihara",
+   "pvz",
+   "Plants",
+   "vs",
+   "vs.",
+   "Zombies",
+   "ost",
+   "soundtrack",
+   "music. flac",
+   ".flac",
+   "opus",
+   ".opus",
+   "libopus",
+   "1.4",
+   "64",
+   "96",
+   "128",
+   "kbps",
+   "64kbps",
+   "96kbps",
+   "128kbps"
+  ],
+  "description": "Conversion from <a href=\"https://archive.org/details/plants-vs.-zombies-ost-flac\" rel=\"ugc nofollow\">FLAC</a> to Opus of the Plants vs. Zombies OST by Laura Shigihara. It was encoded 3 times at different bitrates (64, 96, 128 kbps) which are available in the named folders. Metadata, album art and padding are absent from the opus files to minimize file size.<br /><br />Encoder information: opusenc ",
+  "collection": [
+   "folksoundomy_gamesoundtracks",
+   "folksoundomy"
+  ],
+  "mediatype": "movies"
+ },
+ "files": [
+  {
+   "name": "cover.jpg",
+   "source": "original",
+   "mtime": "1695269607",
+   "size": "67547",
+   "md5": "960deb919009dc2a92295213f71c83df",
+   "crc32": "70d2fc46",
+   "sha1": "bd5a1d714f12709959e2d3012de19252f2007beb",
+   "format": "JPEG",
+   "rotation": "0"
+  },
+  {
+   "name": "unzipped/128kbps/01 - Crazy Dave's Greeting.opus",
+   "source": "original",
+   "mtime": "1695269524",
+   "size": "143057",
+   "md5": "7a0c02bd84726a8e7f0a1bf0276140dd",
+   "crc32": "5cd436fc",
+   "sha1": "5b4d185f472291624be5a9f3d00d61bbe0dc5e32",
+   "format": "Opus",
+   "viruscheck": "1695270979"
+  },
+  {
+   "name": "unzipped/128kbps/02 - Crazy Dave (Intro Theme).opus",
+   "source": "original",
+   "mtime": "1695269526",
+   "size": "1734851",
+   "md5": "3b08b4fb058dad29e120ef9baf6844dd",
+   "crc32": "1c46bece",
+   "sha1": "c11dc0da9f1d2f3d575acd26fdb1d6f686040926",
+   "format": "Opus",
+   "viruscheck": "1695270979"
+  },
+  {
+   "name": "unzipped/64kbps/01 - Crazy Dave's Greeting.opus",
+   "source": "original",
+   "mtime": "1695269383",
+   "size": "68012",
+   "md5": "0d9843a940c15db5fbcca3b6b1912fdf",
+   "crc32": "ac95ad0e",
+   "sha1": "4a1c7e15414ff96e38376627dc4c1510d443444b",
+   "format": "Opus",
+   "viruscheck": "1695270979"
+  },
+  {
+   "name": "unzipped/64kbps/02 - Crazy Dave (Intro Theme).opus",
+   "source": "original",
+   "mtime": "1695269379",
+   "size": "868768",
+   "md5": "70863bdda6de022b6e976242e3a7d34e",
+   "crc32": "ee1bb540",
+   "sha1": "e5aec99aece6c52e4ea466a8c05e301460d07148",
+   "format": "Opus",
+   "viruscheck": "1695270979"
+  },
+  {
+   "name": "unzipped/96kbps/01 - Crazy Dave's Greeting.opus",
+   "source": "original",
+   "mtime": "1695269448",
+   "size": "105502",
+   "md5": "8534db0476db825b062325908939a8b8",
+   "crc32": "7c71ef76",
+   "sha1": "116264a9f841470a79f1c49f98b7e17482dac5e8",
+   "format": "Opus",
+   "viruscheck": "1695270979"
+  },
+  {
+   "name": "unzipped/96kbps/02 - Crazy Dave (Intro Theme).opus",
+   "source": "original",
+   "mtime": "1695269451",
+   "size": "1313138",
+   "md5": "6f789120061fd4201dbe044578a2a7d9",
+   "crc32": "5b516024",
+   "sha1": "6bdf061cf10f0fea01c2f5f2ea354586c0e5a6ee",
+   "format": "Opus",
+   "viruscheck": "1695270979"
+  }
+ ]
+}

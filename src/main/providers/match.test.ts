@@ -95,6 +95,13 @@ describe('match: title cleanup', () => {
     expect(cleanTrackTitle('Hollow Knight OST - Enter Hallownest', { names })).toBe('Enter Hallownest')
     expect(cleanTrackTitle("Hollow Knight OST - Queen's Gardens", { names })).toBe("Queen's Gardens")
     expect(cleanTrackTitle('Dirtmouth - Hollow Knight OST', { names })).toBe('Dirtmouth')
+    // "Theme" / "Music" / "Score" are track-name words unless they follow the game's name
+    expect(cleanTrackTitle("Frog's Theme")).toBe("Frog's Theme")
+    expect(cleanTrackTitle('Battle (Main Theme)')).toBe('Battle (Main Theme)')
+    expect(cleanTrackTitle('Theme of Love')).toBe('Theme of Love')
+    expect(cleanTrackTitle('Chrono Trigger Music - Corridors of Time', { names: ['Chrono Trigger'] })).toBe('Corridors of Time')
+    expect(cleanTrackTitle('Corridors of Time [Official Music Video]')).toBe('Corridors of Time')
+    expect(cleanTrackTitle('Corridors of Time - OST')).toBe('Corridors of Time')
     expect(cleanTrackTitle('Crossroads (Hollow Knight OST)', { names })).toBe('Crossroads')
     expect(cleanTrackTitle('[Hollow Knight] Greenpath', { names })).toBe('Greenpath')
     expect(cleanTrackTitle('Hollow Knight: Soul Sanctum | Official Soundtrack', { names })).toBe('Soul Sanctum')

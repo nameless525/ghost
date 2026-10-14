@@ -1,0 +1,141 @@
+{
+ "metadata": {
+  "identifier": "Kirby-Planet-Robobot-Original-Soundtrack",
+  "title": "Kirby Planet Robobot Original Soundtrack",
+  "creator": "HAL Laboratory, Inc.",
+  "date": "2016",
+  "subject": [
+   "OST",
+   "Original Sound Track",
+   "CD",
+   "m4a",
+   "Kirby",
+   "Planet Robobot",
+   "3ds",
+   "Kirby Planet Robobot"
+  ],
+  "description": "<span style=\"color:rgb(44,44,44);font-family:'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:14px;background-color:rgb(255,255,255);\">OST CD Of Kirby Planet Robobot in m4a!</span>",
+  "collection": [
+   "folksoundomy_gamesoundtracks",
+   "folksoundomy"
+  ],
+  "mediatype": "audio"
+ },
+ "files": [
+  {
+   "name": "1-01 The Revolving Star is a Planet.m4a",
+   "source": "original",
+   "mtime": "1644902261",
+   "size": "7435670",
+   "md5": "82813eaf94a2baab66dee2c4840fea84",
+   "crc32": "8a5f5c54",
+   "sha1": "5066a9261ee37f42d5090309b7735912f62945a2",
+   "format": "MPEG-4 Audio",
+   "length": "69.67",
+   "title": "The Revolving Star is a Planet",
+   "album": "Kirby: Planet Robobot Original Soundtrack",
+   "track": "1 of 0",
+   "viruscheck": "1644906046"
+  },
+  {
+   "name": "1-01 The Revolving Star is a Planet.png",
+   "source": "derivative",
+   "format": "PNG",
+   "original": "1-01 The Revolving Star is a Planet.m4a",
+   "mtime": "1644908277",
+   "size": "39156",
+   "md5": "76af4739009239b032ebe35aa2f8dd4d",
+   "crc32": "c4ea49c2",
+   "sha1": "445a8b50ecd042ac3bb6f8b434850ed19887f82c"
+  },
+  {
+   "name": "1-02 First Contact.m4a",
+   "source": "original",
+   "mtime": "1644902287",
+   "size": "10361355",
+   "md5": "c3b0d16e7567560933beeacec627db0e",
+   "crc32": "73333290",
+   "sha1": "da2ff311a4d6d44a8a90605a9caeef1d26d71ea6",
+   "format": "MPEG-4 Audio",
+   "length": "98.29",
+   "title": "First Contact",
+   "album": "Kirby: Planet Robobot Original Soundtrack",
+   "track": "2 of 0",
+   "viruscheck": "1644906046"
+  },
+  {
+   "name": "1-02 First Contact.png",
+   "source": "derivative",
+   "format": "PNG",
+   "original": "1-02 First Contact.m4a",
+   "mtime": "1644910657",
+   "size": "38300",
+   "md5": "b1bde702ed97905b305f03db6a94ec4d",
+   "crc32": "b18b1a24",
+   "sha1": "21593965f7121ff05ee99923a070667e30da58d8"
+  },
+  {
+   "name": "2-44 No Regrets, Right_.m4a",
+   "source": "original",
+   "mtime": "1644902610",
+   "size": "1377944",
+   "md5": "b127aff534156a97d0bd57f6d551b815",
+   "crc32": "cb795b94",
+   "sha1": "3a3509ad7b3596eb5791b786f13bf2b2c745aeef",
+   "format": "MPEG-4 Audio",
+   "length": "30.65",
+   "title": "No Regrets, Right?",
+   "album": "Kirby: Planet Robobot Original Soundtrack",
+   "track": "44 of 0",
+   "viruscheck": "1644906046"
+  },
+  {
+   "name": "2-44 No Regrets, Right_.png",
+   "source": "derivative",
+   "format": "PNG",
+   "original": "2-44 No Regrets, Right_.m4a",
+   "mtime": "1644910559",
+   "size": "23833",
+   "md5": "ef7d40247ec8c8a576477ce91ee9b4cd",
+   "crc32": "518769b0",
+   "sha1": "89b9b8a1efe670ea665bcd4d60e6ab67cf3db237"
+  },
+  {
+   "name": "2-45 The Galaxy-wide Notorius Hartmann_ The Last Recital of Previous Night.m4a",
+   "source": "original",
+   "mtime": "1644902614",
+   "size": "16030753",
+   "md5": "b0847b97ddf365481e04782cee85f4f8",
+   "crc32": "cf464e94",
+   "sha1": "5872762aee6bf6748be87c10d5000e910b594e14",
+   "format": "MPEG-4 Audio",
+   "length": "136.61",
+   "title": "The Galaxy-wide Notorius Hartmann: The Last Recital of Previous Night",
+   "album": "Kirby: Planet Robobot Original Soundtrack",
+   "track": "45 of 0",
+   "viruscheck": "1644906046"
+  },
+  {
+   "name": "2-45 The Galaxy-wide Notorius Hartmann_ The Last Recital of Previous Night.png",
+   "source": "derivative",
+   "format": "PNG",
+   "original": "2-45 The Galaxy-wide Notorius Hartmann_ The Last Recital of Previous Night.m4a",
+   "mtime": "1644910606",
+   "size": "39712",
+   "md5": "996aef93ed7ff6da3c197bccffab07b2",
+   "crc32": "6c131af6",
+   "sha1": "247a02a1e678fbcdc0c09f2f821ec0a5288bdbcd"
+  },
+  {
+   "name": "Cover.jpeg",
+   "source": "original",
+   "mtime": "1644905415",
+   "size": "109572",
+   "md5": "29554d0a57211b85d02f0d814067e73e",
+   "crc32": "7693c05a",
+   "sha1": "2df5c0627125de10f77e3c8b6e39cd3b799ad315",
+   "format": "JPEG",
+   "rotation": "0"
+  }
+ ]
+}

@@ -1,0 +1,179 @@
+{
+ "metadata": {
+  "identifier": "tyrian-original-soundtrack",
+  "title": "Tyrian: Original Soundtrack",
+  "creator": [
+   "Alexander Brandon",
+   "Andreas Molnar"
+  ],
+  "date": "2010-08-26",
+  "year": "2010",
+  "subject": "video game music; vgm; AdLib; FM synthesis; YM3812; OPL2; chiptunes",
+  "description": "<a href=\"http://alexanderbrandon.bandcamp.com/album/tyrian-original-soundtrack\" rel=\"ugc nofollow\">http://alexanderbrandon.bandcamp.com/album/tyrian-original-soundtrack</a>\n<a href=\"http://vgmdb.net/forums/showthread.php?t=6749\" rel=\"ugc nofollow\">http://vgmdb.net/forums/showthread.php?t=6749</a>\n\n<i>Score written for \"Tyrian\", PC shoot-em-up originally published by Epic Megagames in 1995.</i>\n\ncr",
+  "collection": [
+   "folksoundomy_gamesoundtracks",
+   "folksoundomy"
+  ],
+  "mediatype": "audio"
+ },
+ "files": [
+  {
+   "name": "01AsteroidDancePart1.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "130.93",
+   "title": "01 Asteroid Dance, Part 1",
+   "mtime": "1363464820",
+   "size": "6514171",
+   "md5": "2ed5afe3f18b019ceaaad6a737371a91",
+   "crc32": "ebc62c7a",
+   "sha1": "4c3366781f6e9fdecb31453c609a06a27cc13dca",
+   "track": "01",
+   "album": "Tyrian: Original Soundtrack",
+   "genre": "Game",
+   "comment": "Visit http://alexanderbrandon.bandcamp.com",
+   "artist": "Alexander Brandon",
+   "height": "0",
+   "width": "0",
+   "external-identifier": [
+    "urn:acoustid:a4601d8a-d878-4da9-a4f0-8d340009d2c0",
+    "urn:mb_recording_id:3812095d-0d29-4a65-ab06-ea9d332aa265"
+   ]
+  },
+  {
+   "name": "01AsteroidDancePart1.mp3",
+   "source": "derivative",
+   "creator": "Alexander Brandon",
+   "title": "01 Asteroid Dance, Part 1",
+   "track": "01",
+   "album": "Tyrian: Original Soundtrack",
+   "genre": "Game",
+   "bitrate": "112",
+   "length": "02:10",
+   "format": "VBR MP3",
+   "original": "01AsteroidDancePart1.flac",
+   "mtime": "1363465954",
+   "size": "1929216",
+   "md5": "822ee844a38f13ce0724693faa056269",
+   "crc32": "c4b6569f",
+   "sha1": "bc0ba4a996b7eb3abab44751fec48d254a879098",
+   "height": "0",
+   "width": "0"
+  },
+  {
+   "name": "01AsteroidDancePart1.ogg",
+   "source": "derivative",
+   "format": "Ogg Vorbis",
+   "original": "01AsteroidDancePart1.flac",
+   "mtime": "1363466098",
+   "size": "1207757",
+   "md5": "5d8fa05f99cf3d5eee2d24cb8ed3db45",
+   "crc32": "e9f1d510",
+   "sha1": "30a3b9369fbb55fb18203b0a16ffad6b9d2d6726",
+   "length": "130.93",
+   "height": "0",
+   "width": "0"
+  },
+  {
+   "name": "01AsteroidDancePart1.png",
+   "source": "derivative",
+   "format": "PNG",
+   "original": "01AsteroidDancePart1.flac",
+   "mtime": "1414089391",
+   "size": "9852",
+   "md5": "e11f71ab74a509db9602e4ee2f5d0c4d",
+   "crc32": "850046e8",
+   "sha1": "0c9d62b956a9f781e794b9eed63f0ee054b4a182"
+  },
+  {
+   "name": "02AsteroidDancePart2.flac",
+   "source": "original",
+   "format": "Flac",
+   "length": "123.41",
+   "title": "02 Asteroid Dance, Part 2",
+   "mtime": "1363464818",
+   "size": "7243310",
+   "md5": "74fcc9c17512277f37acd0c1bad44cab",
+   "crc32": "5d8292fd",
+   "sha1": "0e2015d6ba46cf523374c9cf81926d9ae4bae32b",
+   "track": "02",
+   "album": "Tyrian: Original Soundtrack",
+   "genre": "Game",
+   "comment": "Visit http://alexanderbrandon.bandcamp.com",
+   "artist": "Alexander Brandon",
+   "height": "0",
+   "width": "0",
+   "external-identifier": [
+    "urn:acoustid:9a01a937-f461-422c-a0a2-61cb60b3ad24",
+    "urn:mb_recording_id:08ff3524-ebf0-4765-bd35-58a57d33a822"
+   ]
+  },
+  {
+   "name": "02AsteroidDancePart2.mp3",
+   "source": "derivative",
+   "creator": "Alexander Brandon",
+   "title": "02 Asteroid Dance, Part 2",
+   "track": "02",
+   "album": "Tyrian: Original Soundtrack",
+   "genre": "Game",
+   "bitrate": "122",
+   "length": "02:03",
+   "format": "VBR MP3",
+   "original": "02AsteroidDancePart2.flac",
+   "mtime": "1363465923",
+   "size": "1988608",
+   "md5": "40af87ac7cd6f92ec3c1c9452f8b6e1c",
+   "crc32": "e86d2a04",
+   "sha1": "8cfc5a9e10ce3d1eec10a92f1a5a980474594e23",
+   "height": "0",
+   "width": "0"
+  },
+  {
+   "name": "02AsteroidDancePart2.ogg",
+   "source": "derivative",
+   "format": "Ogg Vorbis",
+   "original": "02AsteroidDancePart2.flac",
+   "mtime": "1363466140",
+   "size": "1195670",
+   "md5": "b4883b785366e04d382da5ecd1e0378b",
+   "crc32": "ffd18c48",
+   "sha1": "3977c8892db16296c67821539f97201438113ec5",
+   "length": "123.41",
+   "height": "0",
+   "width": "0"
+  },
+  {
+   "name": "02AsteroidDancePart2.png",
+   "source": "derivative",
+   "format": "PNG",
+   "original": "02AsteroidDancePart2.flac",
+   "mtime": "1414089282",
+   "size": "11182",
+   "md5": "6ae107b80b232218754d75203d92d331",
+   "crc32": "df5bf865",
+   "sha1": "69f6d66f6acfec3cfb0e8644dcfeed176b1c33db"
+  },
+  {
+   "name": "Cover-old1.jpg",
+   "source": "original",
+   "format": "JPEG",
+   "title": "cover-old 1",
+   "mtime": "1363465559",
+   "size": "58393",
+   "md5": "1ef9e478602d0af97b99a858b57bc80a",
+   "crc32": "094e2457",
+   "sha1": "d650e933b3dda9ae1c60d8ce7cfcbad1c24d8165",
+   "rotation": "0"
+  },
+  {
+   "name": "tyrian-original-soundtrack.ffp",
+   "source": "derivative",
+   "format": "Flac FingerPrint",
+   "mtime": "1363466159",
+   "size": "2109",
+   "md5": "a4453ae86e6a87078d107fa2a00779f3",
+   "crc32": "b872f4df",
+   "sha1": "9c0a81dc81b9907659a1006f57f99d620dbfa098"
+  }
+ ]
+}

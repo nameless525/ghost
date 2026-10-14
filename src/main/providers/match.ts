@@ -201,8 +201,13 @@ export function combineScore(p: ScoreParts): number {
 // Title cleanup (playlist entries, file names, chapters)
 
 const OST_WORDS = String.raw`(?:full\s+|complete\s+|official\s+|original\s+)*(?:o\.?s\.?t\.?|o\.?s\.?v\.?|soundtrack|sound\s*track|original\s+soundtrack|original\s+score|score|music|bgm|vgm|theme)`
+/**
+ * The unambiguous soundtrack words. "Theme", "Music" and "Score" are also ordinary words of track
+ * names ("Frog's Theme", "Battle (Main Theme)"), so they only count as noise next to a game name.
+ */
+const OST_CORE = String.raw`(?:full\s+|complete\s+|official\s+|original\s+)*(?:o\.?s\.?t\.?|o\.?s\.?v\.?|soundtrack|sound\s*track|original\s+soundtrack|original\s+score|bgm|vgm)`
 const BRACKET_NOISE = new RegExp(
-  String.raw`\s*[([【〔{]\s*(?:[^)\]】〕}]*\b(?:${OST_WORDS}|official|audio|hq|hd|lyrics?|video|visuali[sz]er|remaster(?:ed)?|1080p|720p|4k|high\s+quality|flac|mp3)\b[^)\]】〕}]*|\s*)[)\]】〕}]\s*`,
+  String.raw`\s*[([【〔{]\s*(?:[^)\]】〕}]*\b(?:${OST_CORE}|official|audio|hq|hd|lyrics?|(?:music\s+)?video|visuali[sz]er|remaster(?:ed)?|1080p|720p|4k|high\s+quality|flac|mp3)\b[^)\]】〕}]*|\s*)[)\]】〕}]\s*`,
   'giu'
 )
 
@@ -263,9 +268,9 @@ export function cleanTrackTitle(raw: string, ctx: CleanTitleContext = {}): strin
       strip(new RegExp(String.raw`(?:${SEP}|\s*[([【]\s*)${r}(?:\s*${OST_WORDS})?\s*[\])】]?\s*$`, 'iu'))
     }
     // Bare "OST - title" / "title - OST" left behind.
-    strip(new RegExp(String.raw`^${OST_WORDS}${SEP}`, 'iu'))
-    strip(new RegExp(String.raw`${SEP}${OST_WORDS}\s*$`, 'iu'))
-    strip(new RegExp(String.raw`\s*[([【]\s*${OST_WORDS}\s*[\])】]\s*$`, 'iu'))
+    strip(new RegExp(String.raw`^${OST_CORE}${SEP}`, 'iu'))
+    strip(new RegExp(String.raw`${SEP}${OST_CORE}\s*$`, 'iu'))
+    strip(new RegExp(String.raw`\s*[([【]\s*${OST_CORE}\s*[\])】]\s*$`, 'iu'))
     // Track numbers: "01. ", "1 - ", "03) ", "Track 5: ", "#12 ", "1-03 ", "[03] ".
     strip(/^(?:track|tr\.?|no\.?|#)\s*\d{1,3}\s*[.:)\-–—]?\s+/iu)
     strip(/^\d{1,2}-\d{2,3}\.?\s+/u)

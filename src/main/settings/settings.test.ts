@@ -23,7 +23,7 @@ describe('withKnownSources', () => {
     const v1 = ['local', 'chip', 'bandcamp', 'khinsider', 'archive', 'youtube']
     expect(withKnownSources(v1)).toEqual(DEFAULT_SOURCE_ORDER)
     // a user's own arrangement survives
-    expect(withKnownSources(['youtube', 'khinsider', 'local', 'chip', 'bandcamp', 'archive'])).toEqual(['youtube', 'khinsider', 'zophar', 'modland', 'local', 'chip', 'bandcamp', 'archive', 'soundcloud'])
+    expect(withKnownSources(['youtube', 'khinsider', 'local', 'chip', 'bandcamp', 'archive'])).toEqual(['youtube', 'soundcloud', 'khinsider', 'zophar', 'modland', 'local', 'chip', 'bandcamp', 'archive'])
     expect(withKnownSources(['khinsider', 'khinsider'], ['khinsider'])).toEqual(['khinsider'])
   })
 })
@@ -39,7 +39,7 @@ describe('SettingsStore', () => {
     expect(next.audio.normalization).toEqual({ enabled: true, targetLufs: -14, mode: 'auto' })
     expect(next.audio.gapless).toBe(true)
     // arrays are replaced; sources the saved order lacks are slotted in after their default neighbour
-    expect(next.sources.order).toEqual(['youtube', 'local', 'chip', 'bandcamp', 'khinsider', 'zophar', 'modland', 'archive', 'soundcloud'])
+    expect(next.sources.order).toEqual(['youtube', 'soundcloud', 'local', 'chip', 'bandcamp', 'khinsider', 'zophar', 'modland', 'archive'])
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(next)
     expect(readdirSync(dir)).toEqual(['settings.json']) // no temp files left behind
     // reload

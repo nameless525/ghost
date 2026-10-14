@@ -1,6 +1,6 @@
 import type { Settings } from './types'
 
-export const DEFAULT_SOURCE_ORDER = ['local', 'chip', 'bandcamp', 'khinsider', 'zophar', 'modland', 'archive', 'soundcloud', 'youtube']
+export const DEFAULT_SOURCE_ORDER = ['local', 'chip', 'bandcamp', 'khinsider', 'zophar', 'modland', 'archive', 'youtube', 'soundcloud']
 
 /**
  * A saved source order plus any source it doesn't know yet (added in a later version), each slotted

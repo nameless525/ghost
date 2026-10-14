@@ -8,6 +8,7 @@ import { isNetError, NetError } from '../net/errors'
 import type { HttpClient } from '../net/http'
 import { createDefaultRegistry, type ProviderRegistry } from '../providers'
 import { CHIP_ID, ChipProvider } from '../providers/chip'
+import { KH_ID } from '../providers/khinsider'
 import { LocalProvider } from '../providers/local'
 import { isIndexProvider, type IndexProvider, type ProviderAlbum } from '../providers/types'
 import type { YtDlp } from '../tools/ytdlp'
@@ -203,14 +204,18 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   const accent = new AccentWorker(repo, internals.accentOf ?? (async (url, bytes) => (await artProtocol()).artAccent(url, bytes)), notify)
 
   // --- index crawls --------------------------------------------------------------------------
-  // The first registered index provider (KHInsider) builds the catalog; the others (Zophar's
-  // Domain, Modland, Internet Archive collections) crawl after it, one at a time, each on its own
-  // refresh period. Disabled sources aren't crawled.
+  // KHInsider builds the catalog; the other index providers (Zophar's Domain, Modland, Internet
+  // Archive collections) crawl after it, one at a time, each on its own refresh period. Disabled
+  // sources aren't crawled.
   const crawlers = new Map<string, Crawler>()
   /** The crawl running now (or the last one that ran). */
   let crawler: Crawler | null = null
   const forceCrawl = new Set<string>()
-  const indexProviders = (): IndexProvider[] => getRegistry().all().filter(isIndexProvider)
+  /** Index providers in crawl order: KHInsider (the main catalog) first, then registration order. */
+  const indexProviders = (): IndexProvider[] => {
+    const all = getRegistry().all().filter(isIndexProvider)
+    return [...all.filter((p) => p.id === KH_ID), ...all.filter((p) => p.id !== KH_ID)]
+  }
   const crawlerFor = (p: IndexProvider): Crawler => {
     let c = crawlers.get(p.id)
     if (!c) {

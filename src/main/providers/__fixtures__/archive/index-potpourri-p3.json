@@ -1,0 +1,170 @@
+{
+ "responseHeader": {
+  "status": 0,
+  "QTime": 129,
+  "params": {
+   "query": "collection:hifidelity_potpourri AND subject:(&quot;video game music&quot; OR &quot;video game soundtrack&quot; OR &quot;video game ost&quot; OR &quot;game soundtrack&quot; OR &quot;game music&quot; OR &quot;game ost&quot; OR gamerip OR vgm)",
+   "qin": "collection:hifidelity_potpourri AND subject:(&quot;video game music&quot; OR &quot;video game soundtrack&quot; OR &quot;video game ost&quot; OR &quot;game soundtrack&quot; OR &quot;game music&quot; OR &quot;game ost&quot; OR gamerip OR vgm)",
+   "fields": "identifier,title,creator,date,year,subject,description,format,mediatype",
+   "wt": "json",
+   "sort": "identifier asc",
+   "rows": 500,
+   "start": 1000
+  }
+ },
+ "response": {
+  "numFound": 1134,
+  "start": 1000,
+  "docs": [
+   {
+    "creator": "Nobuyoshi Sano/Keiichi Okabe",
+    "date": "1997-01-01T00:00:00Z",
+    "description": "Tekken 3 OST by Nobuyoshi Sano/Keiichi Okabe (1997).",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "tekken-3-1997-ost",
+    "mediatype": "audio",
+    "subject": [
+     "vgm",
+     "video game music",
+     "soundtrack",
+     "ost",
+     "Arcade"
+    ],
+    "title": "Tekken 3 OST",
+    "year": 1997
+   },
+   {
+    "creator": "Akitaka Toyama",
+    "date": "1999-01-01T00:00:00Z",
+    "description": "Tekken Tag Tournament OST by Akitaka Toyama (1999).",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "tekken-tag-tournament-1999-ost",
+    "mediatype": "audio",
+    "subject": [
+     "vgm",
+     "video game music",
+     "soundtrack",
+     "ost",
+     "Arcade"
+    ],
+    "title": "Tekken Tag Tournament OST",
+    "year": 1999
+   },
+   {
+    "creator": "Hirokazu \"Hip\" Tanaka",
+    "date": "1994-01-01T00:00:00Z",
+    "description": "Tetris OST by Hirokazu \"Hip\" Tanaka (1994).",
+    "format": [
+     "Archive BitTorrent",
+     "Columbia Peaks",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "tetris-1994-ost",
+    "mediatype": "audio",
+    "subject": [
+     "vgm",
+     "video game music",
+     "soundtrack",
+     "ost",
+     "GB",
+     "NES"
+    ],
+    "title": "Tetris OST",
+    "year": 1994
+   },
+   {
+    "creator": "ATLUS",
+    "date": "2024-09-10T00:00:00Z",
+    "description": "[AGM-007] 01~19: Persona 3 Reload: Episode Aigis -The Answer- Original Soundtrack 20, 21: Bonus Tracks   *Note: Track 20 originates from Persona 3 Reload, and was missing from the base game's soundtrack release. Persona 3 Reload Episode Aegis Music Composition and Arrangement:   Ryota Kozuka (ATLUS) [Track1,7,19] -Reload- Version Arrangement:   Atsushi Kitajoh (ATLUS) [Track8,10,14,15,18,20,21]   Ryota Kozuka (ATLUS) [Track9] Persona 3 FES Original Music Composition:   Shoji Meguro [Track2~6,8,11~14,16~18,20,21]   Masaki Kurokawa [Track15]   Kenichi Tsuchiya (ATLUS) [Track9,10] Persona 3 FES O",
+    "format": [
+     "Archive BitTorrent",
+     "Flac",
+     "Item Tile",
+     "JPEG",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "the-abyss-of-time-p3",
+    "mediatype": "audio",
+    "subject": [
+     "Original Soundtrack",
+     "Game Soundtrack",
+     "ost",
+     "video game ost",
+     "games",
+     "soundtrack"
+    ],
+    "title": "PERSONA3 RELOAD Episode Aigis ORIGINAL SOUNDTRACK",
+    "year": 2024
+   },
+   {
+    "creator": "Kota Hoshino",
+    "date": "2000-01-01T00:00:00Z",
+    "description": "The Adventures of Cookie & Cream OST by Kota Hoshino (2000).",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "JPEG",
+     "JPEG Thumb",
+     "Metadata",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "the-adventures-of-cookie-cream-2000-ost",
+    "mediatype": "audio",
+    "subject": [
+     "vgm",
+     "video game music",
+     "soundtrack",
+     "ost",
+     "PS2"
+    ],
+    "title": "The Adventures of Cookie & Cream OST",
+    "year": 2000
+   },
+   {
+    "creator": "RETROFENIX",
+    "description": "As melhores músicas retro games.",
+    "format": [
+     "Archive BitTorrent",
+     "Item Tile",
+     "Metadata",
+     "Ogg Vorbis",
+     "PNG",
+     "Spectrogram",
+     "VBR MP3"
+    ],
+    "identifier": "the-best-of-retro-vgm-1500-tetris-commodore-64-main-theme",
+    "mediatype": "audio",
+    "subject": "The Best of Retro VGM RETROFENIX",
+    "title": "The Best of Retro VGM BY RETROFENIX"
+   }
+  ]
+ }
+}
