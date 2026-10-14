@@ -4,7 +4,7 @@
 
 A private, personal-use desktop app for macOS, Linux and Windows that streams (and optionally downloads) video game soundtracks. It finds music the way ani-cli finds anime (type a name, get playback) and wraps that in a GUI that moves and feels like osu!.
 
-Status: design only, nothing implemented yet. Last updated 2026-10-13.
+Status: implemented (M0–M6 plus most of M7); see README.md for running and building. Last updated 2026-10-14.
 
 ---
 
@@ -148,7 +148,7 @@ analysis tap: taken AFTER gain, BEFORE master volume, so visuals stay lively at 
 | MOD/XM/IT/S3M/UMX (tracker music: Amiga, DOS, Unreal, Deus Ex) | libopenmpt |
 | PSF/2SF/USF/GSF/SSF (PlayStation, DS, N64, GBA, Saturn) | later: highly_experimental, vio2sf, lazyusf2 |
 
-The C libraries are vendored as git submodules and built with `cmake`/`cc` in `build.rs`.
+As built: the C libraries live in `native/crates/ghost-formats` (vendored release tarballs under `native/vendor/`, compiled statically with the `cc` crate). Decoder choice: format hint → extension → magic bytes. Sources can address an `archiveEntry` inside a `.zip`/`.7z` (NEZPlug `.m3u` lines supply titles/lengths), a `subsong`, and a `clipStartMs`/`clipEndMs` range (chapters of full-OST videos). Chip/tracker/game-engine sources and clips download as loop-rendered FLAC. Not built: vgmstream codecs needing FFmpeg/mpg123 (XMA, ATRAC, Switch Opus…), RAR `.rsn` sets, the PSF family.
 
 ### 5.5 Gapless, crossfade, loops
 - **Gapless.** Once the main process calls `setNext`, the next source starts decoding into its own ring. When the current source runs out mid-callback, the mixer keeps filling the same buffer from the next ring, so not a single sample is lost.
@@ -202,7 +202,7 @@ engine.analysisRegion(): string                         // shared-memory name th
 ```
 `SourceSpec` = `{ kind: 'http' | 'file' | 'chip', url | path, headers?, formatHint?, loop?, subsong? }`
 
-A headless CLI (`engine-cli`) exposes the same API from the terminal for testing (play a URL, render to WAV, dump analysis).
+Also implemented: `inspectArchive(source)` (entries + playlist texts), `setVoiceMask`/`voiceCount` (chiptune channel muting), and `download(…, { renderFlac })`. A headless CLI (`ghost-cli`) exposes the same API from the terminal for testing (play a URL, render to WAV, dump analysis).
 
 ---
 
