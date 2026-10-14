@@ -106,6 +106,10 @@ describe('zophar: urls, refs and locators', () => {
 
   it('library-style titles', () => {
     expect(tidyTitle('7th Saga, The')).toBe('The 7th Saga')
+    // regional variants: bracketed (and the article still moves)
+    expect(tidyTitle('Adventure Island JP')).toBe('Adventure Island (JP)')
+    expect(tidyTitle('Adventures of Bayou Billy, The JP')).toBe('The Adventures of Bayou Billy (JP)')
+    expect(tidyTitle("Cruis'n USA")).toBe("Cruis'n USA")
     expect(tidyTitle("Bug's Life, A")).toBe("A Bug's Life")
     expect(tidyTitle("Addams Family, The - Pugsley's Scavenger Hunt")).toBe("The Addams Family - Pugsley's Scavenger Hunt")
     expect(tidyTitle('Legend of Zelda, The  [Zelda no Densetsu]')).toBe('The Legend of Zelda [Zelda no Densetsu]')

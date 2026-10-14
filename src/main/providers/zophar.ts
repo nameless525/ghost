@@ -242,9 +242,14 @@ function cleanText(s: string): string {
   return s.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-/** Zophar files titles library-style: "7th Saga, The" → "The 7th Saga", "Legend of Zelda, The - …" → "The Legend of Zelda - …". */
+/**
+ * Zophar files titles library-style: "7th Saga, The" → "The 7th Saga", "Legend of Zelda, The - …" →
+ * "The Legend of Zelda - …". Regional variants carry a bare suffix ("Adventure Island JP"); it's
+ * bracketed so the album keeps it but the game clusters with the other releases.
+ */
 export function tidyTitle(s: string): string {
-  const t = cleanText(s)
+  let t = cleanText(s)
+  t = t.replace(/\s+(JP|EU|EUR)$/, ' ($1)')
   const m = /^(.+?),\s+(The|A|An)(?=$|\s+[-:[(])(.*)$/.exec(t)
   return m ? `${m[2]} ${m[1]}${m[3]}` : t
 }
