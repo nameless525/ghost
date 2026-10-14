@@ -34,7 +34,7 @@ pub fn sweep(rate: u32, frames: usize, f0: f64, f1: f64, amp: f32) -> Vec<f32> {
 }
 
 pub fn file(path: &Path) -> SourceSpec {
-    SourceSpec::File { path: path.to_path_buf(), format_hint: None }
+    SourceSpec::File { path: path.to_path_buf(), format_hint: None, extras: Default::default() }
 }
 
 pub fn track(id: &str, source: SourceSpec) -> TrackLoad {

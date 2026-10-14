@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use ghost_engine::{
-    DownloadStatus, Engine, EngineConfig, EngineEvent, NormalizationMode, OfflineConfig, SourceSpec, TagInfo, TrackLoad,
+    DownloadOptions, DownloadStatus, Engine, EngineConfig, EngineEvent, LoopMode, NormalizationMode, OfflineConfig, SourceExtras,
+    SourceSpec, TagInfo, TrackLoad,
 };
 use serde_json::json;
 
@@ -22,13 +23,93 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// Addressing inside a source (EngineSourceExtras).
+#[derive(clap::Args, Clone, Default)]
+struct SourceOpts {
+    /// Sub-song (0-based) of a multi-song file (NSF, GBS, HES, KSS, FSB bank, module, ...).
+    #[arg(long)]
+    subsong: Option<u32>,
+    /// Entry to play inside a .zip / .7z archive source.
+    #[arg(long)]
+    entry: Option<String>,
+    /// Play only START_MS:END_MS of the stream (either side may be empty).
+    #[arg(long)]
+    clip: Option<String>,
+    /// Format hint (extension or mime type), for URLs without a telling extension.
+    #[arg(long)]
+    format_hint: Option<String>,
+}
+
+impl SourceOpts {
+    fn extras(&self) -> Result<SourceExtras, String> {
+        let (clip_start_ms, clip_end_ms) = match &self.clip {
+            None => (None, None),
+            Some(c) => {
+                let (a, b) = c.split_once(':').ok_or_else(|| format!("bad --clip {c} (expected START_MS:END_MS)"))?;
+                let num = |v: &str| -> Result<Option<u64>, String> {
+                    if v.trim().is_empty() {
+                        Ok(None)
+                    } else {
+                        v.trim().parse::<u64>().map(Some).map_err(|e| format!("bad --clip {c}: {e}"))
+                    }
+                };
+                (num(a)?, num(b)?)
+            }
+        };
+        Ok(SourceExtras { clip_start_ms, clip_end_ms, subsong: self.subsong, archive_entry: self.entry.clone() })
+    }
+}
+
+/// Loop handling for looping formats (chip / tracker / game-engine).
+#[derive(clap::Args, Clone)]
+struct LoopOpts {
+    /// album (loop N times, then fade) | endless | custom.
+    #[arg(long, default_value = "album")]
+    loop_mode: String,
+    /// Loop count for album / custom.
+    #[arg(long, default_value_t = 2)]
+    loops: u32,
+    /// Fade length in seconds.
+    #[arg(long, default_value_t = 10.0)]
+    fade: f32,
+}
+
+impl LoopOpts {
+    fn apply(&self, engine: &Engine) -> Result<(), String> {
+        let mode = match self.loop_mode.as_str() {
+            "album" => LoopMode::Album,
+            "endless" => LoopMode::Endless,
+            "custom" => LoopMode::Custom,
+            m => return Err(format!("unknown --loop-mode {m} (album | endless | custom)")),
+        };
+        engine.set_loop(mode, self.loops, self.fade);
+        Ok(())
+    }
+}
+
 #[derive(clap::Args, Clone)]
 struct PlayOpts {
     /// URL or file path.
     src: String,
+    #[command(flatten)]
+    source: SourceOpts,
+    #[command(flatten)]
+    looping: LoopOpts,
     /// Preload this as the next track (gapless / crossfade into it).
     #[arg(long)]
     next: Option<String>,
+    /// Sub-song of the next track.
+    #[arg(long)]
+    next_subsong: Option<u32>,
+    /// Archive entry of the next track.
+    #[arg(long)]
+    next_entry: Option<String>,
+    /// Clip of the next track (START_MS:END_MS).
+    #[arg(long)]
+    next_clip: Option<String>,
+    /// Mute chip voices: bit i mutes voice i (e.g. 0x3 mutes the first two).
+    #[arg(long, value_parser = parse_mask)]
+    voice_mask: Option<u64>,
     /// Stop after this many seconds.
     #[arg(long)]
     seconds: Option<f64>,
@@ -48,7 +129,8 @@ struct PlayOpts {
     seek_at: Vec<String>,
     /// Timed actions "AT_SEC:ACTION" (repeatable). Actions: seek=MS, pause, play, stop,
     /// volume=DB, mute, unmute, overlay=on|off, preview=SRC[@START_MS], stop-preview,
-    /// device=ID|default, crossfade=SEC, gapless=on|off, next=SRC, skip (play the preloaded next).
+    /// device=ID|default, crossfade=SEC, gapless=on|off, next=SRC, skip (play the preloaded next),
+    /// voices=MASK (mute chip voices).
     #[arg(long = "at")]
     at: Vec<String>,
     /// Output device id for `play` (see `devices`).
@@ -73,12 +155,33 @@ enum Cmd {
         rate: u32,
     },
     /// Offline analysis (loudness, beats, kiai, energy, intensity) as JSON.
-    Analyze { src: String },
+    Analyze {
+        src: String,
+        #[command(flatten)]
+        source: SourceOpts,
+        #[command(flatten)]
+        looping: LoopOpts,
+    },
+    /// List a .zip / .7z rip set (entries and playlist text) as JSON.
+    Inspect {
+        /// Archive URL or file path.
+        archive: String,
+        /// Print the full playlist text (default: first lines only).
+        #[arg(long)]
+        full: bool,
+    },
     /// List output devices.
     Devices,
-    /// Download and tag a track.
+    /// Download and tag a track (chip / tracker / game-engine formats and clips render to FLAC).
     Download {
         url: String,
+        #[command(flatten)]
+        source: SourceOpts,
+        #[command(flatten)]
+        looping: LoopOpts,
+        /// Force rendering to FLAC (true) or saving the stream as-is (false).
+        #[arg(long)]
+        render_flac: Option<bool>,
         #[arg(long)]
         out: PathBuf,
         #[arg(long)]
@@ -128,23 +231,44 @@ fn config(cli: &Cli) -> EngineConfig {
     }
 }
 
-fn source(s: &str) -> SourceSpec {
-    if s.starts_with("http://") || s.starts_with("https://") {
-        SourceSpec::Http { url: s.to_string(), headers: vec![], cache_key: s.to_string(), format_hint: None }
-    } else {
-        SourceSpec::File { path: PathBuf::from(s), format_hint: None }
+fn parse_mask(s: &str) -> Result<u64, String> {
+    let t = s.trim();
+    match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some(h) => u64::from_str_radix(h, 16).map_err(|e| e.to_string()),
+        None => t.parse::<u64>().map_err(|e| e.to_string()),
     }
 }
 
+fn source(s: &str) -> SourceSpec {
+    if s.starts_with("http://") || s.starts_with("https://") {
+        SourceSpec::http(s, s)
+    } else {
+        SourceSpec::file(PathBuf::from(s))
+    }
+}
+
+fn source_with(s: &str, o: &SourceOpts) -> Result<SourceSpec, String> {
+    Ok(source(s).with_format_hint(o.format_hint.clone()).with_extras(o.extras()?))
+}
+
 fn track(id: &str, s: &str, album: Option<&str>) -> TrackLoad {
+    track_spec(id, source(s), album)
+}
+
+fn track_spec(id: &str, source: SourceSpec, album: Option<&str>) -> TrackLoad {
     TrackLoad {
         id: id.to_string(),
-        source: source(s),
+        source,
         lufs: None,
         album_lufs: None,
         album_key: album.map(str::to_string),
         expected_duration_ms: None,
     }
+}
+
+fn next_source(o: &PlayOpts, n: &str) -> Result<SourceSpec, String> {
+    let so = SourceOpts { subsong: o.next_subsong, entry: o.next_entry.clone(), clip: o.next_clip.clone(), format_hint: None };
+    source_with(n, &so)
 }
 
 fn fmt_ms(ms: f64) -> String {
@@ -157,15 +281,32 @@ fn describe(ev: &EngineEvent) -> String {
         EngineEvent::State { state, id } => format!("state {state:?} {}", id.as_deref().unwrap_or("-")),
         EngineEvent::Advanced { id } => format!("advanced -> {id}"),
         EngineEvent::Ended { id } => format!("ended {id}"),
-        EngineEvent::TrackInfo(i) => format!(
-            "track-info {} duration={} rate={} ch={} codec={} bitrate={}",
-            i.id,
-            i.duration_ms.map(|d| fmt_ms(d as f64)).unwrap_or("?".into()),
-            i.sample_rate,
-            i.channels,
-            i.codec,
-            i.bitrate_kbps.map(|b| format!("{b}kbps")).unwrap_or("?".into())
-        ),
+        EngineEvent::TrackInfo(i) => {
+            let mut s = format!(
+                "track-info {} duration={} rate={} ch={} codec={} bitrate={}",
+                i.id,
+                i.duration_ms.map(|d| fmt_ms(d as f64)).unwrap_or("?".into()),
+                i.sample_rate,
+                i.channels,
+                i.codec,
+                i.bitrate_kbps.map(|b| format!("{b}kbps")).unwrap_or("?".into())
+            );
+            for (k, v) in [("title", &i.title), ("artist", &i.artist), ("album", &i.album)] {
+                if let Some(v) = v {
+                    s.push_str(&format!(" {k}={v:?}"));
+                }
+            }
+            if let Some(n) = i.subsong_count {
+                s.push_str(&format!(" subsong={}/{n}", i.subsong.unwrap_or(0)));
+            }
+            if let (Some(a), Some(b)) = (i.loop_start_ms, i.loop_end_ms) {
+                s.push_str(&format!(" loop={}..{}", fmt_ms(a as f64), fmt_ms(b as f64)));
+            }
+            if i.voice_count > 0 {
+                s.push_str(&format!(" voices={} [{}]", i.voice_count, i.voice_names.join(", ")));
+            }
+            s
+        }
         EngineEvent::Buffering { id, buffering } => format!("buffering {id} {buffering}"),
         EngineEvent::Error { id, message, recoverable } => {
             format!("ERROR {} {message} (recoverable={recoverable})", id.as_deref().unwrap_or("-"))
@@ -230,22 +371,28 @@ fn run_action(engine: &Engine, o: &PlayOpts, action: &str) -> Result<(), String>
         "next" => engine.set_next(Some(track("next", arg.ok_or("next needs a source")?, album))),
         "skip" => {
             let n = o.next.as_deref().ok_or("skip needs --next")?;
-            engine.set_current(track("next", n, album), 0, true);
+            engine.set_current(track_spec("next", next_source(o, n)?, album), 0, true);
         }
+        "voices" => engine.set_voice_mask(parse_mask(arg.ok_or("voices needs a mask")?)?),
         other => return Err(format!("unknown action {other}")),
     }
     Ok(())
 }
 
-fn setup(engine: &Engine, o: &PlayOpts, autoplay: bool) {
+fn setup(engine: &Engine, o: &PlayOpts, autoplay: bool) -> Result<(), String> {
     engine.set_normalization(!o.no_norm, -16.0, NormalizationMode::Auto);
     engine.set_crossfade(o.crossfade);
     engine.set_volume_db(o.volume_db);
-    let album = o.same_album.then_some("cli-album");
-    engine.set_current(track("current", &o.src, album), o.start_ms, autoplay);
-    if let Some(n) = &o.next {
-        engine.set_next(Some(track("next", n, album)));
+    o.looping.apply(engine)?;
+    if let Some(m) = o.voice_mask {
+        engine.set_voice_mask(m);
     }
+    let album = o.same_album.then_some("cli-album");
+    engine.set_current(track_spec("current", source_with(&o.src, &o.source)?, album), o.start_ms, autoplay);
+    if let Some(n) = &o.next {
+        engine.set_next(Some(track_spec("next", next_source(o, n)?, album)));
+    }
+    Ok(())
 }
 
 fn cmd_play(cli: &Cli, o: &PlayOpts) -> Result<(), String> {
@@ -254,7 +401,7 @@ fn cmd_play(cli: &Cli, o: &PlayOpts) -> Result<(), String> {
     if let Some(d) = &o.device {
         engine.set_device(Some(d.clone()));
     }
-    setup(&engine, o, true);
+    setup(&engine, o, true)?;
     let t0 = Instant::now();
     let limit = o.seconds.map(Duration::from_secs_f64);
     let mut actions = parse_actions(o)?;
@@ -362,7 +509,7 @@ fn cmd_play(cli: &Cli, o: &PlayOpts) -> Result<(), String> {
 fn cmd_render(cli: &Cli, o: &PlayOpts, out: &Path, rate: u32) -> Result<(), String> {
     let (engine, sink) = Engine::new_offline(config(cli), OfflineConfig { sample_rate: rate, block_frames: 512 }).map_err(|e| e.0)?;
     let events = engine.events();
-    setup(&engine, o, false);
+    setup(&engine, o, false)?;
     engine.play();
     let max_frames = o.seconds.map(|s| (s * rate as f64) as u64);
     let mut actions = parse_actions(o)?;
@@ -432,11 +579,12 @@ fn cmd_render(cli: &Cli, o: &PlayOpts, out: &Path, rate: u32) -> Result<(), Stri
     Ok(())
 }
 
-fn cmd_analyze(cli: &Cli, src: &str) -> Result<(), String> {
+fn cmd_analyze(cli: &Cli, src: &str, so: &SourceOpts, lo: &LoopOpts) -> Result<(), String> {
     let (engine, _sink) = Engine::new_offline(config(cli), OfflineConfig::default()).map_err(|e| e.0)?;
     let events = engine.events();
     let t0 = Instant::now();
-    engine.analyze("cli".into(), source(src));
+    lo.apply(&engine)?;
+    engine.analyze("cli".into(), source_with(src, so)?);
     loop {
         match events.recv_timeout(Duration::from_secs(300)) {
             Ok(EngineEvent::Analysis { result: r, cache_key, .. }) => {
@@ -464,6 +612,24 @@ fn cmd_analyze(cli: &Cli, src: &str) -> Result<(), String> {
             Err(_) => return Err("analysis timed out".into()),
         }
     }
+    engine.shutdown();
+    Ok(())
+}
+
+fn cmd_inspect(cli: &Cli, archive: &str, full: bool) -> Result<(), String> {
+    let (engine, _sink) = Engine::new_offline(config(cli), OfflineConfig::default()).map_err(|e| e.0)?;
+    let t0 = Instant::now();
+    let listing = engine.inspect_archive(&source(archive)).map_err(|e| e.0)?;
+    let v = json!({
+        "archive": archive,
+        "seconds_taken": t0.elapsed().as_secs_f64(),
+        "entries": listing.entries.iter().map(|e| json!({ "path": e.path, "size": e.size })).collect::<Vec<_>>(),
+        "playlists": listing.playlists.iter().map(|(p, t)| {
+            let text = if full { t.clone() } else { t.lines().take(3).collect::<Vec<_>>().join("\n") };
+            json!({ "path": p, "text": text })
+        }).collect::<Vec<_>>(),
+    });
+    println!("{}", serde_json::to_string_pretty(&v).unwrap());
     engine.shutdown();
     Ok(())
 }
@@ -504,12 +670,13 @@ fn main() {
     let res = match &cli.cmd {
         Cmd::Play(o) => cmd_play(&cli, o),
         Cmd::Render { opts, out, rate } => cmd_render(&cli, opts, out, *rate),
-        Cmd::Analyze { src } => cmd_analyze(&cli, src),
+        Cmd::Analyze { src, source, looping } => cmd_analyze(&cli, src, source, looping),
+        Cmd::Inspect { archive, full } => cmd_inspect(&cli, archive, *full),
         Cmd::Devices => {
             cmd_devices();
             Ok(())
         }
-        Cmd::Download { url, out, title, album, artist, album_artist, composer, track, disc, year, genre, cover } => {
+        Cmd::Download { url, source, looping, render_flac, out, title, album, artist, album_artist, composer, track, disc, year, genre, cover } => {
             let tags = TagInfo {
                 title: title.clone(),
                 album: album.clone(),
@@ -523,7 +690,7 @@ fn main() {
                 cover_url: cover.clone(),
                 ..Default::default()
             };
-            cmd_download(&cli, url, out, tags)
+            cmd_download(&cli, url, source, looping, *render_flac, out, tags)
         }
         Cmd::CacheStats { clear } => cmd_cache_stats(&cli, *clear),
     };
@@ -533,11 +700,13 @@ fn main() {
     }
 }
 
-fn cmd_download(cli: &Cli, url: &str, out: &Path, tags: TagInfo) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn cmd_download(cli: &Cli, url: &str, so: &SourceOpts, lo: &LoopOpts, render_flac: Option<bool>, out: &Path, tags: TagInfo) -> Result<(), String> {
     let (engine, _sink) = Engine::new_offline(config(cli), OfflineConfig::default()).map_err(|e| e.0)?;
     let events = engine.events();
     let t0 = Instant::now();
-    engine.download("cli-dl".into(), source(url), out.to_path_buf(), tags);
+    lo.apply(&engine)?;
+    engine.download_with("cli-dl".into(), source_with(url, so)?, out.to_path_buf(), tags, DownloadOptions { render_flac });
     loop {
         match events.recv_timeout(Duration::from_secs(120)) {
             Ok(EngineEvent::Download { status, bytes, total_bytes, path, error, .. }) => {

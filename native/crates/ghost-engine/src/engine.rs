@@ -65,6 +65,8 @@ pub struct Shared {
     pub transport_playing: AtomicBool,
     pub rate: AtomicU32,
     pub device_name: Mutex<String>,
+    /// Mutable voices of the current track (for `Engine::voice_count`).
+    pub voice_count: AtomicU32,
 }
 
 impl Shared {
@@ -77,6 +79,7 @@ impl Shared {
             transport_playing: AtomicBool::new(false),
             rate: AtomicU32::new(0),
             device_name: Mutex::new(String::new()),
+            voice_count: AtomicU32::new(0),
         }
     }
 
@@ -611,7 +614,8 @@ impl Controller {
         let source = t.load.source.clone();
         self.measuring.insert(id.clone());
         let (cache, events, loud, cancel) = (self.cache.clone(), self.events.clone(), self.loud_tx.clone(), self.measure_cancel.clone());
-        self.jobs.submit(move || analyze_job(id, source, cache, events, Some(loud), cancel));
+        let loops = self.loops.get();
+        self.jobs.submit(move || analyze_job(id, source, cache, events, Some(loud), cancel, loops));
     }
 
     // ---------------------------------------------------------------- state
@@ -638,6 +642,8 @@ impl Controller {
             }
         };
         self.shared.transport_playing.store(self.playing && st == PlaybackState::Playing, Ordering::Relaxed);
+        let voices = self.current.as_ref().and_then(|c| c.info.as_ref()).map_or(0, |i| i.voice_count);
+        self.shared.voice_count.store(voices, Ordering::Relaxed);
         if self.state.0 != st || self.state.1 != id {
             self.state = (st, id.clone());
             self.emit(EngineEvent::State { state: st, id });
@@ -984,17 +990,27 @@ impl Controller {
 
     fn on_worker(&mut self, w: WorkerEvent) {
         match w {
-            WorkerEvent::Info { key, rate, channels, codec, bitrate_kbps, duration_ms } => {
+            WorkerEvent::Info { key, rate, channels, duration_ms, meta, loop_ms, voices } => {
                 let mut emit = None;
                 let mut dur = None;
                 if let Some((slot, t)) = self.track_by_key(key) {
+                    let meta = *meta;
                     let info = TrackInfo {
                         id: t.load.id.clone(),
                         duration_ms: duration_ms.or(t.load.expected_duration_ms),
                         sample_rate: rate,
                         channels,
-                        codec,
-                        bitrate_kbps,
+                        codec: meta.codec,
+                        bitrate_kbps: meta.bitrate_kbps,
+                        title: meta.title,
+                        artist: meta.artist,
+                        album: meta.album,
+                        subsong_count: meta.subsong_count,
+                        subsong: meta.subsong,
+                        loop_start_ms: loop_ms.map(|l| l.0),
+                        loop_end_ms: loop_ms.map(|l| l.1),
+                        voice_count: voices,
+                        voice_names: if voices > 0 { meta.voice_names } else { Vec::new() },
                     };
                     dur = info.duration_ms;
                     if t.info.is_none() && slot != 2 {
@@ -1121,9 +1137,11 @@ impl Controller {
 }
 
 fn same_source(a: &SourceSpec, b: &SourceSpec) -> bool {
-    match (a, b) {
+    let same_stream = match (a, b) {
         (SourceSpec::Http { cache_key: ka, url: ua, .. }, SourceSpec::Http { cache_key: kb, url: ub, .. }) => ka == kb && ua == ub,
         (SourceSpec::File { path: pa, .. }, SourceSpec::File { path: pb, .. }) => pa == pb,
         _ => false,
-    }
+    };
+    // Clips / sub-songs / archive entries of one file are different tracks.
+    same_stream && a.extras() == b.extras()
 }

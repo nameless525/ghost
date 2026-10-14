@@ -8,10 +8,26 @@ import { app } from 'electron'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import type { EngineBridge, EngineConfig, EngineEvent, EnginePosition, EngineSource, EngineTrack, TagInfo } from './types'
+import type {
+  ArchiveListing,
+  EngineBridge,
+  EngineConfig,
+  EngineDownloadOptions,
+  EngineEvent,
+  EnginePosition,
+  EngineSource,
+  EngineTrack,
+  TagInfo
+} from './types'
 
-/** The `GhostEngine` class exported by the addon: the EngineBridge surface, 1:1. */
-export type NativeGhostEngine = EngineBridge
+/** The `GhostEngine` class exported by the addon: the EngineBridge surface, 1:1, plus chip voice muting. */
+export type NativeGhostEngine = EngineBridge & {
+  inspectArchive(source: EngineSource): Promise<ArchiveListing>
+  /** Mute chip voices on the playing tracks: bit i mutes voice i (see trackInfo `voiceNames`); 0 unmutes all. */
+  setVoiceMask(mask: number): void
+  /** Mutable voices of the current track (0 when unsupported or idle). */
+  voiceCount(): number
+}
 
 /** Read-only view of the analysis region (renderer side). Constructing one starts nothing. */
 export interface NativeAnalysisReader {
@@ -143,8 +159,11 @@ class NativeEngine implements EngineBridge {
   analyze(id: string, source: EngineSource): void {
     this.native.analyze(id, source)
   }
-  download(downloadId: string, source: EngineSource, destPath: string, tags: TagInfo): void {
-    this.native.download(downloadId, source, destPath, tags)
+  download(downloadId: string, source: EngineSource, destPath: string, tags: TagInfo, options?: EngineDownloadOptions): void {
+    this.native.download(downloadId, source, destPath, tags, options)
+  }
+  inspectArchive(source: EngineSource): Promise<ArchiveListing> {
+    return this.native.inspectArchive(source)
   }
   cancelDownload(downloadId: string): void {
     this.native.cancelDownload(downloadId)

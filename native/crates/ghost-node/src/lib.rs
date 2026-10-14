@@ -303,6 +303,9 @@ impl GhostEngine {
         Ok(())
     }
 
+    /// `download(downloadId, source, destPath, tags, options?)`. Chip / tracker / game-engine
+    /// formats and clips render to FLAC by default (`options.renderFlac` overrides); the `done`
+    /// event's `path` is the final file (its extension may have become `.flac`).
     #[napi]
     pub fn download(
         &self,
@@ -310,12 +313,53 @@ impl GhostEngine {
         source: JsEngineSource,
         dest_path: String,
         tags: JsTagInfo,
+        options: Option<JsDownloadOptions>,
     ) -> Result<()> {
         let source = source_from_js(source)?;
         if let Some(e) = self.live() {
-            e.download(download_id, source, dest_path.into(), tags_from_js(tags));
+            let opts = options.map(Into::into).unwrap_or_default();
+            e.download_with(download_id, source, dest_path.into(), tags_from_js(tags), opts);
         }
         Ok(())
+    }
+
+    /// `inspectArchive(source): Promise<{ entries: { path, size }[], playlists: { path, text }[] }>`.
+    /// Fetches the archive through the stream cache on a background thread (never the JS thread
+    /// or libuv's pool); rejects if it isn't a zip / 7z or can't be fetched.
+    #[napi(ts_return_type = "Promise<ArchiveListing>")]
+    pub fn inspect_archive<'env>(&self, env: &'env Env, source: JsEngineSource) -> Result<Object<'env>> {
+        type Resolver = Box<dyn FnOnce(Env) -> Result<JsArchiveListing> + Send>;
+        let source = source_from_js(source)?;
+        let (deferred, promise) = env.create_deferred::<JsArchiveListing, Resolver>()?;
+        if self.closed.load(Ordering::Acquire) {
+            deferred.reject(generic("engine is shut down"));
+            return Ok(promise);
+        }
+        let engine = self.engine.clone();
+        std::thread::Builder::new()
+            .name("ghost-node-inspect".into())
+            .spawn(move || match engine.inspect_archive(&source) {
+                Ok(listing) => deferred.resolve(Box::new(move |_| Ok(JsArchiveListing::from(listing)))),
+                Err(e) => deferred.reject(generic(e.0)),
+            })
+            .map_err(|e| generic(format!("failed to spawn inspect thread: {e}")))?;
+        Ok(promise)
+    }
+
+    /// Mute chip voices on the playing tracks: bit `i` mutes voice `i` (see the `trackInfo`
+    /// event's `voiceNames`). Persists across tracks until changed; 0 unmutes everything.
+    #[napi]
+    pub fn set_voice_mask(&self, mask: f64) {
+        if let Some(e) = self.live() {
+            let m = if mask.is_finite() && mask > 0.0 { mask.min(u64::MAX as f64) as u64 } else { 0 };
+            e.set_voice_mask(m);
+        }
+    }
+
+    /// Mutable voices of the current track (0 when unsupported or idle).
+    #[napi]
+    pub fn voice_count(&self) -> u32 {
+        self.live().map_or(0, |e| e.voice_count())
     }
 
     #[napi]
@@ -518,6 +562,7 @@ impl GhostEngine {
                 channels: 2,
                 codec: "mp3".into(),
                 bitrate_kbps: None,
+                ..Default::default()
             }),
             EngineEvent::Buffering {
                 id: "q1".into(),

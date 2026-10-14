@@ -1,0 +1,30 @@
+[package]
+name = "ghost-formats"
+description = "Game-music decoders for the GHOST engine: libgme, libvgmstream and libopenmpt (vendored, statically linked), plus zip/7z rip-set archives"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[dependencies]
+libc = "0.2"
+# VGZ is gunzipped here (pure Rust), so libgme needs no zlib.
+flate2 = "1.1"
+# Rip sets (joshw / vgmrips / Zophar) come as .zip or .7z; both decoders are pure Rust.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64"] }
+sevenz-rust2 = { version = "0.23", default-features = false, features = ["ppmd", "bzip2", "deflate"] }
+# NEZPlug .m3u / .txt playlists are often Shift-JIS or Windows-1252.
+encoding_rs = "0.8"
+parking_lot = "0.12"
+
+[features]
+# Faster, less accurate YM2612 core for Mega Drive VGMs (see build.rs).
+ym2612-gens = []
+
+[build-dependencies]
+cc = { version = "1.2", features = ["parallel"] }
+
+[dev-dependencies]
+# 7z writing, to build test archives.
+sevenz-rust2 = { version = "0.23", default-features = false, features = ["compress"] }

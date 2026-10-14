@@ -99,7 +99,7 @@ fn events_state_trackinfo_and_cache_complete_over_http() {
     wav::write_f32(&a, rate, 2, &sig).unwrap();
     let srv = serve(std::fs::read(&a).unwrap(), "a.wav", Duration::ZERO, false);
     let (engine, sink) = offline(&dir, 48_000);
-    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![("X-Test".into(), "1".into())], cache_key: "events-a".into(), format_hint: None };
+    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![("X-Test".into(), "1".into())], cache_key: "events-a".into(), format_hint: None, extras: Default::default() };
     engine.set_current(track("t1", spec), 0, true);
     let (out, evs) = collect_until_ended(&engine, &sink, Duration::from_secs(30));
     assert_eq!(out.len() / 2, 96_000, "2 s at 48 kHz");
@@ -122,7 +122,7 @@ fn stalled_stream_reports_recoverable_error() {
     let srv = serve(vec![0u8; 1000], "hang.mp3", Duration::ZERO, true);
     let (engine, _sink) = offline(&dir, 48_000);
     let events = engine.events();
-    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "stall".into(), format_hint: None };
+    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "stall".into(), format_hint: None, extras: Default::default() };
     let t0 = std::time::Instant::now();
     engine.set_current(track("s", spec), 0, true);
     loop {
@@ -211,7 +211,7 @@ fn download_fetches_tags_and_reports_progress() {
         replay_gain_track_peak: Some(0.98),
         ..Default::default()
     };
-    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "dl".into(), format_hint: None };
+    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "dl".into(), format_hint: None, extras: Default::default() };
     engine.download("d1".into(), spec, dest.clone(), tags);
     let evs = download_events(&engine, Duration::from_secs(30));
     let dl: Vec<_> = evs.iter().filter_map(|e| if let EngineEvent::Download { status, bytes, total_bytes, path, .. } = e { Some((*status, *bytes, *total_bytes, path.clone())) } else { None }).collect();
@@ -242,7 +242,7 @@ fn download_cancel_and_id_reuse() {
     let slow = serve(data.clone(), "slow.bin", Duration::from_millis(20), false);
     let (engine, _sink) = offline(&dir, 48_000);
     let dest = dir.join("x.bin");
-    let slow_spec = SourceSpec::Http { url: slow.url.clone(), headers: vec![], cache_key: "slow".into(), format_hint: None };
+    let slow_spec = SourceSpec::Http { url: slow.url.clone(), headers: vec![], cache_key: "slow".into(), format_hint: None, extras: Default::default() };
 
     // Cancel.
     engine.download("c".into(), slow_spec.clone(), dest.clone(), TagInfo::default());
@@ -257,7 +257,7 @@ fn download_cancel_and_id_reuse() {
     std::fs::write(&local, &data[..100_000]).unwrap();
     engine.download("r".into(), slow_spec, dest.clone(), TagInfo::default());
     std::thread::sleep(Duration::from_millis(200));
-    engine.download("r".into(), SourceSpec::File { path: local, format_hint: None }, dest.clone(), TagInfo::default());
+    engine.download("r".into(), SourceSpec::File { path: local, format_hint: None, extras: Default::default() }, dest.clone(), TagInfo::default());
     let evs = download_events(&engine, Duration::from_secs(10));
     let finals: Vec<_> = evs.iter().filter(|e| matches!(e, EngineEvent::Download { status: DownloadStatus::Done | DownloadStatus::Canceled | DownloadStatus::Error, .. })).collect();
     assert_eq!(finals.len(), 1, "{evs:?}");

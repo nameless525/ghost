@@ -36,20 +36,27 @@ fn sym_err(e: SymError) -> SourceError {
     SourceError::new(format!("decode: {e}"))
 }
 
+/// Shared bytes as a symphonia media source (archive entries).
+struct SharedBytes(std::sync::Arc<[u8]>);
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl SymphoniaSource {
     pub fn open(spec: &SourceSpec, ctx: &OpenCtx<'_>) -> Result<Self, SourceError> {
-        let mut hint = Hint::new();
         type Opened = (Box<dyn MediaSource>, Option<String>, Option<String>, Option<u64>, bool);
         let (media, hint_ext, mime, byte_len, complete): Opened =
             match spec {
-                SourceSpec::File { path, format_hint } => {
+                SourceSpec::File { path, format_hint, .. } => {
                     let f = std::fs::File::open(path).map_err(|e| SourceError::new(format!("open {}: {e}", path.display())))?;
                     let len = f.metadata().ok().map(|m| m.len());
                     let ext = format_hint.clone().or_else(|| extension_of(&path.to_string_lossy()));
                     (Box::new(f), ext, None, len, true)
                 }
                 SourceSpec::Http { url, format_hint, .. } => {
-                    let reader = ctx.cache.open_reader(spec, Some(ctx.cancel.clone())).map_err(|e| SourceError::new(e.to_string()))?;
+                    let reader = ctx.cache.open_reader(&spec.base(), Some(ctx.cancel.clone())).map_err(|e| SourceError::new(e.to_string()))?;
                     // Wait for the first bytes (and with them the size / content type).
                     reader.wait_header().map_err(|e| SourceError::new(e.to_string()))?;
                     let len = reader.total_len();
@@ -59,12 +66,23 @@ impl SymphoniaSource {
                     (Box::new(reader), ext, mime, len, complete)
                 }
             };
+        Self::open_media(media, hint_ext, mime, byte_len, ctx.accurate_seek || complete)
+    }
+
+    /// Decode an in-memory file (e.g. an MP3 inside a zip set).
+    pub fn open_bytes(data: std::sync::Arc<[u8]>, ext: Option<String>) -> Result<Self, SourceError> {
+        let len = data.len() as u64;
+        Self::open_media(Box::new(std::io::Cursor::new(SharedBytes(data))), ext, None, Some(len), true)
+    }
+
+    fn open_media(media: Box<dyn MediaSource>, hint_ext: Option<String>, mime: Option<String>, byte_len: Option<u64>, accurate_seek: bool) -> Result<Self, SourceError> {
+        let mut hint = Hint::new();
         if let Some(ext) = &hint_ext {
             // A format hint may be a mime type or an extension.
             if ext.contains('/') {
                 hint.mime_type(ext);
             } else {
-                hint.with_extension(ext);
+                hint.with_extension(ext.trim_start_matches('.'));
             }
         }
         if let Some(m) = &mime {
@@ -109,7 +127,7 @@ impl SymphoniaSource {
             (Some(b), Some(d)) if d > 0 => Some(((b as f64 * 8.0) / (d as f64 / rate as f64) / 1000.0).round() as u32),
             _ => None,
         };
-        let meta = SourceMeta { codec: decoder.codec_info().short_name.to_string(), bitrate_kbps };
+        let meta = SourceMeta { codec: decoder.codec_info().short_name.to_string(), bitrate_kbps, ..Default::default() };
 
         Ok(Self {
             format,
@@ -123,7 +141,7 @@ impl SymphoniaSource {
             skip_until: None,
             duration,
             meta,
-            accurate_seek: ctx.accurate_seek || complete,
+            accurate_seek,
             consecutive_errors: 0,
             ended: false,
         })

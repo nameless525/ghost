@@ -152,7 +152,7 @@ pub(crate) fn tmp_dir(name: &str) -> PathBuf {
 }
 
 fn spec(url: &str, key: &str) -> SourceSpec {
-    SourceSpec::Http { url: url.to_string(), headers: vec![], cache_key: key.to_string(), format_hint: None }
+    SourceSpec::Http { url: url.to_string(), headers: vec![], cache_key: key.to_string(), format_hint: None, extras: Default::default() }
 }
 
 #[test]

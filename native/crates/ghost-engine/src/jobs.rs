@@ -59,8 +59,9 @@ pub fn analyze_job(
     events: Sender<EngineEvent>,
     loudness_tx: Option<Sender<Loudness>>,
     cancel: Arc<AtomicBool>,
+    loops: (crate::LoopMode, u32, f32),
 ) {
-    let (samples, channels, rate) = match decode_all(&source, &cache, cancel.clone()) {
+    let (samples, channels, rate) = match decode_all(&source, &cache, cancel.clone(), loops) {
         Ok(v) => v,
         Err(e) => {
             if let Some(tx) = &loudness_tx {

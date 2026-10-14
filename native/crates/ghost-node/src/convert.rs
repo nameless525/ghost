@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use ghost_engine::{
-    DeviceInfo, DownloadStatus, EngineEvent, LoopMode, NormalizationMode, OfflineAnalysis, PlaybackState, PositionInfo,
-    SourceSpec, TagInfo, TrackInfo, TrackLoad,
+    ArchiveListing, DeviceInfo, DownloadOptions, DownloadStatus, EngineEvent, LoopMode, NormalizationMode, OfflineAnalysis,
+    PlaybackState, PositionInfo, SourceExtras, SourceSpec, TagInfo, TrackInfo, TrackLoad,
 };
 use napi::bindgen_prelude::*;
 use napi::JsValue;
@@ -37,7 +37,8 @@ unsafe fn as_object<'a>(env: napi::sys::napi_env, v: napi::sys::napi_value, ctx:
     unsafe { Object::from_napi_value(env, v) }.map_err(|_| invalid(format!("{ctx} must be an object")))
 }
 
-/// `EngineSource`: `{ kind: 'http', url, headers?, cacheKey, formatHint? } | { kind: 'file', path, formatHint? }`
+/// `EngineSource`: `{ kind: 'http', url, headers?, cacheKey, formatHint? } | { kind: 'file', path, formatHint? }`,
+/// both with the optional `EngineSourceExtras` (`clipStartMs`, `clipEndMs`, `subsong`, `archiveEntry`).
 pub struct JsEngineSource {
     pub kind: String,
     pub url: Option<String>,
@@ -45,6 +46,10 @@ pub struct JsEngineSource {
     pub cache_key: Option<String>,
     pub format_hint: Option<String>,
     pub path: Option<String>,
+    pub clip_start_ms: Option<f64>,
+    pub clip_end_ms: Option<f64>,
+    pub subsong: Option<f64>,
+    pub archive_entry: Option<String>,
 }
 
 impl FromNapiValue for JsEngineSource {
@@ -58,6 +63,10 @@ impl FromNapiValue for JsEngineSource {
             cache_key: opt(&o, C, "cacheKey")?,
             format_hint: opt(&o, C, "formatHint")?,
             path: opt(&o, C, "path")?,
+            clip_start_ms: opt(&o, C, "clipStartMs")?,
+            clip_end_ms: opt(&o, C, "clipEndMs")?,
+            subsong: opt(&o, C, "subsong")?,
+            archive_entry: opt(&o, C, "archiveEntry")?,
         })
     }
 }
@@ -149,7 +158,39 @@ fn opt_f32(v: Option<f64>) -> Option<f32> {
     v.filter(|x| x.is_finite()).map(|x| x as f32)
 }
 
+/// Optional non-negative integer field (`NaN`, negatives and fractions are rejected).
+fn opt_index(v: Option<f64>, what: &str) -> Result<Option<u64>> {
+    match v {
+        None => Ok(None),
+        Some(x) if x.is_finite() && x >= 0.0 && x.fract() == 0.0 => Ok(Some(x as u64)),
+        Some(x) => Err(invalid(format!("source.{what} must be a non-negative integer (got {x})"))),
+    }
+}
+
+fn extras_from_js(s: &JsEngineSource) -> Result<SourceExtras> {
+    let clip_ms = |v: Option<f64>, what: &str| -> Result<Option<u64>> {
+        match v {
+            None => Ok(None),
+            Some(x) if x.is_finite() && x >= 0.0 => Ok(Some(x.round() as u64)),
+            Some(x) => Err(invalid(format!("source.{what} must be a non-negative number (got {x})"))),
+        }
+    };
+    let extras = SourceExtras {
+        clip_start_ms: clip_ms(s.clip_start_ms, "clipStartMs")?,
+        clip_end_ms: clip_ms(s.clip_end_ms, "clipEndMs")?,
+        subsong: opt_index(s.subsong, "subsong")?.map(|v| v.min(u32::MAX as u64) as u32),
+        archive_entry: s.archive_entry.clone().filter(|e| !e.is_empty()),
+    };
+    if let (Some(a), Some(b)) = (extras.clip_start_ms, extras.clip_end_ms) {
+        if b <= a {
+            return Err(invalid(format!("source.clipEndMs ({b}) must be after clipStartMs ({a})")));
+        }
+    }
+    Ok(extras)
+}
+
 pub fn source_from_js(s: JsEngineSource) -> Result<SourceSpec> {
+    let extras = extras_from_js(&s)?;
     match s.kind.as_str() {
         "http" => {
             let url = s.url.ok_or_else(|| invalid("http source requires `url`"))?;
@@ -161,6 +202,7 @@ pub fn source_from_js(s: JsEngineSource) -> Result<SourceSpec> {
                 headers,
                 cache_key,
                 format_hint: s.format_hint,
+                extras,
             })
         }
         "file" => {
@@ -168,6 +210,7 @@ pub fn source_from_js(s: JsEngineSource) -> Result<SourceSpec> {
             Ok(SourceSpec::File {
                 path: PathBuf::from(path),
                 format_hint: s.format_hint,
+                extras,
             })
         }
         other => Err(invalid(format!(
@@ -206,6 +249,25 @@ pub fn tags_from_js(t: JsTagInfo) -> TagInfo {
     }
 }
 
+/// `EngineDownloadOptions`: `{ renderFlac?: boolean }`.
+pub struct JsDownloadOptions {
+    pub render_flac: Option<bool>,
+}
+
+impl FromNapiValue for JsDownloadOptions {
+    unsafe fn from_napi_value(env: napi::sys::napi_env, v: napi::sys::napi_value) -> Result<Self> {
+        const C: &str = "options";
+        let o = unsafe { as_object(env, v, C)? };
+        Ok(JsDownloadOptions { render_flac: opt(&o, C, "renderFlac")? })
+    }
+}
+
+impl From<JsDownloadOptions> for DownloadOptions {
+    fn from(o: JsDownloadOptions) -> Self {
+        DownloadOptions { render_flac: o.render_flac }
+    }
+}
+
 pub fn loop_mode(s: &str) -> Result<LoopMode> {
     match s {
         "album" => Ok(LoopMode::Album),
@@ -230,6 +292,36 @@ pub fn normalization_mode(s: &str) -> Result<NormalizationMode> {
 
 // ---------------------------------------------------------------------------------------------
 // Outputs
+
+/// `ArchiveListing` entries: `{ path, size }`.
+#[napi(object)]
+pub struct JsArchiveEntry {
+    pub path: String,
+    pub size: f64,
+}
+
+/// `ArchiveListing` playlists: `{ path, text }`.
+#[napi(object)]
+pub struct JsArchivePlaylist {
+    pub path: String,
+    pub text: String,
+}
+
+/// `ArchiveListing`: `{ entries, playlists }`.
+#[napi(object)]
+pub struct JsArchiveListing {
+    pub entries: Vec<JsArchiveEntry>,
+    pub playlists: Vec<JsArchivePlaylist>,
+}
+
+impl From<ArchiveListing> for JsArchiveListing {
+    fn from(l: ArchiveListing) -> Self {
+        JsArchiveListing {
+            entries: l.entries.into_iter().map(|e| JsArchiveEntry { path: e.path, size: e.size as f64 }).collect(),
+            playlists: l.playlists.into_iter().map(|(path, text)| JsArchivePlaylist { path, text }).collect(),
+        }
+    }
+}
 
 #[napi(object, use_nullable = true)]
 pub struct JsEnginePosition {
@@ -388,6 +480,15 @@ impl ToNapiValue for JsEvent {
                 channels,
                 codec,
                 bitrate_kbps,
+                title,
+                artist,
+                album,
+                subsong_count,
+                subsong,
+                loop_start_ms,
+                loop_end_ms,
+                voice_count,
+                voice_names,
             }) => {
                 o.set("type", "trackInfo")?;
                 o.set("id", id)?;
@@ -396,6 +497,30 @@ impl ToNapiValue for JsEvent {
                 o.set("channels", channels as u32)?;
                 o.set("codec", codec)?;
                 o.set("bitrateKbps", bitrate_kbps)?;
+                // Additive fields (not in the TS contract yet): only present when known.
+                if let Some(v) = title {
+                    o.set("title", v)?;
+                }
+                if let Some(v) = artist {
+                    o.set("artist", v)?;
+                }
+                if let Some(v) = album {
+                    o.set("album", v)?;
+                }
+                if let Some(v) = subsong_count {
+                    o.set("subsongCount", v)?;
+                }
+                if let Some(v) = subsong {
+                    o.set("subsong", v)?;
+                }
+                if let (Some(a), Some(b)) = (loop_start_ms, loop_end_ms) {
+                    o.set("loopStartMs", a as f64)?;
+                    o.set("loopEndMs", b as f64)?;
+                }
+                if voice_count > 0 {
+                    o.set("voiceCount", voice_count)?;
+                    o.set("voiceNames", voice_names)?;
+                }
             }
             EngineEvent::Buffering { id, buffering } => {
                 o.set("type", "buffering")?;

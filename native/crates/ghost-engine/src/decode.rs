@@ -13,7 +13,7 @@ use crossbeam_channel::Sender;
 use crate::cache::CacheManager;
 use crate::resample::StreamResampler;
 use crate::source::loop_stage::{LoopSettings, LoopStage};
-use crate::source::{self, AudioSource, OpenCtx};
+use crate::source::{self, AudioSource, OpenCtx, SourceMeta};
 use crate::util::{ms_to_frames, spawn_named};
 use crate::voice::{Continuation, VoiceShared};
 use crate::SourceSpec;
@@ -22,7 +22,7 @@ const READ_FRAMES: usize = 1024;
 
 #[derive(Debug)]
 pub enum WorkerEvent {
-    Info { key: u64, rate: u32, channels: u16, codec: String, bitrate_kbps: Option<u32>, duration_ms: Option<u64> },
+    Info { key: u64, rate: u32, channels: u16, duration_ms: Option<u64>, meta: Box<SourceMeta>, loop_ms: Option<(u64, u64)>, voices: u32 },
     Error { key: u64, message: String },
     Eof { key: u64 },
 }
@@ -236,13 +236,15 @@ fn run(p: WorkerParams) {
         let ch = src.channels().max(1);
         let meta = src.meta();
         let duration = src.duration();
+        let to_ms = |f: u64| f * 1000 / rate as u64;
         let _ = events.send(WorkerEvent::Info {
             key,
             rate,
             channels: ch as u16,
-            codec: meta.codec,
-            bitrate_kbps: meta.bitrate_kbps,
-            duration_ms: duration.map(|d| d * 1000 / rate as u64),
+            duration_ms: duration.map(to_ms),
+            meta: Box::new(meta),
+            loop_ms: src.loop_info().map(|l| (to_ms(l.start), to_ms(l.end))),
+            voices: src.voice_count() as u32,
         });
         if run.as_ref().is_none_or(|r| r.rate != rate) {
             match Run::new(rate, dev_rate) {
@@ -341,13 +343,18 @@ fn run(p: WorkerParams) {
 }
 
 /// Decode a whole source at its native rate, downmixed to at most 2 channels (analysis jobs).
+/// Looping formats play as `loops` would (Endless counts as the Album default), so the analysis
+/// matches what is heard.
 pub fn decode_all(
     spec: &SourceSpec,
     cache: &Arc<CacheManager>,
     cancel: Arc<std::sync::atomic::AtomicBool>,
+    loops: (crate::LoopMode, u32, f32),
 ) -> Result<(Vec<f32>, usize, u32), String> {
     let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true };
-    let mut src = source::open(spec, &ctx).map_err(|e| e.message)?;
+    let raw = source::open(spec, &ctx).map_err(|e| e.message)?;
+    let settings = Arc::new(LoopSettings::fixed(LoopSettings::finite(loops)));
+    let mut src = LoopStage::new(raw, settings);
     let ch = src.channels().max(1);
     let rate = src.sample_rate();
     let out_ch = ch.min(2);

@@ -7,8 +7,9 @@
 //! - `engine`: controller thread. Owns the output, creates voices, runs the state machine and
 //!   turns everything into `EngineEvent`s. `Engine` methods just send it commands.
 //! - `cache` (+ `http`): sparse on-disk Range cache with a blocking `Read + Seek` reader.
-//! - `source`: the `AudioSource` trait (extension point for chiptune decoders), the symphonia
-//!   source and the loop stage.
+//! - `source`: the `AudioSource` trait (re-exported from `ghost-formats`), source opening
+//!   (symphonia, or the libgme / vgmstream / libopenmpt decoders in `ghost-formats`, archive
+//!   entries, clip ranges) and the loop stage.
 //! - `decode` (+ `resample`): decode workers that fill each voice's SPSC ring at the device rate.
 //!   Gapless next tracks are decoded as continuations through the same resampler.
 //! - `voice`: ring and shared state between a worker, the mixer and the controller.
@@ -17,7 +18,8 @@
 //! - `output`: cpal device streams and the offline null sink.
 //! - `clock`: audible-time segments published by the mixer, used for `position`.
 //! - `analysis_tap`: real-time analysis aligned to audible time.
-//! - `jobs`, `download`: background analysis and downloads with tagging.
+//! - `jobs`, `download` (+ `flac`): background analysis; downloads with tagging, rendering chip /
+//!   clip sources to FLAC.
 
 use std::path::PathBuf;
 
@@ -29,6 +31,7 @@ pub(crate) mod clock;
 pub(crate) mod decode;
 pub(crate) mod download;
 pub mod dsp;
+pub mod flac;
 pub(crate) mod engine;
 pub(crate) mod http;
 pub(crate) mod jobs;
@@ -40,7 +43,7 @@ pub mod util;
 pub(crate) mod voice;
 pub mod wav;
 
-pub use source::{AudioSource, LoopInfo};
+pub use source::{AudioSource, LengthHint, LoopInfo};
 
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
@@ -49,10 +52,75 @@ pub struct EngineConfig {
     pub user_agent: String,
 }
 
+/// Optional addressing inside a source, shared by both kinds (TS `EngineSourceExtras`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SourceExtras {
+    /// Play only `[clip_start_ms, clip_end_ms)` of the stream (e.g. one chapter of a full-OST
+    /// video). Seeks, positions and durations are relative to the clip.
+    pub clip_start_ms: Option<u64>,
+    pub clip_end_ms: Option<u64>,
+    /// 0-based sub-song for multi-song files (NSF, GBS, HES, KSS, FSB banks, modules, ...).
+    pub subsong: Option<u32>,
+    /// Path of the entry to play inside a `.zip` / `.7z` archive source.
+    pub archive_entry: Option<String>,
+}
+
+impl SourceExtras {
+    pub fn is_empty(&self) -> bool {
+        *self == SourceExtras::default()
+    }
+    pub fn has_clip(&self) -> bool {
+        self.clip_start_ms.is_some() || self.clip_end_ms.is_some()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SourceSpec {
-    Http { url: String, headers: Vec<(String, String)>, cache_key: String, format_hint: Option<String> },
-    File { path: PathBuf, format_hint: Option<String> },
+    Http { url: String, headers: Vec<(String, String)>, cache_key: String, format_hint: Option<String>, extras: SourceExtras },
+    File { path: PathBuf, format_hint: Option<String>, extras: SourceExtras },
+}
+
+impl SourceSpec {
+    /// A local file, no hint, no extras.
+    pub fn file(path: impl Into<PathBuf>) -> Self {
+        SourceSpec::File { path: path.into(), format_hint: None, extras: SourceExtras::default() }
+    }
+    /// An HTTP source cached under `cache_key` (the URL itself when empty), no hint, no extras.
+    pub fn http(url: impl Into<String>, cache_key: impl Into<String>) -> Self {
+        let url = url.into();
+        let key = cache_key.into();
+        let cache_key = if key.is_empty() { url.clone() } else { key };
+        SourceSpec::Http { url, headers: Vec::new(), cache_key, format_hint: None, extras: SourceExtras::default() }
+    }
+    pub fn with_extras(mut self, extras: SourceExtras) -> Self {
+        *self.extras_mut() = extras;
+        self
+    }
+    pub fn with_format_hint(mut self, hint: Option<String>) -> Self {
+        match &mut self {
+            SourceSpec::Http { format_hint, .. } | SourceSpec::File { format_hint, .. } => *format_hint = hint,
+        }
+        self
+    }
+    pub fn extras(&self) -> &SourceExtras {
+        match self {
+            SourceSpec::Http { extras, .. } | SourceSpec::File { extras, .. } => extras,
+        }
+    }
+    pub fn extras_mut(&mut self) -> &mut SourceExtras {
+        match self {
+            SourceSpec::Http { extras, .. } | SourceSpec::File { extras, .. } => extras,
+        }
+    }
+    pub fn format_hint(&self) -> Option<&str> {
+        match self {
+            SourceSpec::Http { format_hint, .. } | SourceSpec::File { format_hint, .. } => format_hint.as_deref(),
+        }
+    }
+    /// The same stream without extras (what the cache / file system stores).
+    pub fn base(&self) -> SourceSpec {
+        self.clone().with_extras(SourceExtras::default())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -90,14 +158,29 @@ pub enum PlaybackState {
     Buffering,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TrackInfo {
     pub id: String,
+    /// Playback length with the current loop settings (clip length for clips); `None` when
+    /// unknown or endless.
     pub duration_ms: Option<u64>,
     pub sample_rate: u32,
     pub channels: u16,
     pub codec: String,
     pub bitrate_kbps: Option<u32>,
+    /// Tags from the file itself (chip / tracker formats).
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    /// Sub-songs in the file and the one playing (0-based).
+    pub subsong_count: Option<u32>,
+    pub subsong: Option<u32>,
+    /// Loop region in source time, when the format has loop points.
+    pub loop_start_ms: Option<u64>,
+    pub loop_end_ms: Option<u64>,
+    /// Mutable voices (chip channels), see [`Engine::set_voice_mask`].
+    pub voice_count: u32,
+    pub voice_names: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +206,30 @@ pub struct TagInfo {
     pub cover_url: Option<String>,
     pub replay_gain_track_db: Option<f32>,
     pub replay_gain_track_peak: Option<f32>,
+}
+
+/// How `download_with` produces the file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DownloadOptions {
+    /// `Some(true)`: decode and render to FLAC (with the current loop settings; Endless renders as
+    /// Album). `Some(false)`: save the stream as-is (for an archive entry: the entry's bytes).
+    /// `None` (default): render chip / tracker / game-engine formats and clips, copy the rest.
+    pub render_flac: Option<bool>,
+}
+
+/// A file inside an archive source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchiveEntryInfo {
+    pub path: String,
+    pub size: u64,
+}
+
+/// What `inspect_archive` found: every file, plus the text of the `.m3u` / `.txt` files
+/// (NEZPlug playlists with per-track titles, lengths and loops).
+#[derive(Clone, Debug, Default)]
+pub struct ArchiveListing {
+    pub entries: Vec<ArchiveEntryInfo>,
+    pub playlists: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,12 +463,39 @@ impl Engine {
     /// Decode the whole (cached) source in the background; emits `EngineEvent::Analysis`.
     pub fn analyze(&self, id: String, source: SourceSpec) {
         let (cache, events, cancel) = (self.inner.cache.clone(), self._events_tx.clone(), self.inner.analyze_cancel.clone());
-        self.inner.jobs.submit(move || jobs::analyze_job(id, source, cache, events, None, cancel));
+        let loops = self.inner.loops.get();
+        self.inner.jobs.submit(move || jobs::analyze_job(id, source, cache, events, None, cancel, loops));
     }
 
     /// Copy/fetch the source to `dest`, tag it, emit `EngineEvent::Download` progress.
+    /// Chip / tracker / game-engine formats and clips are rendered to FLAC (see
+    /// [`DownloadOptions`]); the file then gets a `.flac` extension, and the `Done` event carries
+    /// the final path.
     pub fn download(&self, download_id: String, source: SourceSpec, dest: PathBuf, tags: TagInfo) {
-        self.inner.downloads.start(download_id, source, dest, tags, self.inner.cache.clone(), self._events_tx.clone());
+        self.download_with(download_id, source, dest, tags, DownloadOptions::default());
+    }
+
+    pub fn download_with(&self, download_id: String, source: SourceSpec, dest: PathBuf, tags: TagInfo, options: DownloadOptions) {
+        let loops = self.inner.loops.get();
+        self.inner.downloads.start(download_id, source, dest, tags, options, loops, self.inner.cache.clone(), self._events_tx.clone());
+    }
+
+    /// List an archive source (`.zip` / `.7z`, fetched through the stream cache) and return the
+    /// text of its playlists. Blocks until the archive is available.
+    pub fn inspect_archive(&self, source: &SourceSpec) -> Result<ArchiveListing, EngineError> {
+        source::inspect_archive(source, &self.inner.cache).map_err(|e| EngineError(e.message))
+    }
+
+    /// Mute chip voices on the playing tracks: bit `i` mutes voice `i` (see
+    /// `TrackInfo::voice_names`). Applies to sources that support it (libgme, libopenmpt); the
+    /// mask persists across tracks until changed.
+    pub fn set_voice_mask(&self, mask: u64) {
+        self.inner.loops.set_voice_mask(mask);
+    }
+
+    /// Mutable voices of the current track (0 when unsupported or nothing is playing).
+    pub fn voice_count(&self) -> u32 {
+        self.inner.shared.voice_count.load(std::sync::atomic::Ordering::Relaxed)
     }
     pub fn cancel_download(&self, download_id: &str) {
         self.inner.downloads.cancel(download_id);

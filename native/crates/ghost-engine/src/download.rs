@@ -1,6 +1,14 @@
 //! Downloads (DESIGN §2): copy from the stream cache when the file is whole, otherwise fetch it
 //! through the cache with progress; write to a temp file next to `dest`, tag it with lofty, then
 //! rename into place. A new download with an id that is already running replaces the old job.
+//!
+//! Chip / tracker / game-engine formats (anything `ghost-formats` decodes) and clips are rendered
+//! instead: decoded through the same source + loop stage as playback (the current loop settings,
+//! Endless counting as Album: 2 loops + 10 s fade), encoded to FLAC, tagged (title / game /
+//! author from the file fill in what the caller left empty). The file gets a `.flac` extension;
+//! the `Done` event reports the final path. Progress counts PCM bytes rendered against the PCM
+//! size of the whole track; the last progress event (before tagging) and `Done` carry the FLAC's
+//! real size.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -14,8 +22,14 @@ use crossbeam_channel::Sender;
 use parking_lot::Mutex;
 
 use crate::cache::CacheManager;
+use crate::flac::FlacWriter;
 use crate::http::Http;
-use crate::{DownloadStatus, EngineEvent, SourceSpec, TagInfo};
+use crate::source::loop_stage::{LoopSettings, LoopStage};
+use crate::source::{self, AudioSource, OpenCtx};
+use crate::{DownloadOptions, DownloadStatus, EngineEvent, LoopMode, SourceSpec, TagInfo};
+
+/// Renders longer than this are refused (a source that never ends).
+const MAX_RENDER_SEC: u64 = 3 * 3600;
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -66,7 +80,18 @@ impl Reporter {
 }
 
 impl Downloads {
-    pub fn start(&self, id: String, source: SourceSpec, dest: PathBuf, tags: TagInfo, cache: Arc<CacheManager>, events: Sender<EngineEvent>) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn start(
+        &self,
+        id: String,
+        source: SourceSpec,
+        dest: PathBuf,
+        tags: TagInfo,
+        options: DownloadOptions,
+        loops: (LoopMode, u32, f32),
+        cache: Arc<CacheManager>,
+        events: Sender<EngineEvent>,
+    ) {
         let gen = self.gen.fetch_add(1, Ordering::Relaxed) + 1;
         let cancel = Arc::new(AtomicBool::new(false));
         if let Some(old) = self.jobs.lock().insert(id.clone(), Job { gen, cancel: cancel.clone() }) {
@@ -77,7 +102,7 @@ impl Downloads {
         crate::util::spawn_named("ghost-download", move || {
             crate::util::set_low_priority();
             let mut rep = Reporter { id, gen, jobs, events, last: Instant::now() - PROGRESS_INTERVAL };
-            match run(&source, &dest, &tags, &cache, &cancel, &mut rep) {
+            match run(&source, &dest, &tags, options, loops, &cache, &cancel, &mut rep) {
                 Ok(path) => rep.send(DownloadStatus::Done, file_len(&path), Some(file_len(&path)), Some(path), None),
                 Err(_) if cancel.load(Ordering::Relaxed) => rep.send(DownloadStatus::Canceled, 0, None, None, None),
                 Err(e) => rep.send(DownloadStatus::Error, 0, None, None, Some(e)),
@@ -103,16 +128,30 @@ fn temp_path(dest: &Path, gen: u64) -> PathBuf {
     dest.with_file_name(format!(".{name}.{}-{gen}.ghostpart", std::process::id()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run(
     source: &SourceSpec,
     dest: &Path,
     tags: &TagInfo,
+    options: DownloadOptions,
+    loops: (LoopMode, u32, f32),
     cache: &Arc<CacheManager>,
     cancel: &Arc<AtomicBool>,
     rep: &mut Reporter,
 ) -> Result<PathBuf, String> {
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    }
+    let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true };
+    let render = match options.render_flac {
+        Some(r) => r,
+        None => source.extras().has_clip() || source::probe_family(source, &ctx).map_err(|e| e.message)?.is_some(),
+    };
+    if render {
+        return render_flac(source, dest, tags, loops, &ctx, rep);
+    }
+    if let Some(entry) = &source.extras().archive_entry {
+        return save_entry(source, entry, dest, tags, &ctx, rep);
     }
     let tmp = temp_path(dest, rep.gen);
     let result = (|| {
@@ -159,6 +198,130 @@ fn run(
         let _ = std::fs::remove_file(&tmp);
     }
     result
+}
+
+/// Tag `tmp`, then move it to `dest` (removing `tmp` on failure).
+fn finish_file(tmp: &Path, dest: &Path, tags: &TagInfo, http: &Http, cancel: &AtomicBool) -> Result<PathBuf, String> {
+    let result = (|| {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("canceled".to_string());
+        }
+        // Tagging failures are not fatal: the audio is intact, only metadata is missing.
+        let _ = write_tags(tmp, tags, http);
+        if cancel.load(Ordering::Relaxed) {
+            return Err("canceled".into());
+        }
+        std::fs::rename(tmp, dest).map_err(|e| format!("move into place: {e}"))?;
+        Ok(dest.to_path_buf())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(tmp);
+    }
+    result
+}
+
+/// An archive entry saved as-is.
+fn save_entry(source: &SourceSpec, entry: &str, dest: &Path, tags: &TagInfo, ctx: &OpenCtx<'_>, rep: &mut Reporter) -> Result<PathBuf, String> {
+    rep.progress(0, None, true);
+    let set = source::archive_cache::get(source, ctx).map_err(|e| e.message)?;
+    let (_, data) = set.find(entry).ok_or_else(|| format!("archive has no entry '{entry}'"))?;
+    let tmp = temp_path(dest, rep.gen);
+    std::fs::write(&tmp, &data[..]).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("write {}: {e}", tmp.display())
+    })?;
+    let n = data.len() as u64;
+    rep.progress(n, Some(n), true);
+    finish_file(&tmp, dest, tags, &ctx.cache.http, &ctx.cancel)
+}
+
+/// `dest` with a `.flac` extension (replacing a known audio / chip / archive extension), made
+/// unique if that file already exists.
+fn flac_dest(dest: &Path) -> PathBuf {
+    let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "download".into());
+    let stem = match ghost_formats::extension_of(&name) {
+        Some(e) if e == "flac" => return dest.to_path_buf(),
+        Some(e)
+            if e == "bin"
+                || ghost_formats::family_for_extension(&e).is_some()
+                || ghost_formats::detect::is_common_extension(&e)
+                || ghost_formats::archive::is_archive_extension(&e) =>
+        {
+            name[..name.len() - e.len() - 1].to_string()
+        }
+        _ => name,
+    };
+    let mut p = dest.with_file_name(format!("{stem}.flac"));
+    let mut i = 2;
+    while p.exists() {
+        p = dest.with_file_name(format!("{stem} ({i}).flac"));
+        i += 1;
+    }
+    p
+}
+
+/// Decode `source` through the loop stage and encode it to FLAC.
+fn render_flac(source: &SourceSpec, dest: &Path, tags: &TagInfo, loops: (LoopMode, u32, f32), ctx: &OpenCtx<'_>, rep: &mut Reporter) -> Result<PathBuf, String> {
+    rep.progress(0, None, true);
+    let opened = source::open_detailed(source, ctx).map_err(|e| e.message)?;
+    let meta = opened.source.meta();
+    let mut st = LoopStage::new(opened.source, Arc::new(LoopSettings::fixed(LoopSettings::finite(loops))));
+    let rate = st.sample_rate().max(1);
+    let ch = st.channels().max(1);
+    let out_ch = ch.min(2);
+    // Emulators and trackers produce 16-bit audio; decoded lossy/hi-res streams keep 24.
+    let bits = if opened.family.is_some() { 16 } else { 24 };
+    let bpf = (out_ch * bits / 8) as u64;
+    let total = st.duration().map(|f| f * bpf);
+    let dest = flac_dest(dest);
+    let tmp = temp_path(&dest, rep.gen);
+    let result = (|| {
+        let mut w = FlacWriter::create(&tmp, rate, out_ch, bits).map_err(|e| format!("create {}: {e}", tmp.display()))?;
+        let mut buf = vec![0.0f32; 4096 * ch];
+        let mut stereo = Vec::with_capacity(4096 * 2);
+        let max_frames = MAX_RENDER_SEC * rate as u64;
+        rep.progress(0, total, true);
+        loop {
+            if ctx.cancel.load(Ordering::Relaxed) {
+                return Err("canceled".to_string());
+            }
+            let n = st.read(&mut buf).map_err(|e| e.message)?;
+            if n == 0 {
+                break;
+            }
+            if ch > 2 {
+                stereo.clear();
+                source::to_stereo(&buf[..n * ch], ch, &mut stereo);
+                w.write(&stereo).map_err(|e| format!("write: {e}"))?;
+            } else {
+                w.write(&buf[..n * ch]).map_err(|e| format!("write: {e}"))?;
+            }
+            if w.frames() > max_frames {
+                return Err(format!("source did not end within {} hours", MAX_RENDER_SEC / 3600));
+            }
+            rep.progress(w.frames() * bpf, total, false);
+        }
+        w.finish().map_err(|e| format!("write: {e}"))?;
+        // Final progress in real file bytes (bytes == total), like a copy, before tagging.
+        let size = file_len(&tmp);
+        rep.progress(size, Some(size), true);
+        Ok(())
+    })();
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    let mut tags = tags.clone();
+    if tags.title.is_empty() {
+        tags.title = meta.title.clone().unwrap_or_default();
+    }
+    if tags.album.is_empty() {
+        tags.album = meta.album.clone().unwrap_or_default();
+    }
+    if tags.artist.is_none() {
+        tags.artist = meta.artist.clone();
+    }
+    finish_file(&tmp, &dest, &tags, &ctx.cache.http, &ctx.cancel)
 }
 
 fn copy(src: &mut dyn Read, dst: &mut File, total: Option<u64>, cancel: &AtomicBool, rep: &mut Reporter) -> Result<u64, String> {

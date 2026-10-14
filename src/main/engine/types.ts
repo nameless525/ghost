@@ -115,6 +115,30 @@ export interface TagInfo {
   replayGainTrackPeak: number | null
 }
 
+/** Options for `EngineBridge.download`. */
+export interface EngineDownloadOptions {
+  /**
+   * `true`: decode and render to FLAC with the current loop settings (Endless renders as Album:
+   * 2 loops + 10 s fade). `false`: save the stream as-is (for an archive entry, the entry's bytes).
+   * Default: render chip / tracker / game-engine formats and clips, copy everything else.
+   */
+  renderFlac?: boolean
+}
+
+/** Contents of an archive source (`EngineBridge.inspectArchive`). */
+export interface ArchiveListing {
+  /** Every file in the archive (`/`-separated paths, uncompressed sizes). */
+  entries: { path: string; size: number }[]
+  /**
+   * Text of the `.m3u` / `.m3u8` / `.txt` files, decoded (UTF-8, Shift-JIS or Windows-1252).
+   * joshw / Zophar sets ship NEZPlug playlists:
+   * `file.nsf::NSF,track,title,length,loop,fade` (`$`-prefixed tracks are hex and 0-based, decimal
+   * ones 1-based). The engine applies a matching line's timing on its own when playing that
+   * archive entry + subsong.
+   */
+  playlists: { path: string; text: string }[]
+}
+
 export interface EngineConfig {
   cacheDir: string
   cacheMaxBytes: number
@@ -142,8 +166,19 @@ export interface EngineBridge {
   setDevice(id: string | null): void
   /** Decode the full (cached) source and emit an 'analysis' event. */
   analyze(id: string, source: EngineSource): void
-  download(downloadId: string, source: EngineSource, destPath: string, tags: TagInfo): void
+  /**
+   * Save `source` to `destPath`, tagged. Chip / tracker / game-engine formats and clips are rendered
+   * to FLAC by default (see `EngineDownloadOptions`); the file then gets a `.flac` extension, and the
+   * 'done' event's `path` is the final file.
+   */
+  download(downloadId: string, source: EngineSource, destPath: string, tags: TagInfo, options?: EngineDownloadOptions): void
   cancelDownload(downloadId: string): void
+  /**
+   * List a `.zip` / `.7z` source (fetched through the stream cache) and return the text of its
+   * playlists. Rejects if it isn't an archive or can't be fetched. Optional: engines without archive
+   * support (the null engine) don't have it.
+   */
+  inspectArchive?(source: EngineSource): Promise<ArchiveListing>
   /** Name of the shared-memory region the renderer maps for analysis frames. */
   analysisShmName(): string
   onEvent(cb: (e: EngineEvent) => void): void
