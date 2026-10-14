@@ -6,3 +6,18 @@ version.workspace = true
 [dependencies]
 ghost-analysis = { path = "../ghost-analysis" }
 crossbeam-channel = "0.5"
+# Every pure-Rust codec/format; gapless trimming is a decoder option (on by default, set explicitly).
+symphonia = { version = "0.6.1", features = ["all", "opt-simd"] }
+rubato = "5.0.1"
+cpal = "0.18.2"
+rtrb = "0.4"
+# No gzip: Range requests on audio must see raw bytes.
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+lofty = "0.25.4"
+parking_lot = "0.12"
+sha1_smol = "1"
+libc = "0.2"
+
+[dev-dependencies]
+tiny_http = "0.12"
+lofty = "0.25.4"
