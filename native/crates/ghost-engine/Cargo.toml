@@ -1,0 +1,8 @@
+[package]
+name = "ghost-engine"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+ghost-analysis = { path = "../ghost-analysis" }
+crossbeam-channel = "0.5"

@@ -1,0 +1,6 @@
+[package]
+name = "ghost-analysis"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]

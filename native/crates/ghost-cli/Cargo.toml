@@ -1,0 +1,12 @@
+[package]
+name = "ghost-cli"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "ghost-cli"
+path = "src/main.rs"
+
+[dependencies]
+ghost-engine = { path = "../ghost-engine" }
+ghost-analysis = { path = "../ghost-analysis" }
