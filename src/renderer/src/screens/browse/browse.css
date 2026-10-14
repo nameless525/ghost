@@ -49,6 +49,9 @@
   z-index: 2;
   touch-action: none;
   contain: strict;
+  /* Panels dissolve before they reach the footer bar instead of showing through it. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 132px), transparent calc(100% - 64px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 132px), transparent calc(100% - 64px));
 }
 .bc.is-dragging {
   cursor: grabbing;

@@ -93,12 +93,14 @@ interface Entry {
   to: ScreenId | null
 }
 
-let keySeq = 0
+// Keys derive from the current list (not a module counter) so they stay unique even if this module is
+// re-executed by hot reload while React keeps the existing entries.
+const nextKey = (list: Entry[]) => list.reduce((m, e) => Math.max(m, e.key), 0) + 1
 const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms))
 
 export function ScreenStack() {
   const screen = useUI((s) => s.screen)
-  const [entries, setEntries] = useState<Entry[]>(() => [{ key: ++keySeq, id: screen, lifecycle: 'entering', direction: 'forward', from: null, to: null }])
+  const [entries, setEntries] = useState<Entry[]>(() => [{ key: 1, id: screen, lifecycle: 'entering', direction: 'forward', from: null, to: null }])
 
   useEffect(() => {
     setEntries((list) => {
@@ -107,7 +109,7 @@ export function ScreenStack() {
       if (top?.id === screen) return list
       const direction: NavDirection = !top || screenDepth(screen) >= screenDepth(top.id) ? 'forward' : 'back'
       const next = list.map((e) => (e.lifecycle !== 'exiting' ? { ...e, lifecycle: 'exiting' as const, direction, to: screen } : e))
-      return [...next, { key: ++keySeq, id: screen, lifecycle: 'entering', direction, from: top?.id ?? null, to: null }]
+      return [...next, { key: nextKey(list), id: screen, lifecycle: 'entering', direction, from: top?.id ?? null, to: null }]
     })
   }, [screen])
 

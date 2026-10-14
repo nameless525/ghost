@@ -742,7 +742,14 @@ export class Carousel {
           const want = this.awaitingFirstPage
           this.awaitingFirstPage = null
           const j = want.groupKey ? m.findLoaded(want.groupKey) : -1
-          const target: Sel = j >= 0 ? { gi: j, albumId: want.albumId, trackId: want.trackId } : { gi: 0, albumId: null, trackId: null }
+          // Very first visit (nothing remembered, no search): open on a random game, like a fresh
+          // song select, instead of whatever happens to sort first.
+          const first = !want.groupKey && !memory.groupKey && !m.query.text.trim() && this.total > 1
+          const target: Sel =
+            j >= 0
+              ? { gi: j, albumId: want.albumId, trackId: want.trackId }
+              : { gi: first ? Math.floor(Math.random() * Math.min(this.total, 5000)) : 0, albumId: null, trackId: null }
+          if (first) m.ensureGroups(target.gi - 8, target.gi + 8)
           this.sel = { gi: -1, albumId: null, trackId: null }
           this.exAlbum = null
           this.select(target, { sound: false, instant: true })

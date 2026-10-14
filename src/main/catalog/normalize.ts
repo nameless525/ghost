@@ -152,9 +152,12 @@ export function headKey(title: string): string | null {
 
 /** Sort key: folded, leading "the"/punctuation removed. */
 export function sortKey(name: string): string {
-  return foldText(name)
+  const k = foldText(name)
     .replace(/^[^\p{L}\p{N}]+/u, '')
     .replace(/^the\s+/, '')
+  // Titles that don't start with a Latin letter or digit (symbol art, other scripts) sort after Z,
+  // so an A–Z browse opens on recognisable names.
+  return /^[a-z0-9]/.test(k) ? k : '\u{10ffff}' + k
 }
 
 const ROMAN_OR_NUMBER = /\s+(?:\d+(?:\.\d+)?|[ivxlc]+|hd|remastered|remake|reloaded|returns|origins|2d|3d|dx|plus|\+|deluxe|ex|zero)$/i

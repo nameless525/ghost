@@ -11,6 +11,14 @@ import { CoverArt } from '../../ui/CoverArt'
 import { IntensityBadge, SourceBadge } from '../../ui/Badges'
 import { formatTime } from '../../ui/format'
 import { GhostMark } from '../../ui/GhostMark'
+
+/** The format that will actually play, given the streaming-quality setting. */
+function preferredFormat(formats: Album['formats']): Album['formats'][number] | null {
+  if (!formats.length) return null
+  const q = useSettings.getState().sources.quality
+  const order = q === 'lossless' ? ['flac', 'wav', 'm4a', 'mp3', 'ogg', 'opus'] : ['mp3', 'm4a', 'ogg', 'opus', 'flac', 'wav']
+  return [...formats].sort((a, b) => (order.indexOf(a) + 99) % 99 - (order.indexOf(b) + 99) % 99)[0] ?? formats[0]
+}
 import { LoadingRing } from '../../ui/LoadingRing'
 import { Wedge } from '../../ui/Panel'
 import { cx } from '../../ui/util'
@@ -121,7 +129,7 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
         { label: 'Peak', value: d ? <IntensityBadge value={peak >= 0 ? peak : null} size="lg" glow /> : <LoadingRing size={18} /> },
         { label: 'Discs', value: <span className="tnum">{d ? Math.max(1, ...d.tracks.map((t) => t.disc)) : '–'}</span> }
       ],
-      source: { badge: al.formats[0] ?? null, provider: providerName(al.provider), extra: al.formats.length ? uniq(al.formats.map((f) => f.toUpperCase())).join(' · ') : null },
+      source: { badge: preferredFormat(al.formats), provider: providerName(al.provider), extra: al.formats.length ? uniq(al.formats.map((f) => f.toUpperCase())).join(' · ') : null },
       albums,
       albumId: al.id
     }
@@ -162,7 +170,7 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
     hero: g.hero ?? g.cover,
     accent: g.accent,
     stats,
-    source: providers.length ? { badge: formats.find((f) => f === 'flac') ?? formats[0] ?? null, provider: providers.map(providerName).join(', '), extra: formats.length ? formats.map((f) => f.toUpperCase()).join(' · ') : null } : null,
+    source: providers.length ? { badge: preferredFormat(formats), provider: providers.map(providerName).join(', '), extra: formats.length ? formats.map((f) => f.toUpperCase()).join(' · ') : null } : null,
     albums,
     albumId: null
   }

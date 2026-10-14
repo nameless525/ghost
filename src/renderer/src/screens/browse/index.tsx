@@ -206,9 +206,9 @@ export default function BrowseScreen(props: BrowseScreenProps) {
         if (pendingRefresh) {
           pendingRefresh = false
           activeCarousel?.refreshData()
-          timer = window.setTimeout(flush, 700)
+          timer = window.setTimeout(flush, s.indexing ? 2500 : 700)
         }
-      }, 700)
+      }, s.indexing ? 2500 : 700)
     }
     void ghost().catalog.status().then(onStatus).catch(() => {})
     const off = ghost().on('catalog:status', onStatus)
