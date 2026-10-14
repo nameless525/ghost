@@ -239,7 +239,7 @@ export class QueryEngine {
     }
 
     // "chrono trigger ost": soundtrack decoration rarely appears literally ("Original Sound
-    // Version"), so next to other words it's optional; it still counts toward ranking.
+    // Version"), so next to other words it's ignored.
     const soft = p.terms.filter((t) => SOFT_TERMS.has(ftsFold(t)))
     const hard = soft.length && soft.length < p.terms.length ? p.terms.filter((t) => !soft.includes(t)) : p.terms
     for (const t of hard) term(t, false, 'any', level === 'track')
@@ -346,7 +346,6 @@ export class QueryEngine {
         params.push(...tParams)
       }
     }
-    if (hard !== p.terms) for (const t of soft) strong.push(phrase(` ${ftsFold(t)} `))
     return { where, params, trackMatch, empty: where.length === 0, strong: strong.length ? { game: `{game} : (${strong.join(' AND ')})`, any: `{game album} : (${strong.join(' AND ')})` } : null }
   }
 
