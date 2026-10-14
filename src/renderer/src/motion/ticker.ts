@@ -42,6 +42,12 @@ class Ticker {
   frameId = 0
   /** Smoothed frames per second. */
   fps = 60
+  /**
+   * Frame-rate cap (frames per second). Infinity = display refresh. Lowered by the pacing policy
+   * (motion/pacing.ts) when the app is idle or unfocused, so a music player left in the
+   * background doesn't keep the GPU compositing at full rate.
+   */
+  maxFps = Infinity
 
   private entries: Entry[] = []
   private raf = 0
@@ -103,6 +109,12 @@ class Ticker {
 
   private loop = (t: number): void => {
     if (!this.running) return
+    // Frame pacing: skip this vsync if we're running faster than the cap (no style writes on a
+    // skipped frame means the compositor has nothing to redraw).
+    if (this.maxFps !== Infinity && this.last && t - this.last < 1000 / this.maxFps - 2) {
+      this.raf = requestAnimationFrame(this.loop)
+      return
+    }
     const raw = this.last ? t - this.last : 1000 / 60
     this.last = t
     this.rawDt = raw

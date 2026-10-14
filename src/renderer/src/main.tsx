@@ -7,11 +7,13 @@ import { createRoot } from 'react-dom/client'
 import { installMockGhost } from './mock'
 import { initPlayerStore } from './state/player'
 import { initSettingsStore } from './state/settings'
+import { initFramePacing } from './motion/pacing'
 import App from './App'
 
 if (import.meta.env.GHOST_WEB_MOCK || !window.ghost) installMockGhost()
 initPlayerStore()
 initSettingsStore()
+initFramePacing()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
