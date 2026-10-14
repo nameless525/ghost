@@ -28,6 +28,7 @@ export function sanitizeSettings(s: Settings, defaults: Settings): Settings {
   if (!['lossless', 'high', 'saver'].includes(s.sources.quality)) out.sources.quality = defaults.sources.quality
   if (!Array.isArray(s.sources.order)) out.sources.order = [...defaults.sources.order]
   if (!Array.isArray(s.sources.disabled)) out.sources.disabled = []
+  if (typeof s.sources.crawlJoshw !== 'boolean') out.sources.crawlJoshw = false
   out.library.cacheMaxGb = clamp(s.library.cacheMaxGb, 0.25, 1000, defaults.library.cacheMaxGb)
   if (typeof s.library.downloadDir !== 'string' || !s.library.downloadDir.trim()) out.library.downloadDir = defaults.library.downloadDir
   if (typeof s.library.namingTemplate !== 'string' || !s.library.namingTemplate.trim()) out.library.namingTemplate = defaults.library.namingTemplate

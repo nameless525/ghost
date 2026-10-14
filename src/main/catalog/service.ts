@@ -180,7 +180,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     if (internals.chip === false) return null
     const p = getRegistry().get(CHIP_ID)
     if (!(p instanceof ChipProvider)) return null
-    chipIndexer = new ChipIndexer({ repo, provider: p, onProgress: notify, log, now, ...(internals.chip ?? {}) })
+    chipIndexer = new ChipIndexer({ repo, provider: p, onProgress: notify, log, now, joshwEnabled: () => deps.getSettings().sources.crawlJoshw === true, ...(internals.chip ?? {}) })
     return chipIndexer
   }
   function maybeStartChip(): void {

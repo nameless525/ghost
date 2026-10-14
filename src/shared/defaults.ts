@@ -16,7 +16,7 @@ export function defaultSettings(downloadDir: string): Settings {
       uiSounds: true,
       uiSoundVolume: 0.6
     },
-    sources: { order: [...DEFAULT_SOURCE_ORDER], disabled: [], quality: 'lossless', localFolders: [] },
+    sources: { order: [...DEFAULT_SOURCE_ORDER], disabled: [], quality: 'lossless', localFolders: [], crawlJoshw: false },
     library: {
       downloadDir,
       namingTemplate: '{game}/{album} ({year})/{disc}-{track} {title}',

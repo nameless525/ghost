@@ -942,7 +942,22 @@ export const SECTIONS: SectionDef[] = [
           )
         ]
       },
-      { title: 'Local music', rows: [row('folders', 'Local music folders', FoldersRow, 'Folders scanned by the Local files source.', 'local files folder directory rips scan')] }
+      { title: 'Local music', rows: [row('folders', 'Local music folders', FoldersRow, 'Folders scanned by the Local files source.', 'local files folder directory rips scan')] },
+      {
+        title: 'Chiptune rips',
+        rows: [
+          row(
+            'joshw',
+            'Index joshw.info rip sets',
+            toggleRow(
+              (s) => s.sources.crawlJoshw,
+              (v) => ({ sources: { crawlJoshw: v } })
+            ),
+            'Adds original-hardware NSF / SPC / GBS / HES / KSS sets for thousands of games. Off by default because joshw.info’s robots.txt asks automated tools not to crawl it; turn it on only if you’re comfortable with a slow, cached monthly read of its listings. vgmrips.net is always indexed.',
+            'chip chiptune nsf spc gbs hes kss joshw hcs64 rips robots crawl'
+          )
+        ]
+      }
     ]
   },
   {

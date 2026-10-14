@@ -66,6 +66,8 @@ export interface ChipIndexerDeps {
   pageDelayMs?: number
   /** Only these joshw hosts (default: all of JOSHW_SOURCES). */
   hosts?: string[]
+  /** Whether the joshw.info listings may be crawled (user opt-in; robots.txt disallows bots). Default true. */
+  joshwEnabled?: () => boolean
   /** Crawl vgmrips.net (default true). */
   vgmrips?: boolean
   /** At most this many listing pages per source (smoke tests). */
@@ -99,7 +101,8 @@ export class ChipIndexer {
 
   private joshwSources(): JoshwSource[] {
     const only = this.deps.hosts
-    return only ? JOSHW_SOURCES.filter((s) => only.includes(s.host)) : JOSHW_SOURCES
+    if (only) return JOSHW_SOURCES.filter((s) => only.includes(s.host))
+    return this.deps.joshwEnabled?.() === false ? [] : JOSHW_SOURCES
   }
 
   private sourceKeys(): string[] {

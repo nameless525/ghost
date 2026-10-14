@@ -342,6 +342,11 @@ export interface Settings {
     quality: 'lossless' | 'high' | 'saver'
     /** Folders scanned by the local-files provider. */
     localFolders: string[]
+    /**
+     * Index joshw.info's chiptune rip listings. Off by default: that site's robots.txt asks
+     * automated clients not to crawl it. vgmrips.net (which allows it) is always indexed.
+     */
+    crawlJoshw: boolean
   }
   library: {
     downloadDir: string
