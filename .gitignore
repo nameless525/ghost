@@ -10,3 +10,4 @@ native/dist/
 .vite/
 coverage/
 .ghost-dev/
+*.tsbuildinfo
