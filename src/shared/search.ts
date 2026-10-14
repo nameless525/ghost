@@ -140,7 +140,12 @@ export const SOURCE_ALIASES: Record<string, string> = {
   bc: 'bandcamp',
   local: 'local',
   file: 'local',
-  files: 'local'
+  files: 'local',
+  zophar: 'zophar',
+  zophars: 'zophar',
+  modland: 'modland',
+  soundcloud: 'soundcloud',
+  sc: 'soundcloud'
 }
 
 export const SOURCE_FORMAT_VALUES = new Set(['flac', 'mp3', 'ogg', 'm4a', 'aac', 'opus', 'wav', 'chip'])

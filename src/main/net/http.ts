@@ -9,10 +9,11 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { GHOST_VERSION } from '../../shared/version'
 import { blockedMessage, NetError } from './errors'
 import { HostLimiter, type Priority } from './limiter'
 
-export const GHOST_USER_AGENT = 'GHOST/0.1 (personal video game soundtrack player)'
+export const GHOST_USER_AGENT = `GHOST/${GHOST_VERSION} (personal video game soundtrack player)`
 
 export const DAY = 24 * 3600_000
 export const TTL = {

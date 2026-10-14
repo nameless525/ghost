@@ -215,6 +215,17 @@ function formatBadges(formats: AudioFormat[]): string {
   return out
 }
 
+/** Where an album comes from, when it isn't the main catalog source: [tag, full name]. */
+const PROVIDER_TAGS: Record<string, [string, string]> = {
+  zophar: ['Zophar', 'Zophar’s Domain'],
+  modland: ['Modland', 'Modland'],
+  archive: ['IA', 'the Internet Archive'],
+  youtube: ['YouTube', 'YouTube'],
+  soundcloud: ['SoundCloud', 'SoundCloud'],
+  bandcamp: ['Bandcamp', 'Bandcamp'],
+  local: ['Local', 'your music folders']
+}
+
 export function fillAlbum(n: PanelNode, a: Album, title: string, showGame: boolean, expanded: boolean): void {
   setText(n, 'title', n.title, title)
   const bits: string[] = []
@@ -223,7 +234,13 @@ export function fillAlbum(n: PanelNode, a: Album, title: string, showGame: boole
   if (a.trackCount != null) bits.push(plural(a.trackCount, 'track'))
   if (a.totalMs) bits.push(formatTime(a.totalMs))
   setText(n, 'sub', n.sub, bits.join(' · '))
-  setHTML(n, 'right', n.right, `<span class="bc-kind bc-kind--${a.kind}">${esc(KIND_LABEL[a.kind] ?? a.kind)}</span>${formatBadges(a.formats)}`)
+  const from = PROVIDER_TAGS[a.provider]
+  setHTML(
+    n,
+    'right',
+    n.right,
+    `${from ? `<span class="bc-from" title="From ${esc(from[1])}">${esc(from[0])}</span>` : ''}<span class="bc-kind bc-kind--${a.kind}">${esc(KIND_LABEL[a.kind] ?? a.kind)}</span>${formatBadges(a.formats)}`
+  )
   setImg(n, a.cover, 40) // .bc-thumb is 38 css px
   setClass(n, 'is-expanded', expanded)
 }

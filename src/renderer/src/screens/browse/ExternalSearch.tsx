@@ -1,12 +1,14 @@
-// "Can't find it?": search YouTube, Internet Archive and Bandcamp for album-like results and
+// "Can't find it?": search the web sources (YouTube, SoundCloud, Internet Archive, Bandcamp) for album-like results and
 // import one into the catalog. Used inline by the empty state and inside a dialog from the footer.
 import { Check, Download, ExternalLink, Landmark, Telescope } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import type { AlbumDetail, ExternalAlbumHit } from '@shared/types'
+import { withKnownSources } from '@shared/defaults'
+import type { AlbumDetail, ExternalAlbumHit, ExternalProviderId } from '@shared/types'
 import { ghost } from '../../ghost'
 import { stagger } from '../../motion/tween'
 import { notify } from '../../shell/notifications'
 import { sfx } from '../../sound'
+import { useSettings } from '../../state/settings'
 import { Button } from '../../ui/Button'
 import { CoverArt } from '../../ui/CoverArt'
 import { Dialog } from '../../ui/Dialog'
@@ -18,15 +20,33 @@ import { Tooltip } from '../../ui/Tooltip'
 import { cx } from '../../ui/util'
 import { useBrowse } from './store'
 
-const PROVIDERS: Record<ExternalAlbumHit['provider'], { name: string; hue: string }> = {
+const PROVIDERS: Record<ExternalProviderId, { name: string; hue: string }> = {
   youtube: { name: 'YouTube', hue: 'var(--danger)' },
   archive: { name: 'Internet Archive', hue: 'var(--info)' },
-  bandcamp: { name: 'Bandcamp', hue: 'var(--hue-downloads)' }
+  bandcamp: { name: 'Bandcamp', hue: 'var(--hue-downloads)' },
+  soundcloud: { name: 'SoundCloud', hue: 'var(--warning)' }
+}
+
+/** The enabled web sources in priority order, as "YouTube, SoundCloud, Internet Archive and Bandcamp". */
+export function useExternalSourceNames(): string {
+  const order = useSettings((s) => s.sources.order)
+  const disabled = useSettings((s) => s.sources.disabled)
+  const names = withKnownSources(order)
+    .filter((id): id is ExternalProviderId => id in PROVIDERS && !disabled.includes(id))
+    .map((id) => PROVIDERS[id].name)
+  if (!names.length) return 'the web'
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
 /** Generic provider glyphs (drawn here; no brand assets). */
 export function ProviderIcon({ provider }: { provider: ExternalAlbumHit['provider'] }) {
   if (provider === 'archive') return <Landmark className="bx-prov__svg" />
+  if (provider === 'soundcloud')
+    return (
+      <svg className="bx-prov__svg" viewBox="0 0 24 24" aria-hidden>
+        <path d="M2 15.5a2.5 2.5 0 0 1 2.5-2.5h.5v5h-.5A2.5 2.5 0 0 1 2 15.5M7 10h1.5v8H7zm3-2h1.5v10H10zm3-1a5.5 5.5 0 0 1 5.4 4.4A3.3 3.3 0 0 1 22 14.7 3.3 3.3 0 0 1 18.7 18H13z" fill="currentColor" />
+      </svg>
+    )
   if (provider === 'bandcamp')
     return (
       <svg className="bx-prov__svg" viewBox="0 0 24 24" aria-hidden>
@@ -65,6 +85,7 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
   const list = useRef<HTMLDivElement>(null)
   const seq = useRef(0)
   const q = query.trim()
+  const sources = useExternalSourceNames()
 
   const run = async () => {
     if (!q) return
@@ -117,7 +138,7 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
   if (phase === 'idle') {
     return (
       <Button variant="primary" size={compact ? 'md' : 'lg'} icon={<Telescope />} onClick={() => void run()} disabled={!q}>
-        Search YouTube, Internet Archive and Bandcamp for “{q}”
+        Search the web for “{q}”
       </Button>
     )
   }
@@ -127,7 +148,7 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
       {phase === 'loading' && (
         <div className="bx__loading">
           <LoadingRing size={34} />
-          <span>Searching YouTube, Internet Archive and Bandcamp…</span>
+          <span>Searching {sources}…</span>
         </div>
       )}
       {phase === 'error' && (
@@ -206,10 +227,11 @@ export function ExternalSearchDialog({ onImported }: { onImported: (d: AlbumDeta
     }
   }, [open, initial])
   const close = () => useBrowse.setState({ externalOpen: false })
+  const sources = useExternalSourceNames()
   return (
     <Dialog open={open} onClose={close} title="Search elsewhere" icon={<Telescope />} width={720} hue="browse">
       <div className="bx-dialog">
-        <p className="bx-dialog__lead">Can’t find a soundtrack? Look for album-like uploads on YouTube, the Internet Archive and Bandcamp, then import one into your catalog.</p>
+        <p className="bx-dialog__lead">Can’t find a soundtrack? Look for album-like uploads on {sources}, then import one into your catalog.</p>
         <SearchInput value={draft} onChange={setDraft} onSubmit={(v) => setQuery(v)} placeholder="Game or soundtrack name" autoFocus onEscape={close} />
         <div className="bx-dialog__results">
           {query.trim() ? (

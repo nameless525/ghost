@@ -282,3 +282,65 @@ describe('resolver: more providers plug in by priority', () => {
     expect(again[0].provider).toBe('khinsider')
   })
 })
+
+describe('several index sources', () => {
+  /** A tiny IndexProvider: one section with `pages` pages of two albums each. */
+  function fakeIndex(id: string, titles: string[][], calls: string[]): Provider & { indexSections(): { key: string; label: string }[]; fetchIndexPage(k: string, p: number): Promise<import('../providers/types').IndexPage> } {
+    return {
+      id,
+      name: id.toUpperCase(),
+      indexPageDelayMs: 0,
+      indexSections: () => [{ key: 'all', label: 'All' }],
+      async fetchIndexPage(_k: string, page: number) {
+        calls.push(`${id}:${page}`)
+        const items = titles[page - 1].map((title) => ({
+          provider: id,
+          ref: `${id}-${title}`,
+          title,
+          titleFromRef: false,
+          platforms: [],
+          kind: 'gamerip' as const,
+          typeLabel: null,
+          year: null,
+          thumb: null,
+          cover: null,
+          catalogNo: null,
+          addedAt: null
+        }))
+        return { items, page, totalPages: titles.length, totalAlbums: null }
+      },
+      async resolveStream(): Promise<StreamInfo[]> {
+        return []
+      }
+    } as never
+  }
+
+  it('crawls the main source first, then each other source once; re-index re-reads all of them', async () => {
+    const calls: string[] = []
+    const settings: Settings = defaultSettings('/tmp/ghost-dl')
+    const primary = fakeIndex('main', [['Chrono Trigger OST', 'Hollow Knight OST'], ['Ys OST']], calls)
+    const extra = fakeIndex('extra', [['Chrono Trigger (Gamerip)', 'Mother 3 (Gamerip)']], calls)
+    const muted = fakeIndex('muted', [['Never Crawled']], calls)
+    const svc = createCatalogService(
+      { db: memoryDb(), broadcast: (() => {}) as never, getSettings: () => ({ ...settings, sources: { ...settings.sources, disabled: ['muted'] } }) },
+      { registry: new ProviderRegistry().register(primary).register(extra).register(muted), startDelayMs: 0, crawlPageDelayMs: 0, disableEnrichment: true, chip: false, log: () => {} }
+    )
+    svc.start()
+    await until(() => calls.includes('extra:1'))
+    await until(async () => !(await svc.status()).indexing)
+    expect(calls).toEqual(['main:1', 'main:2', 'extra:1'])
+    const games = await svc.browse({ text: '', group: 'game', sort: 'title', offset: 0, limit: 10 })
+    // the second source's Chrono Trigger rip joins the existing game; Mother 3 is new
+    expect(games.groups.map((g) => [g.title, g.albumCount])).toEqual([
+      ['Chrono Trigger', 2],
+      ['Hollow Knight', 1],
+      ['Mother 3', 1],
+      ['Ys', 1]
+    ])
+    calls.length = 0
+    await svc.reindex()
+    await until(() => calls.includes('extra:1'))
+    expect(calls).toEqual(['main:1', 'main:2', 'extra:1'])
+    svc.stop()
+  })
+})

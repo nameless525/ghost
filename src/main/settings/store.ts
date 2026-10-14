@@ -2,7 +2,7 @@
 // change listeners. Pure Node (no Electron imports) so it can be unit-tested.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { mergeSettings } from '../../shared/defaults'
+import { mergeSettings, withKnownSources } from '../../shared/defaults'
 import type { DeepPartial, Settings } from '../../shared/types'
 
 export type SettingsListener = (next: Settings, prev: Settings) => void
@@ -26,7 +26,7 @@ export function sanitizeSettings(s: Settings, defaults: Settings): Settings {
   if (!['auto', 'track', 'album'].includes(a.normalization.mode)) out.audio.normalization.mode = d.normalization.mode
   if (typeof a.device !== 'string' || !a.device) out.audio.device = 'default'
   if (!['lossless', 'high', 'saver'].includes(s.sources.quality)) out.sources.quality = defaults.sources.quality
-  if (!Array.isArray(s.sources.order)) out.sources.order = [...defaults.sources.order]
+  out.sources.order = Array.isArray(s.sources.order) ? withKnownSources(s.sources.order.filter((x) => typeof x === 'string'), defaults.sources.order) : [...defaults.sources.order]
   if (!Array.isArray(s.sources.disabled)) out.sources.disabled = []
   if (typeof s.sources.crawlJoshw !== 'boolean') out.sources.crawlJoshw = false
   out.library.cacheMaxGb = clamp(s.library.cacheMaxGb, 0.25, 1000, defaults.library.cacheMaxGb)

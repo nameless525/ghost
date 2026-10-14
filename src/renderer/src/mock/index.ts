@@ -26,6 +26,7 @@ import type {
   TrackView
 } from '@shared/types'
 import { FIXTURE_GAMES, type FixtureGame } from './fixtures'
+import { GHOST_VERSION } from '@shared/version'
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -610,6 +611,12 @@ export function installMockGhost(): void {
         const as = albums.filter((a) => a.gameId === g.id)
         return delay({ groupKey: `game:${g.id}`, albumId: as[Math.floor(Math.random() * as.length)]?.id ?? null })
       },
+      sources: () =>
+        delay([
+          { id: 'khinsider', albums: albums.length, lastIndexedAt: Date.now() - 2 * 86_400_000, indexing: false },
+          { id: 'zophar', albums: 0, lastIndexedAt: null, indexing: true },
+          { id: 'chip', albums: 0, lastIndexedAt: null, indexing: false }
+        ]),
       suggest: (text, limit = 5) => {
         // Crude stand-in for the trigram matcher: names sharing the query's first three letters.
         const head = text.trim().toLowerCase().slice(0, 3)
@@ -824,7 +831,7 @@ export function installMockGhost(): void {
     system: {
       openExternal: async (url) => void window.open(url, '_blank'),
       reveal: async () => {},
-      info: async () => ({ platform: 'web', version: '0.1.0-mock', dataDir: '(mock)', mock: true })
+      info: async () => ({ platform: 'web', version: `${GHOST_VERSION}-mock`, dataDir: '(mock)', mock: true })
     },
     analysis: { read: readFrame },
     on(event, cb) {

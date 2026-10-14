@@ -1,6 +1,28 @@
 import type { Settings } from './types'
 
-export const DEFAULT_SOURCE_ORDER = ['local', 'chip', 'bandcamp', 'khinsider', 'archive', 'youtube']
+export const DEFAULT_SOURCE_ORDER = ['local', 'chip', 'bandcamp', 'khinsider', 'zophar', 'modland', 'archive', 'soundcloud', 'youtube']
+
+/**
+ * A saved source order plus any source it doesn't know yet (added in a later version), each slotted
+ * in right after its nearest default-order predecessor (or before its nearest successor), so new
+ * sources land where the defaults put them instead of after the last resort, and the user's own
+ * arrangement is kept. Duplicates are dropped.
+ */
+export function withKnownSources(order: readonly string[], defaults: readonly string[] = DEFAULT_SOURCE_ORDER): string[] {
+  const out = order.filter((id, i) => order.indexOf(id) === i)
+  defaults.forEach((id, i) => {
+    if (out.includes(id)) return
+    const prev = defaults
+      .slice(0, i)
+      .reverse()
+      .find((d) => out.includes(d))
+    if (prev) return void out.splice(out.indexOf(prev) + 1, 0, id)
+    const next = defaults.slice(i + 1).find((d) => out.includes(d))
+    if (next) out.splice(out.indexOf(next), 0, id)
+    else out.push(id)
+  })
+  return out
+}
 
 export function defaultSettings(downloadDir: string): Settings {
   return {

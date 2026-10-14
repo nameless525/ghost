@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { defaultSettings } from '../../shared/defaults'
+import { DEFAULT_SOURCE_ORDER, defaultSettings, withKnownSources } from '../../shared/defaults'
 import { FakeEngine, fakeBroadcast } from '../player/testing'
 import { applyEngineSettings, createSettingsService, loopParams, SettingsStore } from './index'
 
@@ -18,6 +18,16 @@ function tmp() {
 
 const defaults = defaultSettings('/Users/me/Music/GHOST')
 
+describe('withKnownSources', () => {
+  it('slots sources added in a later version next to their default neighbours', () => {
+    const v1 = ['local', 'chip', 'bandcamp', 'khinsider', 'archive', 'youtube']
+    expect(withKnownSources(v1)).toEqual(DEFAULT_SOURCE_ORDER)
+    // a user's own arrangement survives
+    expect(withKnownSources(['youtube', 'khinsider', 'local', 'chip', 'bandcamp', 'archive'])).toEqual(['youtube', 'khinsider', 'zophar', 'modland', 'local', 'chip', 'bandcamp', 'archive', 'soundcloud'])
+    expect(withKnownSources(['khinsider', 'khinsider'], ['khinsider'])).toEqual(['khinsider'])
+  })
+})
+
 describe('SettingsStore', () => {
   it('starts from defaults and deep-merges patches, persisting atomically', () => {
     const dir = tmp()
@@ -28,7 +38,8 @@ describe('SettingsStore', () => {
     expect(next.audio.crossfadeSec).toBe(4)
     expect(next.audio.normalization).toEqual({ enabled: true, targetLufs: -14, mode: 'auto' })
     expect(next.audio.gapless).toBe(true)
-    expect(next.sources.order).toEqual(['youtube', 'khinsider']) // arrays are replaced
+    // arrays are replaced; sources the saved order lacks are slotted in after their default neighbour
+    expect(next.sources.order).toEqual(['youtube', 'local', 'chip', 'bandcamp', 'khinsider', 'zophar', 'modland', 'archive', 'soundcloud'])
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(next)
     expect(readdirSync(dir)).toEqual(['settings.json']) // no temp files left behind
     // reload

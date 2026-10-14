@@ -30,6 +30,7 @@ import type {
   RepeatMode,
   Settings,
   ShuffleMode,
+  SourceStat,
   TrackView
 } from './types'
 
@@ -45,7 +46,7 @@ export interface CatalogAPI {
   game(gameId: ID): Promise<Game | null>
   tracks(trackIds: ID[]): Promise<TrackView[]>
   searchTracks(text: string, limit?: number): Promise<TrackView[]>
-  /** Search external sources (YouTube, Internet Archive, Bandcamp) for album-like results. */
+  /** Search external sources (YouTube, SoundCloud, Internet Archive, Bandcamp) for album-like results. */
   searchExternal(query: string, providers?: ExternalAlbumHit['provider'][]): Promise<ExternalAlbumHit[]>
   /** Import an external hit as a catalog album (tracks from playlist entries / chapters / files). */
   importExternal(hit: ExternalAlbumHit, opts?: { gameName?: string }): Promise<AlbumDetail>
@@ -53,6 +54,8 @@ export interface CatalogAPI {
   random(text?: string): Promise<{ groupKey: string; albumId: ID | null } | null>
   /** "Did you mean …?": game names close to a query that found nothing (typo-tolerant). */
   suggest(text: string, limit?: number): Promise<string[]>
+  /** Albums per source and index freshness, for Settings → Sources. */
+  sources(): Promise<SourceStat[]>
 }
 
 export interface PlayerAPI {
@@ -177,6 +180,7 @@ export const API_METHODS = [
   'catalog.searchTracks',
   'catalog.random',
   'catalog.suggest',
+  'catalog.sources',
   'catalog.searchExternal',
   'catalog.importExternal',
   'player.getState',

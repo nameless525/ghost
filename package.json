@@ -1,7 +1,7 @@
 {
   "name": "ghost",
   "productName": "GHOST",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GHOST — Game Haven OST. Stream any video game soundtrack.",
   "main": "./out/main/index.js",
   "type": "module",

@@ -154,10 +154,14 @@ export interface IndexPage {
   totalAlbums: number | null
 }
 
-/** Providers with a crawlable album index (KHInsider). */
+/** Providers with a crawlable album index (KHInsider, Zophar's Domain, Modland, IA collections). */
 export interface IndexProvider extends Provider {
   indexSections(): IndexSection[]
   fetchIndexPage(sectionKey: string, page: number, opts?: ProviderCallOptions): Promise<IndexPage>
+  /** Re-crawl the index after this long (default 7 days). */
+  indexRefreshMs?: number
+  /** Pause between index pages on top of the host limiter (default 750 ms; 0 for local/in-memory pages). */
+  indexPageDelayMs?: number
 }
 
 export function isIndexProvider(p: Provider): p is IndexProvider {

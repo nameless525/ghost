@@ -8,6 +8,7 @@ import { ShearButton } from '../../ui/ShearButton'
 import { Tooltip } from '../../ui/Tooltip'
 import { addSelectionToPlaylist, downloadSelection, playSelection, queueSelection } from './actions'
 import { activeCarousel } from './carousel'
+import { useExternalSourceNames } from './ExternalSearch'
 import { openExternalSearch } from './query'
 import { GROUP_LABELS, SORT_LABELS, useBrowse } from './store'
 
@@ -34,6 +35,7 @@ export function Footer() {
   const historyLen = useBrowse((s) => s.historyLen)
   const total = useBrowse((s) => s.total)
   const playing = usePlayer((s) => s.status === 'playing')
+  const sources = useExternalSourceNames()
   const queueBtn = useRef<HTMLButtonElement>(null)
   const plBtn = useRef<HTMLButtonElement>(null)
 
@@ -67,7 +69,7 @@ export function Footer() {
           onClick={() => void addSelectionToPlaylist(useBrowse.getState().sel, anchor(plBtn.current))}
         />
         <ShearButton icon={<Download />} label={<Label combo="Mod+D">Download</Label>} soft={none} onClick={() => void downloadSelection(useBrowse.getState().sel)} />
-        <Tooltip content="Can’t find it? Search YouTube, Internet Archive and Bandcamp">
+        <Tooltip content={`Can’t find it? Search ${sources}`}>
           <ShearButton icon={<Telescope />} label="Search elsewhere" className="bf__elsewhere" onClick={() => openExternalSearch()} />
         </Tooltip>
       </div>

@@ -109,7 +109,10 @@ export const PROVIDER_NAMES: Record<string, string> = {
   archive: 'Internet Archive',
   bandcamp: 'Bandcamp',
   local: 'Local files',
-  chip: 'Chiptune engine'
+  chip: 'Chiptune engine',
+  zophar: 'Zophar’s Domain',
+  modland: 'Modland',
+  soundcloud: 'SoundCloud'
 }
 
 export const providerName = (p: string | null | undefined): string => (p ? (PROVIDER_NAMES[p] ?? p.charAt(0).toUpperCase() + p.slice(1)) : 'Unknown')

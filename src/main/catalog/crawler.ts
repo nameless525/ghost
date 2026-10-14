@@ -1,5 +1,5 @@
-// Index crawl (DESIGN §6.3 tier 1): every KHInsider letter page (plus the "latest" feed) at a
-// polite rate. Resumable: each fetched page is recorded in crawl_pages, so a restart continues
+// Index crawl (DESIGN §6.3 tier 1): every page of one provider's album index (KHInsider letter
+// pages plus its "latest" feed, Zophar's platform listings, …) at a polite rate. Resumable: each fetched page is recorded in crawl_pages, so a restart continues
 // where it stopped. A block page pauses the crawl (with a message for the UI) instead of retrying
 // aggressively.
 
@@ -35,6 +35,8 @@ export interface CrawlerDeps {
   sections?: string[]
   /** Limit pages per section (smoke tests). */
   maxPagesPerSection?: number
+  /** The main catalog source (default true): status wording only. */
+  primary?: boolean
 }
 
 const tick = () => new Promise<void>((r) => setImmediate(r))
@@ -61,9 +63,14 @@ export class Crawler {
     )
   }
 
-  /** True when there is no complete index or it is older than a week. */
-  isStale(maxAgeMs = INDEX_MAX_AGE_MS): boolean {
-    if (this.deps.repo.counts().albums === 0) return true
+  /** This provider has no albums in the catalog yet (its first crawl is a build, not a refresh). */
+  private empty(): boolean {
+    return !this.deps.repo.get(`SELECT 1 AS x FROM albums WHERE provider = ? LIMIT 1`, this.deps.provider.id)
+  }
+
+  /** True when there is no complete index or it is older than the provider's refresh period. */
+  isStale(maxAgeMs = this.deps.provider.indexRefreshMs ?? INDEX_MAX_AGE_MS): boolean {
+    if (this.empty()) return true
     const last = this.lastFinished()
     return last == null || this.now() - last > maxAgeMs
   }
@@ -75,14 +82,14 @@ export class Crawler {
     let job = repo.get<JobRow>(`SELECT * FROM crawl_jobs WHERE provider = ? AND status = 'running' ORDER BY id DESC LIMIT 1`, this.deps.provider.id)
     if (!job) {
       if (!opts.force && !this.isStale()) return false
-      const initial = repo.counts().albums === 0 ? 1 : 0
+      const initial = this.empty() ? 1 : 0
       const r = repo.st(`INSERT INTO crawl_jobs (provider, started_at, status, initial) VALUES (?, ?, 'running', ?)`).run(this.deps.provider.id, this.now(), initial)
       job = repo.get<JobRow>(`SELECT * FROM crawl_jobs WHERE id = ?`, Number(r.lastInsertRowid))!
     }
     this.running = true
     this.abort = new AbortController()
     this.progress = 0
-    this.message = job.initial ? 'Building the catalog…' : 'Refreshing the catalog…'
+    this.message = `${this.verb(job)}…`
     this.deps.onProgress()
     void this.run(job, this.abort.signal)
       .catch((e) => {
@@ -100,6 +107,12 @@ export class Crawler {
 
   stop(): void {
     this.abort?.abort()
+  }
+
+  /** "Building the catalog" for the primary source; "Adding Zophar's Domain" for the others. */
+  private verb(job: JobRow): string {
+    if (this.deps.primary !== false) return job.initial ? 'Building the catalog' : 'Refreshing the catalog'
+    return job.initial ? `Adding ${this.deps.provider.name}` : `Refreshing ${this.deps.provider.name}`
   }
 
   private wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -211,7 +224,7 @@ export class Crawler {
           totalPages = res.totalPages
           const est = this.estimate(job.id, sections)
           this.progress = Math.min(0.99, est.done / est.total)
-          this.message = `${job.initial ? 'Building' : 'Refreshing'} the catalog… ${section.label} ${page}/${Math.min(totalPages, this.cap(section))}`
+          this.message = `${this.verb(job)}… ${section.label} ${page}/${Math.min(totalPages, this.cap(section))}`
           this.deps.onProgress()
           if (this.deps.pageDelayMs) await this.wait(this.deps.pageDelayMs, signal)
         }

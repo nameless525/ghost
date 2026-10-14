@@ -112,9 +112,12 @@ export interface TrackView extends Track {
   analysis: TrackAnalysisSummary | null
 }
 
-/** An album-like result from an external source (YouTube playlist / full-OST video, Internet Archive item, Bandcamp album). */
+/** Sources that can be searched on demand and imported ("Search elsewhere"). */
+export type ExternalProviderId = 'youtube' | 'archive' | 'bandcamp' | 'soundcloud'
+
+/** An album-like result from an external source (YouTube playlist / full-OST video, Internet Archive item, Bandcamp album, SoundCloud set). */
 export interface ExternalAlbumHit {
-  provider: 'youtube' | 'archive' | 'bandcamp'
+  provider: ExternalProviderId
   /** Provider-specific reference (playlist id, video id, IA identifier, Bandcamp URL). */
   ref: string
   title: string
@@ -185,6 +188,17 @@ export interface CatalogStatus {
    * enrichment). Refetch the visible page when it moves. Optional for older mocks.
    */
   revision?: number
+}
+
+/** One catalog source in Settings → Sources: how much of the catalog it contributes. */
+export interface SourceStat {
+  /** Provider id ('khinsider', 'zophar', …). */
+  id: string
+  albums: number
+  /** When its album index was last crawled completely (index sources only). */
+  lastIndexedAt: number | null
+  /** Its index is being crawled right now. */
+  indexing: boolean
 }
 
 // ---------------------------------------------------------------------------

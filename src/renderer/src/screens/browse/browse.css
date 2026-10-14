@@ -209,6 +209,16 @@
   background: color-mix(in srgb, var(--ga, var(--accent)) 22%, var(--bg-3));
   z-index: 0;
 }
+/* Games without art: a faint ghost on the accent wash (the image fades in over it when there is one). */
+.bc-art::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 40% 45%, color-mix(in srgb, var(--ga, var(--accent)) 35%, transparent), transparent 70%),
+    center / 54px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-56 -56 112 112'%3E%3Cpath d='M0 -40 C23 -40 39 -24 39 -1 L39 30 C39 39 33.5 44 27 44 C21 44 19.5 36 13 36 C6.5 36 5.5 46 -1 46 C-7.5 46 -9 36 -15 36 C-21 36 -22.5 45 -30 45 C-36 45 -39 39.5 -39 33 L-39 -1 C-39 -24 -23 -40 0 -40 Z' fill='white'/%3E%3Cellipse cx='-13' cy='-4' rx='6' ry='8.5' fill='black'/%3E%3Cellipse cx='13' cy='-4' rx='6' ry='8.5' fill='black'/%3E%3C/svg%3E");
+  opacity: 0.32;
+}
 .bc-art__img {
   position: absolute;
   inset: 0;
@@ -428,6 +438,15 @@
 }
 .bc-kind--single {
   --kc: var(--hue-notifications);
+}
+
+/* source of an album that isn't from the main catalog (Zophar, Modland, IA, YouTube…) */
+.bc-from {
+  color: var(--fg-3);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 /* ---- track rows */

@@ -30,7 +30,7 @@ import {
   togglePreview
 } from './actions'
 import { activeCarousel, Carousel } from './carousel'
-import { ExternalSearch, ExternalSearchDialog, type Phase } from './ExternalSearch'
+import { ExternalSearch, ExternalSearchDialog, useExternalSourceNames, type Phase } from './ExternalSearch'
 import { Footer } from './Footer'
 import { InfoWedge } from './InfoWedge'
 import { browseModel } from './model'
@@ -195,6 +195,7 @@ function scrollEmptyResults(dir: number, page = false): boolean {
 /** A few results: offer the wider search under the carousel. */
 function FewResults() {
   const total = useBrowse((s) => s.total)
+  const sources = useExternalSourceNames()
   const query = browseModel.query.text
   useBrowse((s) => s.loading)
   if (!query || total == null || total === 0 || total > 3) return null
@@ -203,7 +204,7 @@ function FewResults() {
       <span>Not what you’re after?</span>
       <button type="button" className="bfew__btn" onClick={() => openExternalSearch(naturalQuery(query))}>
         <Telescope />
-        Search YouTube, Internet Archive and Bandcamp for “{naturalQuery(query)}”
+        Search {sources} for “{naturalQuery(query)}”
       </button>
     </div>
   )

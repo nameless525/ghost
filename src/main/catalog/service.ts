@@ -173,10 +173,12 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   const notify = () => {
     const indexing = !!crawler?.running
     if (wasIndexing && !indexing) {
-      schedulePrewarm(2000)
-      // The chiptune rip index runs once the main index is done (it matches against its games).
+      // One source's crawl finished: the next source's, or (all done) the chiptune rip index (it
+      // matches against the games the others found) and the bucket prewarm.
       chipTimer ??= setTimeout(() => {
         chipTimer = null
+        if (nextCrawl()) return
+        schedulePrewarm(2000)
         maybeStartChip()
       }, 1000)
     }
@@ -197,24 +199,54 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   const enricher = new Enricher({ repo, getSettings: deps.getSettings, fetch: internals.fetchJson, onChange: notify, log, now })
   const accent = new AccentWorker(repo, internals.accentOf ?? (async (url, bytes) => (await artProtocol()).artAccent(url, bytes)), notify)
 
+  // --- index crawls --------------------------------------------------------------------------
+  // The first registered index provider (KHInsider) builds the catalog; the others (Zophar's
+  // Domain, Modland, Internet Archive collections) crawl after it, one at a time, each on its own
+  // refresh period. Disabled sources aren't crawled.
+  const crawlers = new Map<string, Crawler>()
+  /** The crawl running now (or the last one that ran). */
   let crawler: Crawler | null = null
+  const forceCrawl = new Set<string>()
+  const indexProviders = (): IndexProvider[] => getRegistry().all().filter(isIndexProvider)
+  const crawlerFor = (p: IndexProvider): Crawler => {
+    let c = crawlers.get(p.id)
+    if (!c) {
+      const primary = indexProviders()[0] === p
+      c = new Crawler({
+        repo,
+        provider: p,
+        primary,
+        onProgress: notify,
+        log: (m) => log(primary ? m : `${p.id}: ${m}`),
+        now,
+        pageDelayMs: internals.crawlPageDelayMs ?? p.indexPageDelayMs ?? 750,
+        sections: internals.crawlSections,
+        maxPagesPerSection: internals.crawlMaxPagesPerSection
+      })
+      crawlers.set(p.id, c)
+    }
+    return c
+  }
+  /** The main catalog source's crawler. */
   const getCrawler = (): Crawler | null => {
-    if (crawler) return crawler
-    const p = getRegistry()
-      .all()
-      .find((x): x is IndexProvider => isIndexProvider(x))
-    if (!p) return null
-    crawler = new Crawler({
-      repo,
-      provider: p,
-      onProgress: notify,
-      log,
-      now,
-      pageDelayMs: internals.crawlPageDelayMs ?? 750,
-      sections: internals.crawlSections,
-      maxPagesPerSection: internals.crawlMaxPagesPerSection
-    })
-    return crawler
+    const p = indexProviders()[0]
+    return p ? crawlerFor(p) : null
+  }
+  /** Start the first source whose index is stale (or forced, or interrupted). False if none needs it. */
+  function nextCrawl(): boolean {
+    if (stopped || crawler?.running) return false
+    const disabled = new Set(deps.getSettings().sources.disabled)
+    for (const p of indexProviders()) {
+      if (disabled.has(p.id)) continue
+      const c = crawlerFor(p)
+      const force = forceCrawl.delete(p.id)
+      if (c.start({ force })) {
+        crawler = c
+        log(`${p.id} index crawl started`)
+        return true
+      }
+    }
+    return false
   }
 
   // --- chiptune rip index (after the main crawl, lower priority) ------------------------------
@@ -246,7 +278,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       albums: c.albums,
       tracks: c.tracks,
       progress: cr?.running ? (cr.progress ?? 0) : chip ? (chip.progress ?? 0) : null,
-      lastIndexedAt: cr?.lastFinished() ?? repo.get<{ t: number | null }>(`SELECT MAX(finished_at) AS t FROM crawl_jobs WHERE status = 'done'`)?.t ?? null,
+      lastIndexedAt: getCrawler()?.lastFinished() ?? repo.get<{ t: number | null }>(`SELECT MAX(finished_at) AS t FROM crawl_jobs WHERE status = 'done'`)?.t ?? null,
       message: (cr?.running ? cr.message : null) ?? chip?.message ?? cr?.message ?? (enricher.lastError ? `Enrichment: ${enricher.lastError}` : null),
       enrichment: enricher.status(),
       revision: repo.revision
@@ -348,9 +380,14 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   function maybeSiteSearch(text: string): void {
     const terms = parseSearch(text).terms.join(' ').trim()
     if ([...terms].length < 3) return
-    const c = getCrawler()
-    const complete = c?.lastFinished() != null
-    if (!c || (complete && !c.running)) return
+    // Only sources whose own index isn't complete yet (or is being refreshed) are asked.
+    const disabled = new Set(deps.getSettings().sources.disabled)
+    const incomplete = (p: IndexProvider) => {
+      const c = crawlerFor(p)
+      return c.running || c.lastFinished() == null
+    }
+    const providers = indexProviders().filter((p) => p.searchAlbums && !disabled.has(p.id) && incomplete(p))
+    if (!providers.length) return
     if ((searched.get(terms) ?? 0) > now() - 3600_000) return
     // Same text already waiting (e.g. a refetch after a status tick): keep its timer.
     if (searchTimer && pendingSearch === terms) return
@@ -360,8 +397,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       searchTimer = null
       pendingSearch = null
       searched.set(terms, now())
-      const providers = getRegistry().all().filter((p) => p.searchAlbums)
       for (const p of providers) {
+        const complete = crawlerFor(p).lastFinished() != null
         p.searchAlbums!(terms, { priority: 0 })
           .then((hits) => {
             if (stopped || !hits.length) return
@@ -515,9 +552,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
           // Fresh shuffle for 'random' sort each launch (a seeded hash order; no rows are rewritten).
           reseedRandom()
           void upgradeIndexes()
-          const c = getCrawler()
-          if (c?.start()) log('index crawl started')
-          else {
+          if (!nextCrawl()) {
             schedulePrewarm(3000)
             maybeStartChip()
           }
@@ -532,7 +567,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       stopped = true
       for (const t of timers) clearTimeout(t)
       timers.length = 0
-      crawler?.stop()
+      for (const c of crawlers.values()) c.stop()
       chipIndexer?.stop()
       if (chipTimer) clearTimeout(chipTimer)
       chipTimer = null
@@ -555,12 +590,13 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     },
 
     async reindex() {
-      const c = getCrawler()
-      if (!c) throw new Error('no indexable provider')
-      // The chip index follows the main crawl (see notify), re-reading every listing.
+      const ps = indexProviders()
+      if (!ps.length) throw new Error('no indexable provider')
+      // Every source re-reads its whole index, one after another; the chip index follows (see notify).
+      for (const p of ps) if (!crawlers.get(p.id)?.running) forceCrawl.add(p.id)
       chipForce = true
       chipIndexer?.stop()
-      c.start({ force: true })
+      nextCrawl()
       notify()
     },
 
@@ -573,6 +609,16 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
 
     async suggest(text, limit) {
       return qe.suggest(text, limit)
+    },
+
+    async sources() {
+      const albums = new Map(repo.all<{ provider: string; n: number }>(`SELECT provider, COUNT(*) AS n FROM albums WHERE gone = 0 GROUP BY provider`).map((r) => [r.provider, r.n]))
+      const ids = new Set([...getRegistry().all().map((p) => p.id), ...albums.keys()])
+      return [...ids].map((id) => {
+        const p = getRegistry().get(id)
+        const c = p && isIndexProvider(p) ? crawlerFor(p) : null
+        return { id, albums: albums.get(id) ?? 0, lastIndexedAt: c?.lastFinished() ?? null, indexing: !!c?.running || (id === CHIP_ID && !!chipIndexer?.running) }
+      })
     },
 
     async groupAlbums(groupKey, q) {
