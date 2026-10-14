@@ -93,6 +93,13 @@ describe('search finds names however they are typed', () => {
     expect(titles('mother 3')).toEqual(['Mother 3', 'Cave Story'])
   })
 
+  it('soundtrack decoration is optional next to other words', () => {
+    expect(titles('final fantasy 7 ost')).toEqual(['Final Fantasy VII'])
+    expect(titles('mother 3 original soundtrack')).toEqual(['Mother 3', 'Cave Story'])
+    // alone it's still a (substring) search term
+    expect(titles('soundtrack')).toEqual(['Final Fantasy VII', 'The Legend of Zelda: Breath of the Wild'])
+  })
+
   it('suggests close game names for typos', () => {
     expect(qe.suggest('ratchit and clank')[0]).toBe('Ratchet & Clank')
     expect(qe.suggest('legend of zelda breth of the wild')[0]).toBe('The Legend of Zelda: Breath of the Wild')

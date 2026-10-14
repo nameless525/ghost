@@ -222,27 +222,49 @@ The resolver asks each enabled provider in priority order and scores the candida
 
 ### 6.2 Providers, in default priority order
 1. **Local files.** Watched folders, matched to the catalog by tags and AcoustID.
-2. **Chiptune and game-engine rip archives:** joshw.info, vgmrips.net, SNESmusic.org, Zophar's Domain. Original-format files with loop points; also covers music that was never released on an album.
-3. **Bandcamp.** Indie composers, good quality, track data embedded as JSON in each page.
-4. **KHInsider.** The main source: a huge catalog with MP3 and often FLAC. Marks in-game rips ("gamerip") separately from official albums.
-5. **Internet Archive.** Long tail and older or obscure games, via the search API.
-6. **YouTube via yt-dlp.** Universal fallback. Prefer "Artist – Topic" channels (official distributor uploads). Prefer m4a/AAC; use Opus only when it's the best available. Full-OST videos with chapters are split into virtual tracks.
-7. **Rainwave**, for radio mode (later milestone).
+2. **Chiptune rips.**
+   - vgmrips.net VGM packs: always on. The crawl reads only `/packs/latest`.
+   - joshw.info sets: opt-in, because its robots.txt disallows crawlers.
 
-Quality preference is a setting: lossless when available / high (320 kbps) / data saver.
+   Both are original-format files with real loop points, attached to their games.
+3. **Bandcamp.** Indie composers, good quality, track data embedded as JSON in each page.
+4. **KHInsider.** The main catalog source: a huge catalog with MP3 and often FLAC. It marks in-game rips ("gamerip") separately from official albums.
+5. **Zophar's Domain.** About 19.5k game sets, each with per-track 320 kbps MP3 renders. That includes formats GHOST can't emulate (PSF/2SF/GSF/USF/3SF, PSP, Wii). Its rips join the KHInsider game of the same name, or become new games.
+6. **Modland.** One daily `allmods.zip` index lists loose SPC/NSF/GBS/VGM/… files, which GHOST plays with libgme: robots-clean original-hardware music for consoles from NES to Mega Drive.
+7. **Internet Archive.**
+   - The curated game-soundtrack collections are indexed.
+   - Everything else is searched on demand ("Search elsewhere").
+8. **SoundCloud via yt-dlp.** Last resort, searched on demand: sets and full-OST uploads.
+9. **YouTube via yt-dlp.**
+   - Universal fallback, searched on demand.
+   - Prefer "Artist – Topic" channels (official distributor uploads).
+   - Prefer m4a/AAC; use Opus only when it's the best available.
+   - Full-OST videos with chapters are split into virtual tracks.
+10. **Rainwave**, for radio mode (later milestone).
+
+Researched but not used (see `docs/research/sources-2026-10.md`):
+- **VGMdb:** behind a Cloudflare challenge.
+- **SNESmusic:** its robots.txt disallows the set downloads.
+- **project2612:** dead.
+- **gamesounds.xyz:** sound effects, not soundtracks.
+- **Niconico and Bilibili:** search doesn't work from yt-dlp.
+
+Quality preference is a setting: lossless when available / high (320 kbps) / data saver. Copies of the same release from several sources are ordered by the source priority.
 
 ### 6.3 Building the catalog
 Two tiers, so the app is useful on day one and gets richer over time:
 
 1. **Playable index (fast, full).**
-   - Crawl KHInsider's browse index in full at a polite rate. That gives every album with its platform, year and type. Refresh weekly.
+   - Every index source (KHInsider, Zophar's Domain, Modland, the IA collections) has its own crawl, resumable page by page.
+   - KHInsider runs first and builds the catalog. The others follow one at a time, at a polite rate, each on its own refresh period.
+   - The chiptune rip index runs last. Disabled sources aren't crawled.
+   - Albums cluster into games by normalized title (§6.4), so a second source's copy joins the game the first created.
    - Track lists and file URLs are fetched lazily (album page first, track page at play time) and cached.
 2. **Enrichment.**
    - **IGDB:** pull the whole game list (500 per request, about 4 requests a second, so minutes). Gives names, alternate names, platforms, franchises, covers and artwork.
    - **SteamGridDB:** hero images, logos and backgrounds.
-   - **VGMdb:** composers, original Japanese titles, catalog numbers and authoritative tracklists. Fetched on demand when a game is opened, plus a slow background crawler.
-   - **MusicBrainz:** ISRCs and AcoustID links.
-   - **Wikidata:** cross-service ID mapping, so matching can use exact IDs instead of names.
+   - **MusicBrainz** (later): release groups, ISRCs and AcoustID links. Its JSON API works from plain clients; VGMdb doesn't (Cloudflare).
+   - **Wikidata** (later): cross-service ID mapping, so matching can use exact IDs instead of names.
 
 Games with no album anywhere get a virtual album, "{game} — in-game", filled from rips and YouTube.
 

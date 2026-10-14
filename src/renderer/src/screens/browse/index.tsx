@@ -121,6 +121,7 @@ function EmptyState() {
   const ref = useRef<HTMLDivElement>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [suggestions, setSuggestions] = useState<string[]>([])
+  const autoQuery = useBrowse((s) => s.externalAuto)
   const show = total === 0 && !loading
   useEffect(() => {
     if (show && ref.current) tween(ref.current).clear().set({ opacity: 0, y: 18 }).fadeIn(300, 'outQuad').moveToY(0, 600, 'outQuint')
@@ -171,7 +172,7 @@ function EmptyState() {
           ) : (
             <p className="be__sub">Check the spelling and filters, or look further afield. Imports land straight in Browse.</p>
           )}
-          <ExternalSearch key={query} query={naturalQuery(query)} onPhase={setPhase} onImported={(d) => void revealImported(d)} />
+          <ExternalSearch key={query} query={naturalQuery(query)} auto={autoQuery === query} onPhase={setPhase} onImported={(d) => void revealImported(d)} />
         </>
       ) : (
         <>
@@ -469,7 +470,10 @@ export default function BrowseScreen(props: BrowseScreenProps) {
           inputRef={input}
           onSubmit={() => {
             blurSearch()
-            activeCarousel?.recenter()
+            // Nothing in the catalog: Enter searches the web instead.
+            const text = browseModel.query.text
+            if (useBrowse.getState().total === 0 && text) useBrowse.setState({ externalAuto: text })
+            else activeCarousel?.recenter()
           }}
         />
         <FewResults />

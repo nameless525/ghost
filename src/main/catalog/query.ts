@@ -39,6 +39,9 @@ const phrase = (t: string) => `"${t.replace(/"/g, '""')}"`
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => '\\' + c)}%`
 const ph = (n: number) => Array.from({ length: n }, () => '?').join(',')
 
+/** Album decoration that is optional in a multi-word query (see compile). */
+const SOFT_TERMS = new Set(['ost', 'osv', 'ost s', 'soundtrack', 'soundtracks', 'original', 'gamerip', 'gamerips', 'rip', 'bgm', 'vgm', 'music', 'score', 'full'])
+
 /** Trigrams of the text with spaces removed and padded ("chrono" → " ch", "chr", …, "no "). */
 function compactGrams(s: string): Set<string> {
   const c = [...` ${s.replace(/ /g, '')} `]
@@ -235,7 +238,11 @@ export class QueryEngine {
       }
     }
 
-    for (const t of p.terms) term(t, false, 'any', level === 'track')
+    // "chrono trigger ost": soundtrack decoration rarely appears literally ("Original Sound
+    // Version"), so next to other words it's optional; it still counts toward ranking.
+    const soft = p.terms.filter((t) => SOFT_TERMS.has(ftsFold(t)))
+    const hard = soft.length && soft.length < p.terms.length ? p.terms.filter((t) => !soft.includes(t)) : p.terms
+    for (const t of hard) term(t, false, 'any', level === 'track')
     for (const t of p.excludes) term(t, true, 'any', level === 'track')
 
     for (const f of p.filters) {
@@ -339,6 +346,7 @@ export class QueryEngine {
         params.push(...tParams)
       }
     }
+    if (hard !== p.terms) for (const t of soft) strong.push(phrase(` ${ftsFold(t)} `))
     return { where, params, trackMatch, empty: where.length === 0, strong: strong.length ? { game: `{game} : (${strong.join(' AND ')})`, any: `{game album} : (${strong.join(' AND ')})` } : null }
   }
 

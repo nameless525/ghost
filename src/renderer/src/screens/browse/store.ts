@@ -34,6 +34,8 @@ export interface BrowseUIState {
   /** "Search elsewhere" dialog. */
   externalOpen: boolean
   externalQuery: string
+  /** Enter on a search with no results: run the web search for this query right away. */
+  externalAuto: string | null
   /** F2 picks that Shift+F2 can rewind. */
   historyLen: number
 }
@@ -48,6 +50,7 @@ export const useBrowse = create<BrowseUIState>(() => ({
   status: null,
   externalOpen: false,
   externalQuery: '',
+  externalAuto: null,
   historyLen: 0
 }))
 
