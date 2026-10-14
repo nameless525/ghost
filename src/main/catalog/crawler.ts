@@ -82,7 +82,8 @@ export class Crawler {
     let job = repo.get<JobRow>(`SELECT * FROM crawl_jobs WHERE provider = ? AND status = 'running' ORDER BY id DESC LIMIT 1`, this.deps.provider.id)
     if (!job) {
       if (!opts.force && !this.isStale()) return false
-      const initial = this.empty() ? 1 : 0
+      // First complete read of this source (albums its site search added meanwhile don't count).
+      const initial = this.lastFinished() == null ? 1 : 0
       const r = repo.st(`INSERT INTO crawl_jobs (provider, started_at, status, initial) VALUES (?, ?, 'running', ?)`).run(this.deps.provider.id, this.now(), initial)
       job = repo.get<JobRow>(`SELECT * FROM crawl_jobs WHERE id = ?`, Number(r.lastInsertRowid))!
     }
