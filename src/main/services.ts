@@ -219,7 +219,12 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
       game: (gameId) => catalog.game(gameId),
       tracks: async (ids) => library.decorate(await catalog.tracks(ids)),
       searchTracks: async (text, limit) => library.decorate(await catalog.searchTracks(text, limit)),
-      random: (text) => catalog.random(text)
+      random: (text) => catalog.random(text),
+      searchExternal: (query, providers) => catalog.searchExternal(query, providers),
+      importExternal: async (hit, opts) => {
+        const d = await catalog.importExternal(hit, opts)
+        return { ...d, tracks: library.decorate(d.tracks) }
+      }
     },
     player,
     library: libraryApi,

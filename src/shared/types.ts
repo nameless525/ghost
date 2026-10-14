@@ -112,6 +112,22 @@ export interface TrackView extends Track {
   analysis: TrackAnalysisSummary | null
 }
 
+/** An album-like result from an external source (YouTube playlist / full-OST video, Internet Archive item, Bandcamp album). */
+export interface ExternalAlbumHit {
+  provider: 'youtube' | 'archive' | 'bandcamp'
+  /** Provider-specific reference (playlist id, video id, IA identifier, Bandcamp URL). */
+  ref: string
+  title: string
+  /** Channel / uploader / artist. */
+  subtitle: string | null
+  cover: string | null
+  trackCount: number | null
+  totalMs: number | null
+  url: string
+  /** 0..1 how likely this is the official/complete soundtrack. */
+  score: number
+}
+
 export interface AlbumDetail {
   album: Album
   game: Game | null
@@ -319,6 +335,8 @@ export interface Settings {
     order: string[]
     disabled: string[]
     quality: 'lossless' | 'high' | 'saver'
+    /** Folders scanned by the local-files provider. */
+    localFolders: string[]
   }
   library: {
     downloadDir: string

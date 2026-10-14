@@ -16,6 +16,7 @@ import type {
   DeepPartial,
   DownloadItem,
   DownloadTarget,
+  ExternalAlbumHit,
   Game,
   GhostNotification,
   HistoryEntry,
@@ -43,6 +44,10 @@ export interface CatalogAPI {
   game(gameId: ID): Promise<Game | null>
   tracks(trackIds: ID[]): Promise<TrackView[]>
   searchTracks(text: string, limit?: number): Promise<TrackView[]>
+  /** Search external sources (YouTube, Internet Archive, Bandcamp) for album-like results. */
+  searchExternal(query: string, providers?: ExternalAlbumHit['provider'][]): Promise<ExternalAlbumHit[]>
+  /** Import an external hit as a catalog album (tracks from playlist entries / chapters / files). */
+  importExternal(hit: ExternalAlbumHit, opts?: { gameName?: string }): Promise<AlbumDetail>
   /** Pick a random group (and album) matching the query, for F2. */
   random(text?: string): Promise<{ groupKey: string; albumId: ID | null } | null>
 }
@@ -160,6 +165,8 @@ export const API_METHODS = [
   'catalog.tracks',
   'catalog.searchTracks',
   'catalog.random',
+  'catalog.searchExternal',
+  'catalog.importExternal',
   'player.getState',
   'player.playTracks',
   'player.playAlbum',

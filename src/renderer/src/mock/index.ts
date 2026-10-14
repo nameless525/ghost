@@ -10,7 +10,9 @@ import type {
   BrowseGroup,
   BrowseQuery,
   CatalogStatus,
+  AudioFormat,
   DownloadItem,
+  ExternalAlbumHit,
   Game,
   HistoryEntry,
   PlayContext,
@@ -504,6 +506,37 @@ export function installMockGhost(): void {
       searchTracks: (text, limit = 50) => {
         const q = text.toLowerCase()
         return delay(tracks.filter((t) => t.title.toLowerCase().includes(q)).slice(0, limit).map(strip))
+      },
+      searchExternal: (query) => {
+        const q = query.trim()
+        if (!q) return delay([])
+        const hits: ExternalAlbumHit[] = [
+          { provider: 'youtube', ref: `PL${hash(q).toString(36).slice(2, 12)}`, title: `${q} — Full Original Soundtrack`, subtitle: 'Label - Topic', cover: null, trackCount: 24, totalMs: 24 * 170000, url: 'https://www.youtube.com/', score: 0.92 },
+          { provider: 'youtube', ref: `v${hash(q + 'v').toString(36).slice(2, 12)}`, title: `${q} OST (complete, with timestamps)`, subtitle: 'VGM uploader', cover: null, trackCount: 31, totalMs: 31 * 150000, url: 'https://www.youtube.com/', score: 0.71 },
+          { provider: 'archive', ref: `${q.toLowerCase().replace(/\W+/g, '-')}-soundtrack`, title: `${q} Soundtrack`, subtitle: 'Internet Archive', cover: null, trackCount: 18, totalMs: 18 * 160000, url: 'https://archive.org/', score: 0.55 }
+        ]
+        return delay(hits, 600)
+      },
+      importExternal: async (hit, opts) => {
+        const gi = games.length + 1
+        const gameId = `g${gi}`
+        const name = opts?.gameName ?? hit.title.replace(/\s*[—-].*$/, '').replace(/\s*OST.*$/i, '')
+        const accent = ['#ff6b6b', '#4dd4ff', '#b48cff', '#7cff9e'][gi % 4]
+        fixtureByGame.set(gameId, { name, year: 2020, platforms: [], accent, accent2: '#120c20', albums: [] })
+        games.push({ id: gameId, name, altNames: [], year: null, platforms: [], franchise: null, cover: mockArt(gameId, accent, '#120c20', 512, 512), hero: mockArt(gameId + 'hero', accent, '#120c20', 1600, 900), logo: null, accent, albumCount: 1 })
+        const albumId = `${gameId}a1`
+        const n = Math.min(hit.trackCount ?? 12, 16)
+        albums.push({ id: albumId, gameId, gameName: name, title: hit.title, titleOriginal: null, kind: 'ost', year: null, platforms: [], catalogNo: null, composers: [], cover: mockArt(albumId, '#120c20', accent, 512, 512), trackCount: n, totalMs: n * 150000, formats: ['m4a' as AudioFormat], provider: hit.provider, providerRef: hit.ref, addedAt: now() })
+        for (let i = 0; i < n; i++) {
+          const id = `${albumId}t${i + 1}`
+          const h = hash(id)
+          tracks.push({ id, albumId, disc: 1, number: i + 1, title: `Track ${i + 1}`, titleOriginal: null, durationMs: 120000 + Math.round(h * 120000), composers: [], albumTitle: hit.title, albumKind: 'ost', gameId, gameName: name, year: null, platforms: [], cover: albums[albums.length - 1].cover, hero: games[games.length - 1].hero, accent, liked: false, downloaded: false, source: { provider: hit.provider, format: 'm4a', lossless: false, bitrateKbps: 128, confidence: 0.8 }, analysis: { bpm: 120, intensity: 1 + h * 5, lufs: -14 }, bpm: Math.round(90 + h * 60), intensityStars: Math.round((1 + h * 5) * 100) / 100 })
+        }
+        catalogStatus.games = games.length
+        catalogStatus.albums = albums.length
+        catalogStatus.revision = (catalogStatus.revision ?? 0) + 1
+        emit('catalog:status', { ...catalogStatus })
+        return api.catalog.album(albumId)
       },
       random: (text = '') => {
         const pool = games.filter((g) => matches(text, g))

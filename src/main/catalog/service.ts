@@ -254,6 +254,13 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   }
 
   const service: CatalogService = {
+    // External sources (YouTube / Internet Archive / Bandcamp) — implemented by the sources workstream.
+    async searchExternal() {
+      return []
+    },
+    async importExternal() {
+      throw new Error('External import is not available yet.')
+    },
     start() {
       stopped = false
       if (!internals.disableEnrichment) {
