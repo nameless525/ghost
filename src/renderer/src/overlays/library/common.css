@@ -1,0 +1,306 @@
+/* Shared by the Library, Downloads and Settings overlays (prefix lx-). */
+
+/* ---------------------------------------------------------------- empty state */
+.lx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 56px 32px 64px;
+  text-align: center;
+  min-height: 100%;
+}
+.lx-empty--compact {
+  padding: 28px 24px 32px;
+  min-height: 0;
+}
+.lx-empty__art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 140px;
+  height: 128px;
+  margin-bottom: 10px;
+  color: rgb(var(--accent-rgb) / 0.9);
+}
+.lx-empty--compact .lx-empty__art {
+  width: 108px;
+  height: 96px;
+}
+.lx-empty__halo {
+  position: absolute;
+  inset: 4px 10px 14px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(var(--accent-rgb) / 0.28), rgb(var(--accent-rgb) / 0.06) 60%, transparent);
+  filter: blur(6px);
+}
+.lx-empty__ghost {
+  position: relative;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 8px 22px rgb(var(--accent-rgb) / 0.45));
+  animation: lx-float 3.6s ease-in-out infinite;
+  --ghost-eyes: var(--bg-2);
+}
+.lx-empty__shadow {
+  position: absolute;
+  bottom: 6px;
+  width: 54px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.45);
+  filter: blur(3px);
+  animation: lx-float-shadow 3.6s ease-in-out infinite;
+}
+.lx-empty--compact .lx-empty__shadow {
+  bottom: 2px;
+  width: 40px;
+}
+.lx-empty__badge {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  transform: skewX(var(--shear));
+  background: linear-gradient(135deg, var(--accent), var(--accent-lo));
+  color: var(--accent-ink);
+  box-shadow:
+    0 6px 18px rgb(var(--accent-rgb) / 0.45),
+    0 0 0 3px var(--bg-2);
+}
+.lx-empty--compact .lx-empty__badge {
+  right: 12px;
+  bottom: 14px;
+  width: 26px;
+  height: 26px;
+}
+.lx-empty__badge svg {
+  width: 16px;
+  height: 16px;
+  transform: skewX(var(--unshear));
+}
+.lx-empty__title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  color: var(--fg-0);
+}
+.lx-empty--compact .lx-empty__title {
+  font-size: var(--fs-lg);
+}
+.lx-empty__body {
+  max-width: 380px;
+  color: var(--fg-3);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+.lx-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+@keyframes lx-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-9px) rotate(2deg);
+  }
+}
+@keyframes lx-float-shadow {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scaleX(0.72);
+    opacity: 0.5;
+  }
+}
+html.reduce-motion .lx-empty__ghost,
+html.reduce-motion .lx-empty__shadow {
+  animation: none;
+}
+
+/* ---------------------------------------------------------------- section label */
+.lx-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.lx-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+.lx-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: rgb(var(--accent-rgb) / 0.16);
+  color: var(--accent-hi);
+  font-size: 10.5px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* leaving entries of useAnimatedList: out of flow at their last position */
+[data-leaving='true'] {
+  position: absolute !important;
+  margin: 0 !important;
+  pointer-events: none;
+  animation: lx-leave 260ms var(--ease-out-quint) forwards;
+}
+@keyframes lx-leave {
+  to {
+    opacity: 0;
+    translate: 28px 0;
+    scale: 0.97;
+  }
+}
+
+/* text selection inside paths */
+.lx-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+
+/* ---------------------------------------------------------------- snack */
+.lx-snack-wrap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22px;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  padding: 0 20px;
+}
+.lx-snack {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, 100%);
+  padding: 12px 10px 12px 14px;
+  border-radius: var(--radius-lg);
+  background: rgb(var(--bg-3-rgb) / 0.96);
+  box-shadow:
+    var(--shadow-pop),
+    0 0 0 1px rgb(var(--accent-rgb) / 0.3),
+    0 0 30px rgb(var(--accent-rgb) / 0.15);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+  overflow: hidden;
+}
+.lx-snack__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgb(var(--accent-rgb) / 0.18);
+  color: var(--accent-hi);
+}
+.lx-snack__icon svg {
+  width: 18px;
+  height: 18px;
+}
+.lx-snack__text {
+  min-width: 0;
+  flex: 1;
+}
+.lx-snack__title {
+  color: var(--fg-0);
+  font-weight: var(--fw-semibold);
+}
+.lx-snack__body {
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.lx-snack__body > * {
+  unicode-bidi: plaintext;
+}
+.lx-snack__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  transition:
+    filter 200ms,
+    transform 200ms var(--ease-out-quint);
+}
+.lx-snack__action svg {
+  width: 15px;
+  height: 15px;
+}
+.lx-snack__action:hover {
+  filter: brightness(1.12);
+}
+.lx-snack__action:active {
+  transform: scale(0.95);
+}
+.lx-snack__close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--fg-3);
+}
+.lx-snack__close:hover {
+  color: var(--fg-0);
+  background: rgb(255 255 255 / 0.08);
+}
+.lx-snack__close svg {
+  width: 16px;
+  height: 16px;
+}
+.lx-snack__timer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: rgb(255 255 255 / 0.05);
+}
+.lx-snack__timer-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transition: transform 100ms linear;
+}
