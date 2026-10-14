@@ -236,14 +236,16 @@ The resolver asks each enabled provider in priority order and scores the candida
    - NSF folders named after musicians mix their own work with real rips, so those albums are only kept for games the catalog already knows.
    - HES/KSS (no song count) and SGC (no libgme player) aren't indexed.
 7. **Internet Archive.**
-   - The curated game-soundtrack collections are indexed.
-   - Everything else is searched on demand ("Search elsewhere").
-8. **SoundCloud via yt-dlp.** Last resort, searched on demand: sets and full-OST uploads.
-9. **YouTube via yt-dlp.**
+   - The curated game-soundtrack collections are indexed: `folksoundomy_gamesoundtracks`, the game items of `hifidelity_soundtracks`, and game-tagged `hifidelity_potpourri` (about 3.8k albums).
+   - Everything else is searched on demand ("Search elsewhere"). Each web source answers separately, and results list as they arrive.
+8. **YouTube via yt-dlp.**
    - Universal fallback, searched on demand.
    - Prefer "Artist – Topic" channels (official distributor uploads).
    - Prefer m4a/AAC; use Opus only when it's the best available.
    - Full-OST videos with chapters are split into virtual tracks.
+9. **SoundCloud via yt-dlp.** The very last resort, searched on demand.
+   - yt-dlp can't search sets, so album-like hits are long uploads (split on timestamped descriptions) and one uploader's tracks of the game.
+   - SoundCloud serves only HLS, so each track is downloaded once into a 1 GiB LRU cache before it plays.
 10. **Rainwave**, for radio mode (later milestone).
 
 Researched but not used (see `docs/research/sources-2026-10.md`):
