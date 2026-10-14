@@ -414,6 +414,30 @@ describe('source fallback', () => {
     expect(t.engine.nextId).toBe(t.uidAt(1))
   })
 
+  it('a 403 re-resolves the same source once (fresh URL, same key) before giving up on it', async () => {
+    const t = setup()
+    // a YouTube-style single source whose stored URL went stale
+    t.catalog.sources.set('t1', [httpSource('t1', 'yt', { provider: 'youtube' })])
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    const uid = t.uidAt(0)
+    // the catalog hands out a freshly resolved URL under the same cache key
+    t.catalog.sources.set('t1', [httpSource('t1', 'yt', { provider: 'youtube', source: { kind: 'http', url: 'https://cdn.example/t1/fresh.m4a', cacheKey: 't1#yt' } })])
+    t.engine.emit({ type: 'error', id: uid, message: 'stream failed: HTTP 403', recoverable: true })
+    await t.settle()
+    expect(t.catalog.failedMarks.map((m) => m.cacheKey)).toEqual(['t1#yt'])
+    // not excluded on the retry, and the fresh URL is what plays
+    expect(t.catalog.resolveCalls.filter((c) => c.trackId === 't1').at(-1)?.opts?.exclude).toEqual([])
+    const [track] = t.engine.lastCall('setCurrent') as [EngineTrack]
+    expect(track.id).toBe(uid)
+    expect(track.source).toMatchObject({ url: 'https://cdn.example/t1/fresh.m4a' })
+    expect(t.st().current?.id).toBe('t1')
+    // a second 403 on the same key is a real failure: skip on
+    t.engine.emit({ type: 'error', id: uid, message: 'stream failed: HTTP 403', recoverable: true })
+    await t.settle()
+    expect(t.st().current?.id).toBe('t2')
+  })
+
   it('when every source fails it notifies and skips to the next track', async () => {
     const t = setup()
     await t.player.playTracks(['t1', 't2'])

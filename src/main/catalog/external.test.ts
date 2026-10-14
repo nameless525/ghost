@@ -226,7 +226,7 @@ describe('external import', () => {
 
 describe('resolver fallback to search providers', () => {
   it('normal plays never search; failed or excluded album sources fall back in provider order, and cached candidates are reused', async () => {
-    const { svc, kh, ytdlp, fetchImpl, settings } = setup()
+    const { svc, kh, ytdlp, fetchImpl, settings, db } = setup()
     const hk = (await svc.browse({ text: 'hollow knight', group: 'album', sort: 'title', offset: 0, limit: 10 })).groups.find((g) => g.title === 'Hollow Knight')!
     const album = await svc.album(hk.key.split(':')[1])
     const dirtmouth = album.tracks.find((t) => t.title === 'Dirtmouth')!
@@ -263,6 +263,16 @@ describe('resolver fallback to search providers', () => {
     const again = await svc.resolveSources(dirtmouth.id, { exclude: excl })
     expect(again[0].provider).toBe('youtube')
     expect(ytdlp.calls.length).toBe(n)
+
+    // 4b. A YouTube URL refused with 403 (stale: bound to an IP this machine no longer has): every
+    // stored YouTube URL is due for refresh, and re-resolving runs yt-dlp again instead of handing
+    // back the memoised (stale) URL.
+    svc.markSourceFailed(dirtmouth.id, (again[0].source as { cacheKey: string }).cacheKey, 'stream failed: HTTP 403')
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM sources WHERE provider = 'youtube' AND needs_refresh = 0`).get() as { n: number }).n).toBe(0)
+    const resolvesBefore = ytdlp.calls.filter((c) => c[0] === '-j').length
+    const fresh = await svc.resolveSources(dirtmouth.id, { exclude: excl })
+    expect(fresh[0].provider).toBe('youtube')
+    expect(ytdlp.calls.filter((c) => c[0] === '-j').length).toBe(resolvesBefore + 1)
 
     // 5. YouTube disabled too: nothing left, so KHInsider's error surfaces.
     settings.sources.disabled = ['archive', 'youtube']

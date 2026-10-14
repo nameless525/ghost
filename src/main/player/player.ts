@@ -24,6 +24,7 @@ import type { CatalogService, ResolvedSource } from '../catalog'
 import type { EngineBridge, EngineEvent, EnginePlaybackState, EngineSource, EngineTrack, EngineTrackInfo, OfflineAnalysisResult } from '../engine/types'
 import { sliderToDb } from '../engine/types'
 import type { Broadcast } from '../ipc'
+import { ACCESS_DENIED } from '../net/errors'
 import type { SessionData, SessionStore } from './session'
 import { fisherYates, smartShuffle, type Rng } from './shuffle'
 
@@ -183,6 +184,8 @@ export class Player implements PlayerAPI {
   private engineState: EnginePlaybackState = 'idle'
   private seekHold: { ms: number; at: number } | null = null
 
+  /** Track/cache-key pairs already given one fresh re-resolve after a 401/403/410 this session. */
+  private refreshed = new Set<string>()
   /** Cache keys that failed this session, per track (passed to resolveSources as `exclude`). */
   private failed = new Map<ID, Set<string>>()
   private failStreak = new Set<string>()
@@ -485,7 +488,17 @@ export class Player implements PlayerAPI {
     a.lastError = message
     if (!src) return
     const key = sourceKey(src.source)
-    this.failedSet(a.trackId).add(key)
+    // A remote URL refused with 401/403/410 has usually just gone stale (expired, or bound to an IP
+    // this machine no longer has): drop it from this attempt and re-resolve once, which fetches a
+    // fresh URL under the same key, before treating the source as broken.
+    const retryKey = `${a.trackId}\u0000${key}`
+    if (src.source.kind === 'http' && src.provider !== 'download' && ACCESS_DENIED.test(message) && !this.refreshed.has(retryKey)) {
+      this.refreshed.add(retryKey)
+      if (this.refreshed.size > 2000) this.refreshed.clear()
+      a.sources.splice(a.srcIdx, 1)
+      a.srcIdx--
+      a.remoteResolved = false
+    } else this.failedSet(a.trackId).add(key)
     if (src.provider === 'download') return // our own file; nothing for the catalog to learn
     try {
       this.catalog.markSourceFailed(a.trackId, key, message)

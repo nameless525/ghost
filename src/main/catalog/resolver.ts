@@ -12,6 +12,7 @@
 // rather than searched again; empty searches are remembered for a while. Failed sources are
 // demoted, and `exclude` drops ones that already failed.
 
+import { ACCESS_DENIED } from '../net/errors'
 import type { AudioFormat, ID, Settings } from '../../shared/types'
 import type { EngineSource } from '../engine/types'
 import type { ProviderRegistry } from '../providers'
@@ -219,13 +220,14 @@ export class SourceResolver {
     })
   }
 
-  private async refreshProvider(p: Provider, t: CanonicalTrack, trackId: number): Promise<void> {
+  /** `force`: a stored URL failed, so skip provider-side caches (a memoised YouTube URL is the stale one). */
+  private async refreshProvider(p: Provider, t: CanonicalTrack, trackId: number, force = false): Promise<void> {
     const flightKey = `${trackId}\u0000${p.id}`
     const existing = this.inflight.get(flightKey)
     if (existing) return existing
     const run = (async () => {
       if (p.id === t.albumProvider) {
-        const infos = await p.resolveStream(t.locator, { priority: 0 })
+        const infos = await p.resolveStream(t.locator, { priority: 0, force })
         this.store(trackId, p.id, infos.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
       } else if (p.findTrack) {
         const now = this.now()
@@ -236,7 +238,7 @@ export class SourceResolver {
           if (r.failures < MAX_REUSE_FAILURES && now - r.verified_at < SOURCE_TTL_MS) reuse.set(r.locator, Math.max(reuse.get(r.locator) ?? 0, r.confidence))
         }
         const resolveAll = async (cands: { locator: string; confidence: number }[]): Promise<StoredStream[]> => {
-          const settled = await Promise.allSettled(cands.map((c) => p.resolveStream(c.locator, { priority: 0 })))
+          const settled = await Promise.allSettled(cands.map((c) => p.resolveStream(c.locator, { priority: 0, force })))
           const items: StoredStream[] = []
           settled.forEach((r, i) => {
             if (r.status === 'fulfilled') for (const info of r.value) items.push({ info, locator: cands[i].locator, confidence: cands[i].confidence })
@@ -276,7 +278,7 @@ export class SourceResolver {
     if (fallback && (this.backoff.get(key) ?? 0) > now) return null
     if (this.backoff.size > 5000) for (const [k, until] of this.backoff) if (until <= now) this.backoff.delete(k)
     try {
-      await this.refreshProvider(p, t, trackId)
+      await this.refreshProvider(p, t, trackId, rows.some((r) => r.needs_refresh === 1))
       return null
     } catch (e) {
       if (fallback) this.backoff.set(key, now + FAILED_SEARCH_TTL_MS)
@@ -319,15 +321,17 @@ export class SourceResolver {
       firstError ??= e
     }
     let ranked = rank()
-    // Phase 2: network-search fallbacks, only when nothing healthy is left.
-    if (!ranked.some((x) => !x.recentFail)) {
-      for (const p of providers) {
-        if (!isFallback(p)) continue
-        const e = await this.refreshIfNeeded(p, t, trackId, now)
-        firstError ??= e
-        ranked = rank()
-        if (ranked.some((x) => !x.recentFail)) break
-      }
+    // Phase 2: network-search fallbacks, when nothing healthy is left, plus any fallback whose stored
+    // URLs are due for a refresh (a YouTube URL invalidated by a 403 would only fail again; refreshing
+    // re-resolves the known candidates without a new search).
+    const stale = (p: Provider) => this.rows(trackId, p.id).some((r) => r.needs_refresh === 1)
+    for (const p of providers) {
+      if (!isFallback(p)) continue
+      const healthy = ranked.some((x) => !x.recentFail)
+      if (healthy && !stale(p)) continue
+      const e = await this.refreshIfNeeded(p, t, trackId, now)
+      firstError ??= e
+      ranked = rank()
     }
     const out = ranked.map(({ r }) => toResolved(r))
     if (!out.length && firstError) throw firstError
@@ -335,13 +339,21 @@ export class SourceResolver {
   }
 
   markFailed(trackIdStr: ID, cacheKey: string, reason: string): void {
+    const now = this.now()
     this.deps.repo.run(
       `UPDATE sources SET failures = failures + 1, last_failed_at = ?, last_error = ?, needs_refresh = 1 WHERE track_id = ? AND cache_key = ?`,
-      this.now(),
+      now,
       reason.slice(0, 500),
       Number(trackIdStr),
       cacheKey
     )
+    // An expiring URL refused outright (YouTube / SoundCloud URLs are bound to the IP that fetched
+    // them; a new network or a rotated IPv6 address breaks every one of them at once): re-resolve
+    // that provider's other stored URLs before they're tried, instead of failing each in turn.
+    if (ACCESS_DENIED.test(reason)) {
+      const row = this.deps.repo.get<{ provider: string; expires_at: number | null }>(`SELECT provider, expires_at FROM sources WHERE track_id = ? AND cache_key = ?`, Number(trackIdStr), cacheKey)
+      if (row?.expires_at != null) this.deps.repo.run(`UPDATE sources SET needs_refresh = 1 WHERE provider = ? AND expires_at IS NOT NULL AND verified_at <= ?`, row.provider, now)
+    }
   }
 }
 

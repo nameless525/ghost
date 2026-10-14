@@ -42,3 +42,6 @@ export function errorCode(e: unknown): NetErrorCode | null {
 export function blockedMessage(host: string): string {
   return `${host} is blocking requests from GHOST (bot protection). Open https://${host} in your browser, then try again in a few minutes.`
 }
+
+/** Stream errors meaning "this URL is no longer valid for us" (a freshly resolved one usually works). */
+export const ACCESS_DENIED = /\b(?:HTTP\s*)?(?:401|403|410)\b|forbidden|expired|\bgone\b/i
