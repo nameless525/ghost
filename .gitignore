@@ -11,3 +11,4 @@ native/dist/
 coverage/
 .ghost-dev/
 *.tsbuildinfo
+native/native/
