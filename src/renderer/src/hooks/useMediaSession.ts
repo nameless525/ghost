@@ -82,6 +82,7 @@ export function useMediaSession(): void {
     }
 
     let lastMetaKey = ''
+    let artBlob: string | null = null
     const apply = (s: PlayerState) => {
       want = isPlayingish(s)
       sync()
@@ -90,19 +91,26 @@ export function useMediaSession(): void {
       const key = t ? `${t.id}|${t.cover}` : ''
       if (key !== lastMetaKey) {
         lastMetaKey = key
-        try {
-          const art = artUrl(t?.cover, { w: 512, dpr: 1 })
-          ms.metadata = t
-            ? new MediaMetadata({
-                title: t.title,
-                artist: t.gameName ?? t.composers.join(', '),
-                album: t.albumTitle,
-                artwork: art ? [{ src: art, sizes: '512x512' }] : []
-              })
-            : null
-        } catch (err) {
-          console.warn('[media-session] metadata', err)
+        const meta = (artwork: MediaImage[]) => {
+          try {
+            ms.metadata = t ? new MediaMetadata({ title: t.title, artist: t.gameName ?? t.composers.join(', '), album: t.albumTitle, artwork }) : null
+          } catch (err) {
+            console.warn('[media-session] metadata', err)
+          }
         }
+        meta([])
+        // MediaImage only takes http(s)/data/blob URLs: hand the OS a blob of the ghost-art image.
+        const art = artUrl(t?.cover, { w: 512, dpr: 1 })
+        if (art)
+          void fetch(art)
+            .then((r) => (r.ok ? r.blob() : null))
+            .then((blob) => {
+              if (!blob || lastMetaKey !== key) return
+              if (artBlob) URL.revokeObjectURL(artBlob)
+              artBlob = URL.createObjectURL(blob)
+              meta([{ src: artBlob, sizes: '512x512', type: blob.type || undefined }])
+            })
+            .catch(() => {})
       }
       if (t && s.durationMs && s.durationMs > 0) {
         try {
@@ -118,6 +126,7 @@ export function useMediaSession(): void {
 
     return () => {
       unsub()
+      if (artBlob) URL.revokeObjectURL(artBlob)
       window.removeEventListener('pointerdown', onGesture, true)
       window.removeEventListener('keydown', onGesture, true)
       for (const [a] of handlers) {
