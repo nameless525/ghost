@@ -729,7 +729,10 @@ export class Carousel {
       }
       case 'total': {
         useBrowse.setState({ total: e.total, loading: m.loading })
-        if (this.sel.gi >= e.total && e.total > 0) this.select({ gi: e.total - 1, albumId: null, trackId: null }, { sound: false })
+        // A query can come back empty first (the catalog is still indexing) and fill in on a later
+        // refresh: if nothing is selected yet, select the first result once there is one.
+        if (e.total > 0 && this.sel.gi < 0 && !this.awaitingFirstPage) this.select({ gi: 0, albumId: null, trackId: null }, { sound: false, instant: true })
+        else if (this.sel.gi >= e.total && e.total > 0) this.select({ gi: e.total - 1, albumId: null, trackId: null }, { sound: false })
         if (!e.total) this.publish(true)
         break
       }
@@ -747,6 +750,11 @@ export class Carousel {
           // a screen-enter cascade may already be running: let it carry the new panels in
           if (!(this.phase === 'intro' && performance.now() - this.phaseAt < 600)) this.intro(0.22, 150)
           else this.phaseAt = performance.now()
+          return
+        }
+        if (this.sel.gi < 0 && this.total > 0 && e.page === 0) {
+          this.select({ gi: 0, albumId: null, trackId: null }, { sound: false, instant: true })
+          this.scroll.set(this.clampScroll(this.selCenter()))
           return
         }
         if (Math.floor(this.sel.gi / PAGE_SIZE) === e.page) {

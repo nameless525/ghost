@@ -665,7 +665,13 @@ export class CatalogRepo {
           const platformCount = new Map<string, number>()
           for (const a of as) for (const p of j<string[]>(a.platforms, [])) platformCount.set(p, (platformCount.get(p) ?? 0) + 1)
           const platforms = [...platformCount.entries()].sort((x, y) => y[1] - x[1]).map(([p]) => p)
-          const albumCover = as.find((a) => a.cover)?.cover ?? null
+          // Prefer the official soundtrack's art (OST > gamerip > anything), earliest release first,
+          // so fan arrangements don't become the face of the game.
+          const coverRank = (k: string) => (k === 'ost' ? 0 : k === 'gamerip' ? 1 : k === 'single' ? 3 : 2)
+          const albumCover =
+            as
+              .filter((a) => a.cover)
+              .sort((x, y) => coverRank(x.kind) - coverRank(y.kind) || (x.year ?? 9999) - (y.year ?? 9999))[0]?.cover ?? null
           const cover = igdb?.cover ?? sgdb?.cover ?? albumCover
           const hero = sgdb?.hero ?? igdb?.hero ?? null
           const logo = sgdb?.logo ?? null

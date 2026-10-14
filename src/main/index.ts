@@ -6,6 +6,8 @@ import { createServices, type ServicesHandle } from './services'
 import { handleArtProtocol, registerArtScheme } from './net/art-protocol'
 
 app.setName('GHOST')
+// Dev/test: isolate all app data (DB, cache, settings) in another folder.
+if (process.env.GHOST_USER_DATA) app.setPath('userData', process.env.GHOST_USER_DATA)
 
 const here = dirname(fileURLToPath(import.meta.url))
 registerArtScheme()
