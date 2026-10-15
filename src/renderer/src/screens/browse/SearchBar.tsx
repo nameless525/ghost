@@ -1,10 +1,11 @@
 // Top-right filter control (osu!lazer's song-select filter): syntax-highlighted search,
 // result count, group + sort selectors and a slim catalog-indexing progress line.
 import { Calendar, CalendarClock, DiscAlbum, Dices, Gamepad2, History, Layers, MicVocal, Monitor, Star, Timer, Type } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
+import { useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 import type { GroupBy, SortBy } from '@shared/types'
 import { parseSearch } from '@shared/search'
 import { sfx } from '../../sound'
+import { ProgressBar } from '../../ui/ProgressBar'
 import { SearchInput, type SearchInputHandle } from '../../ui/SearchInput'
 import { Select, type SelectOption } from '../../ui/Select'
 import { Tooltip } from '../../ui/Tooltip'
@@ -14,6 +15,7 @@ import { CatalogActivityPopover } from './CatalogActivity'
 import { browseModel } from './model'
 import { applyQuery, setSearchText } from './query'
 import { GROUP_LABELS, GROUP_NOUNS, SORT_LABELS, useBrowse } from './store'
+import { useRestartKey } from './waits'
 
 const ic = { width: 15, height: 15 }
 
@@ -198,14 +200,8 @@ function SyntaxHint() {
   )
 }
 
+/** Along the panel's bottom edge: how far indexing is (a sweep while that's unknown), still and faded out otherwise. */
 function IndexingLine({ active, progress }: { active: boolean; progress: number | null }) {
-  const fill = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (fill.current) fill.current.style.transform = `scaleX(${progress ?? 0})`
-  }, [progress])
-  return (
-    <div className={cx('bs-progress', active && 'bs-progress--on', active && progress == null && 'bs-progress--indeterminate')} aria-hidden>
-      <div ref={fill} className="bs-progress__fill" style={{ '--p': progress ?? 0 } as CSSProperties} />
-    </div>
-  )
+  const run = useRestartKey(active, progress)
+  return <ProgressBar className={cx('bs-progress', active && 'bs-progress--on')} size="thin" progress={active ? progress : 0} waitKey={run} aria-label="Catalog indexing" />
 }

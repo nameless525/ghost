@@ -6,8 +6,10 @@ import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { CatalogStatus, SourceIndexStatus } from '@shared/types'
 import { place } from '../../ui/floating'
+import { ProgressBar } from '../../ui/ProgressBar'
 import { cx } from '../../ui/util'
 import { DAY, formatEta, formatEvery } from './activity'
+import { useRestartKey } from './waits'
 import './catalog-activity.css'
 
 function nextRefresh(s: SourceIndexStatus, now: number): string | null {
@@ -44,16 +46,18 @@ export function SourceActivityList({ sources }: { sources: SourceIndexStatus[] }
           <span className="ca-row__text">
             <span className="ca-row__name">{s.name}</span>
             <span className="ca-row__state">{stateLine(s, now)}</span>
-            {s.state === 'running' && (
-              <span className="ca-row__bar">
-                <span className="ca-row__fill" style={{ transform: `scaleX(${s.progress ?? 0})` }} />
-              </span>
-            )}
+            {s.state === 'running' && <SourceBar name={s.name} progress={s.progress} />}
           </span>
         </li>
       ))}
     </ul>
   )
+}
+
+/** A running source's crawl: measured when it knows how far it is, a sweep while it doesn't. */
+function SourceBar({ name, progress }: { name: string; progress: number | null }) {
+  const run = useRestartKey(true, progress)
+  return <ProgressBar className="ca-row__bar" size="thin" progress={progress} waitKey={run} aria-label={`Indexing ${name}`} />
 }
 
 /** The explanation under the list: setup happens once; refreshes are background work. */

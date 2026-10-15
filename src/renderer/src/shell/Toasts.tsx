@@ -7,6 +7,7 @@ import { ticker } from '../motion/ticker'
 import { tween } from '../motion/tween'
 import { useUI } from '../state/ui'
 import { CoverArt } from '../ui/CoverArt'
+import { ProgressBar } from '../ui/ProgressBar'
 import { cx } from '../ui/util'
 import { useNotifications, type Toast } from './notifications'
 
@@ -174,11 +175,8 @@ export function ToastStack() {
           <div className="g-toast__text">
             <div className="g-toast__title">{t.title}</div>
             {t.body && <div className="g-toast__body">{t.body}</div>}
-            {t.kind === 'progress' && (
-              <div className="g-toast__progress">
-                <div className="g-toast__progress-fill" style={{ transform: `scaleX(${Math.max(0, Math.min(1, t.progress ?? 0))})` }} />
-              </div>
-            )}
+            {/* a card without a number (a wait main can't measure) sweeps instead of sitting at 0 */}
+            {t.kind === 'progress' && <ProgressBar progress={t.progress ?? null} waitKey={t.id} style={{ marginTop: 8 }} />}
           </div>
           <button
             type="button"

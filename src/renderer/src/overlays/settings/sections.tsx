@@ -27,11 +27,13 @@ import { ghost } from '../../ghost'
 import { animateValue } from '../../motion/tween'
 import { notify } from '../../shell/notifications'
 import { sfx } from '../../sound'
+import { useTask } from '../../state/progress'
 import { useSettings } from '../../state/settings'
 import { Button } from '../../ui/Button'
 import { GhostMark } from '../../ui/GhostMark'
 import { IconButton } from '../../ui/IconButton'
 import { Kbd } from '../../ui/Kbd'
+import { ProgressBar } from '../../ui/ProgressBar'
 import { SegmentedControl } from '../../ui/SegmentedControl'
 import { Select, type SelectOption } from '../../ui/Select'
 import { Toggle } from '../../ui/Toggle'
@@ -39,6 +41,7 @@ import { cx } from '../../ui/util'
 import { leavingStyle, relativeTime, useAnimatedList, useNow } from '../library/common'
 import { Highlight, patchSettings, Row, SearchContext, SecretField, SettingSlider } from './controls'
 import { ActivityNote, SourceActivityList } from '../../screens/browse/CatalogActivity'
+import { useRestartKey, useRunKey } from '../../screens/browse/waits'
 import { ProviderList } from './ProviderList'
 
 export type SectionId = 'audio' | 'sources' | 'library' | 'interface' | 'integrations' | 'catalog' | 'about'
@@ -188,6 +191,9 @@ const notCustom = (s: Settings) => s.audio.loopMode !== 'custom'
 
 function FoldersRow(m: RowMeta) {
   const folders = useSettings((s) => s.sources.localFolders)
+  // Adding (or removing) folders rescans them: "Looking for music files", then "120 of 900 files".
+  const scan = useTask('scan')
+  const scanRun = useRunKey(scan)
   const list = useRef<HTMLUListElement>(null)
   const entries = useMemo(() => folders.map((f) => ({ key: f, data: f })), [folders])
   const rows = useAnimatedList(list, entries, { exitMs: 260 })
@@ -222,6 +228,7 @@ function FoldersRow(m: RowMeta) {
         ))}
       </ul>
       {!folders.length && <div className="set-hint">No folders yet. Add the folders where you keep soundtrack rips and GHOST matches them to the catalog.</div>}
+      {scan && <ProgressBar className="set-scan" caption progress={scan} waitKey={scanRun} done={scan.done} fadeWhenDone />}
       <div className="set-actions">
         <Button size="sm" variant="soft" icon={<FolderPlus />} onClick={() => void add()}>
           Add folder
@@ -587,6 +594,7 @@ function CatalogPanel() {
   const now = useNow(30000, open)
   const [busy, setBusy] = useState(false)
   const indexing = !!st?.indexing
+  const runKey = useRestartKey(indexing, st?.progress)
   const reindex = async () => {
     setBusy(true)
     sfx.play('confirm', { volume: 0.7 })
@@ -623,14 +631,15 @@ function CatalogPanel() {
       )}
       <div className={cx('set-cat__progress', indexing && 'set-cat__progress--on')}>
         <div className="set-cat__progress-inner">
-          <div className="set-cat__progress-row">
-            <span className="set-cat__msg">{st?.message || 'Indexing provider catalogs…'}</span>
-            {st?.progress != null && <b className="tnum">{Math.floor(st.progress * 100)}%</b>}
-          </div>
-          <div className="set-cat__bar">
-            <div className="set-cat__fill" style={{ transform: `scaleX(${st?.progress ?? 0})` }} />
-            {st?.progress == null && <div className="set-cat__indet g-keep-motion" />}
-          </div>
+          {/* measured while it knows how far along it is, a sweep while it doesn't (grouping, a new
+              source's first page); complete and still (no sweep) as it collapses once indexing ends */}
+          <ProgressBar
+            className="set-cat__bar"
+            caption
+            progress={{ label: st?.message || 'Indexing provider catalogs…', fraction: open ? (st?.progress ?? null) : 0, expectMs: null, since: 0 }}
+            waitKey={runKey}
+            done={!indexing}
+          />
         </div>
       </div>
       <div className="set-cat__foot">

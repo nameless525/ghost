@@ -202,7 +202,11 @@ engine.analysisRegion(): string                         // shared-memory name th
 ```
 `SourceSpec` = `{ kind: 'http' | 'file' | 'chip', url | path, headers?, formatHint?, loop?, subsong? }`
 
-Also implemented: `inspectArchive(source)` (entries + playlist texts), `setVoiceMask`/`voiceCount` (chiptune channel muting), and `download(…, { renderFlac })`. A headless CLI (`ghost-cli`) exposes the same API from the terminal for testing (play a URL, render to WAV, dump analysis).
+Also implemented: `inspectArchive(source)` (entries + playlist texts), `setVoiceMask`/`voiceCount` (chiptune channel muting), and `download(…, { renderFlac })`.
+
+For progress bars, two cheap queries (about 1 µs each from JavaScript, polled only while something waits):
+- `loadProgress('current' | 'preview')`: what a track's start or rebuffer waits on. It reports whether the source answered, its bytes in the stream cache (and whether the decoder needs the whole file first: chip formats, archive entries), decoded audio against what the voice waits for (200 ms to start, 750 ms after an underrun), and how long the reader has waited for bytes against its 8 s give-up. The audio thread only stores a few atomics on transitions.
+- `cacheProgress(cacheKey)`: bytes of a source in the stream cache, e.g. a chiptune set being fetched for `inspectArchive`. A headless CLI (`ghost-cli`) exposes the same API from the terminal for testing (play a URL, render to WAV, dump analysis).
 
 ---
 
@@ -326,6 +330,7 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 - **Screen transitions** are choreographed (elements leave in sequence, staggered 30–50 ms), never plain cross-fades.
 - **Carousel:** spring-driven scrolling (critically damped, small overshoot on fling); panels sit on a gentle arc, as in osu!'s song select.
 - All per-frame motion runs in a single rAF loop that writes `transform`/`opacity` only (compositor-friendly), and is paced to the display's refresh rate.
+- **Progress:** every wait the user can notice shows a progress bar (`ui/ProgressBar`) that says what it waits on. A step is either measured (bytes, buffered audio, files read, sources answered), estimated (the bar eases toward the end over the step's typical length, learned per source, and never reaches it until the step ends) or unknown (a sweep). Bars never move backwards within one wait, and run as Web Animations, so they cost no JavaScript per frame. The player reports its waits in `PlayerState.loading` / `previewLoading` (finding a source → connecting → downloading or buffering, a stall's countdown to trying another source); long tasks send `progress` events keyed by what they belong to (`album:<id>`, `import:…`, `scan`, `tool:yt-dlp`).
 
 ### 7.3 Screens
 

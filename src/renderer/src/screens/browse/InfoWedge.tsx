@@ -6,7 +6,6 @@ import { useMemo, useReducer, useRef, type ReactNode } from 'react'
 import { parseSearch } from '@shared/search'
 import type { Album, SourceSummary } from '@shared/types'
 import { artUrl } from '../../lib/art'
-import { usePlayer } from '../../state/player'
 import { useSettings } from '../../state/settings'
 import { CoverArt } from '../../ui/CoverArt'
 import { IntensityBadge, SourceBadge } from '../../ui/Badges'
@@ -16,7 +15,7 @@ import { GhostMark } from '../../ui/GhostMark'
 import { LoadingRing } from '../../ui/LoadingRing'
 import { Wedge } from '../../ui/Panel'
 import { cx } from '../../ui/util'
-import { previewAlbumId } from './actions'
+import { CoverStatus } from './CoverStatus'
 import { browseModel } from './model'
 import { KIND_LABEL, plural } from './panels'
 import { GROUP_LABELS, providerName, useBrowse, type SelInfo } from './store'
@@ -223,7 +222,6 @@ export function InfoWedge() {
   const loading = useBrowse((s) => s.loading)
   const text = useBrowse((s) => s.text) && browseModel.query.text
   const preferOrig = useSettings((s) => s.interface.preferOriginalTitles)
-  const preview = usePlayer((s) => s.preview)
   const v = useMemo(() => (sel ? describe(sel, preferOrig) : null), [sel, preferOrig])
 
   // only read while showing "no matches": catalog:status arrives several times a second while
@@ -232,7 +230,6 @@ export function InfoWedge() {
   const noMatch = !sel && !loading && total === 0 && !!text
   const hasFilters = useMemo(() => (noMatch ? parseSearch(text).filters.length > 0 : false), [noMatch, text])
 
-  const previewing = !!(preview && sel && (sel.track ? preview.track.id === sel.track.id : preview.track.albumId === previewAlbumId(sel)))
   const hero = artUrl(v?.hero ?? v?.cover ?? null, { w: 720 })
 
   return (
@@ -242,12 +239,7 @@ export function InfoWedge() {
         <div className="bw__hero-shade" />
         <div className="bw__cover">
           <CoverArt src={v?.cover ?? null} size="100%" w={188} radius={12} hue={v?.accent ?? undefined} />
-          {previewing && (
-            <div className="bw__previewing" title={`Previewing ${preview!.track.title}`}>
-              <AudioLines />
-              Preview
-            </div>
-          )}
+          <CoverStatus sel={sel} />
         </div>
         <Swap id={sel?.id ?? (loading ? 'loading' : 'empty')} className="bw__heading">
           {v && v.title ? (

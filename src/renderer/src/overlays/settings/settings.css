@@ -427,6 +427,10 @@
   color: var(--fg-4);
   font-size: var(--fs-sm);
 }
+/* rescanning the local folders (the 'scan' task) */
+.set-scan {
+  margin: 2px 0 10px;
+}
 .set-actions {
   display: flex;
   gap: 8px;
@@ -797,47 +801,20 @@
 .set-cat__progress--on .set-cat__progress-inner {
   padding-top: 12px;
 }
-.set-cat__progress-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
-  color: var(--fg-2);
+/* the shared ProgressBar, its caption sized like the rows around it */
+.set-cat__bar {
+  --g-progress-h: 5px;
+}
+.set-cat__bar .g-progress__caption {
   font-size: var(--fs-sm);
 }
-.set-cat__progress-row b {
+.set-cat__bar .g-progress__label {
+  color: var(--fg-2);
+  font-weight: var(--fw-regular);
+}
+.set-cat__bar .g-progress__pct {
   color: var(--accent-hi);
-}
-.set-cat__bar {
-  position: relative;
-  height: 5px;
-  border-radius: 3px;
-  overflow: hidden;
-  background: rgb(255 255 255 / 0.07);
-}
-.set-cat__fill {
-  position: absolute;
-  inset: 0;
-  transform-origin: left;
-  background: var(--accent);
-  box-shadow: 0 0 10px rgb(var(--accent-rgb) / 0.7);
-  transition: transform 500ms var(--ease-out-quint);
-}
-.set-cat__indet {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 30%;
-  background: var(--accent);
-  animation: set-indet 1.3s var(--ease-in-out-quint) infinite;
-}
-@keyframes set-indet {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(340%);
-  }
+  font-weight: var(--fw-bold);
 }
 .set-cat__foot {
   display: flex;

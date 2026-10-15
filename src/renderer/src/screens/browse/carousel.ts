@@ -10,7 +10,7 @@
 // every pooled panel damps its own displayed Y toward its layout target (so expanding and
 // collapsing slide neighbours out of the way), sits on a gentle arc by distance from the
 // focus line, nudges on hover, and the selected panel glows and pulses with the beat.
-import type { Album, AlbumDetail, BrowseGroup, TrackView } from '@shared/types'
+import type { Album, AlbumDetail, BrowseGroup, Progress, TrackView } from '@shared/types'
 import { beat } from '../../motion/beat'
 import { clamp, clamp01, damp as dampFn } from '../../motion/easing'
 import { motionPrefs } from '../../motion/prefs'
@@ -18,11 +18,16 @@ import { Spring } from '../../motion/spring'
 import { ticker, TickPriority } from '../../motion/ticker'
 import { sfx } from '../../sound'
 import { usePlayer } from '../../state/player'
+import { useTasks } from '../../state/progress'
 import { useSettings } from '../../state/settings'
 import { uiZoom } from '../../ui/util'
 import { browseModel, PAGE_SIZE, type ModelEvent } from './model'
-import { createPanel, fillAlbum, fillGroup, fillLoading, fillTrack, resetPanel, setClass, type PanelNode, type PanelType } from './panels'
+import { createPanel, disposePanel, fillAlbum, fillGroup, fillLoading, fillTrack, finishLoading, resetPanel, setClass, type PanelNode, type PanelType } from './panels'
+import { albumFallback, ALBUMS_EXPECT_MS } from './progress'
 import { memory, useBrowse, type SelInfo } from './store'
+
+/** A loading row whose track list failed (Enter on it tries again). */
+const DETAIL_FAILED = 'Couldn’t load the tracks · Enter tries again'
 
 // ---------------------------------------------------------------- geometry
 
@@ -76,6 +81,12 @@ interface Row {
   pitch: number
   /** Placeholder text for loading rows. */
   label?: string
+  /**
+   * Loading rows: what they wait on, as a 'progress' task key (`album:<id>`, an album's track list)
+   * or `albums:<group key>` (a group's album list, which has no task), and since when (epoch ms).
+   */
+  wait?: string
+  since?: number
   /** The track's album spans several discs (number tracks as disc·nn). */
   multiDisc?: boolean
 }
@@ -226,6 +237,16 @@ export class Carousel {
         }
       })
     )
+    // Loading rows follow their album's fetch ('progress' events): refill just those rows, outside
+    // the frame loop (their lines animate on their own).
+    this.disposers.push(
+      useTasks.subscribe((s, p) => {
+        for (const it of this.childItems.values()) {
+          const k = it.row?.wait
+          if (it.type === 'loading' && k && s[k] !== p[k]) this.fillLoadingRow(it.node, it.row!)
+        }
+      })
+    )
     this.disposers.push(ticker.add((dt, now) => this.tick(dt, now), TickPriority.physics + 1))
 
     this.restore()
@@ -241,6 +262,7 @@ export class Carousel {
     window.clearTimeout(this.loadingTimer)
     for (const d of this.disposers) d()
     this.disposers = []
+    for (const it of [...this.childItems.values(), ...this.leavingItems]) if (it.type === 'loading') disposePanel(it.node)
     this.layer.remove()
     if (activeCarousel === this) activeCarousel = null
   }
@@ -390,12 +412,14 @@ export class Carousel {
       const old = k !== undefined ? prevRows[k] : undefined
       if (old && old.gi === r.gi) {
         r.born = old.born
-        if (old.album === r.album && old.track === r.track && old.parent === r.parent && old.label === r.label) return old
+        if (old.album === r.album && old.track === r.track && old.parent === r.parent && old.label === r.label && old.wait === r.wait) return old
       }
       return r
     }
     const gid = 'G' + this.sel.gi
     let loading: string | null = null
+    let wait: string | undefined
+    let waitSince: number | null = null
     if (g && !this.collapsed) {
       if (g.kind === 'album') {
         const albumId = g.key.slice(g.key.indexOf(':') + 1)
@@ -403,7 +427,13 @@ export class Carousel {
         if (d) {
           const multiDisc = d.tracks.some((t) => t.disc > 1)
           d.tracks.forEach((t, ti) => rows.push(reuse({ type: 'track', id: 'T' + t.id, gi: this.sel.gi, depth: 1, album: d.album, track: t, ti, parent: gid, born, h: TH, pitch: TP, multiDisc })))
-        } else loading = 'Loading tracks…'
+        } else if (this.model.detailError(albumId)) {
+          loading = DETAIL_FAILED
+        } else {
+          loading = 'Loading tracks…'
+          wait = 'album:' + albumId
+          waitSince = this.model.detailSince(albumId)
+        }
       } else {
         const albums = this.model.albumsFor(g.key)
         if (albums) {
@@ -415,16 +445,23 @@ export class Carousel {
               if (d) {
                 const multiDisc = d.tracks.some((t) => t.disc > 1)
                 d.tracks.forEach((t, ti) => rows.push(reuse({ type: 'track', id: 'T' + t.id, gi: this.sel.gi, depth: 2, album: d.album, track: t, ti, parent: aid, born, h: TH, pitch: TP, multiDisc })))
+              } else if (this.model.detailError(a.id)) {
+                rows.push(reuse({ type: 'loading', id: 'L' + aid, gi: this.sel.gi, depth: 2, album: a, track: null, ti: -1, parent: aid, born, h: LH, pitch: LP, label: DETAIL_FAILED }))
               } else if (this.loadingDelayPassed('d:' + a.id, now)) {
-                rows.push(reuse({ type: 'loading', id: 'L' + aid, gi: this.sel.gi, depth: 2, album: a, track: null, ti: -1, parent: aid, born, h: LH, pitch: LP, label: 'Loading tracks…' }))
+                const since = this.model.detailSince(a.id) ?? Date.now()
+                rows.push(reuse({ type: 'loading', id: 'L' + aid, gi: this.sel.gi, depth: 2, album: a, track: null, ti: -1, parent: aid, born, h: LH, pitch: LP, label: 'Loading tracks…', wait: 'album:' + a.id, since }))
               }
             }
           }
           if (!albums.length) loading = 'No albums match'
-        } else loading = 'Loading albums…'
+        } else {
+          loading = 'Loading albums…'
+          wait = 'albums:' + g.key
+          waitSince = this.model.albumsSince(g.key)
+        }
       }
-      if (loading && (loading === 'No albums match' || this.loadingDelayPassed('g:' + g.key, now))) {
-        rows.push(reuse({ type: 'loading', id: 'L' + gid, gi: this.sel.gi, depth: 1, album: null, track: null, ti: -1, parent: gid, born, h: LH, pitch: LP, label: loading }))
+      if (loading && (!wait || this.loadingDelayPassed('g:' + g.key, now))) {
+        rows.push(reuse({ type: 'loading', id: 'L' + gid, gi: this.sel.gi, depth: 1, album: null, track: null, ti: -1, parent: gid, born, h: LH, pitch: LP, label: loading, wait, since: wait ? (waitSince ?? Date.now()) : undefined }))
       }
     }
 
@@ -451,6 +488,7 @@ export class Carousel {
         item.leaving = true
         item.leaveTo = item.row?.parent ?? null
         this.leavingItems.push(item)
+        if (item.type === 'loading') finishLoading(item.node)
       } else if (item.row !== rows[k]) {
         item.row = rows[k]
         item.data = null
@@ -1055,6 +1093,7 @@ export class Carousel {
     // The pool only needs a screenful per type. Fast F2 spins briefly hold many panels at once,
     // and without a cap that high-water mark stayed in the DOM for the rest of the session.
     if (this.pool[it.type].length >= POOL_MAX) {
+      disposePanel(it.node)
       it.node.el.remove()
       return
     }
@@ -1365,8 +1404,17 @@ export class Carousel {
     } else if (r.type === 'track') {
       const t = r.track!
       fillTrack(n, t, preferOrig ? (t.titleOriginal ?? t.title) : t.title, t.id === nowId ? nowState : 'off', !!r.multiDisc)
-    } else {
-      fillLoading(n, r.label ?? 'Loading…')
-    }
+    } else this.fillLoadingRow(n, r)
+  }
+
+  /** A loading row: its fetch's task progress when main reports one, else an estimate from when the fetch started. */
+  private fillLoadingRow(n: PanelNode, r: Row): void {
+    const label = r.label ?? 'Loading…'
+    if (!r.wait) return fillLoading(n, label)
+    const task = useTasks.getState()[r.wait]
+    if (task) return fillLoading(n, `${task.label}…`, r.wait, task, !!task.done)
+    const since = r.since ?? Date.now()
+    const p: Progress = r.wait.startsWith('album:') ? albumFallback(since) : { label, fraction: null, expectMs: ALBUMS_EXPECT_MS, since }
+    fillLoading(n, label, r.wait, p)
   }
 }

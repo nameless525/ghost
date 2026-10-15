@@ -89,19 +89,8 @@
   font-size: var(--fs-xs);
 }
 .ca-row__bar {
-  position: relative;
-  height: 3px;
+  --g-progress-h: 3px;
   margin-top: 4px;
-  border-radius: 2px;
-  background: rgb(255 255 255 / 0.08);
-  overflow: hidden;
-}
-.ca-row__fill {
-  position: absolute;
-  inset: 0;
-  transform-origin: left;
-  background: var(--accent);
-  transition: transform 600ms var(--ease-out-quint);
 }
 .ca-note {
   margin: 10px 2px 0;

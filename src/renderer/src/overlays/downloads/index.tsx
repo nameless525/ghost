@@ -18,6 +18,7 @@ import { formatTime } from '../../ui/format'
 import { IconButton } from '../../ui/IconButton'
 import { LoadingRing } from '../../ui/LoadingRing'
 import { OverlayHeader } from '../../ui/OverlayHeader'
+import { ProgressBar } from '../../ui/ProgressBar'
 import { ProgressRing } from '../../ui/ProgressRing'
 import { ScrollArea } from '../../ui/ScrollArea'
 import { cx, useEvent } from '../../ui/util'
@@ -356,9 +357,14 @@ const ItemRow = memo(
           <div className="dl-item__sub g-ellipsis">{[d.gameName, d.albumTitle].filter(Boolean).join(' · ')}</div>
           {s === 'active' && (
             <>
-              <div className="dl-item__bar">
-                <div className="dl-item__fill" style={{ transform: `scaleX(${d.status === 'tagging' ? 1 : d.progress})` }} />
-              </div>
+              {d.status === 'resolving' || (d.status === 'downloading' && !d.totalBytes) ? (
+                // how far isn't known yet (finding a source, a size-less stream): a sweep, not a bar stuck at 0
+                <ProgressBar className="dl-item__load" size="thin" progress={null} aria-label={activeStats(d, bps)} />
+              ) : (
+                <div className="dl-item__bar">
+                  <div className="dl-item__fill" style={{ transform: `scaleX(${d.status === 'tagging' ? 1 : d.progress})` }} />
+                </div>
+              )}
               <div className="dl-item__stats tnum">{activeStats(d, bps)}</div>
             </>
           )}
@@ -414,7 +420,7 @@ function ItemArt({ d, section, index }: { d: DownloadItem; section: Section; ind
 }
 
 function activeStats(d: DownloadItem, bps: number) {
-  if (d.status === 'resolving') return 'Finding the best source…'
+  if (d.status === 'resolving') return 'Finding a source…'
   if (d.status === 'tagging') return 'Writing tags & artwork…'
   const parts: string[] = []
   parts.push(d.totalBytes ? `${formatBytes(d.bytes)} / ${formatBytes(d.totalBytes)}` : formatBytes(d.bytes))

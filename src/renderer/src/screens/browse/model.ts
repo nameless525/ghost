@@ -19,6 +19,8 @@ const MAX_PAGES = 48
 const MAX_ALBUM_LISTS = 300
 /** Album details (track lists), least recently used dropped first. */
 const MAX_DETAILS = 160
+/** A track list that failed to load isn't fetched again on its own before this (moving onto it again). */
+const DETAIL_RETRY_MS = 15_000
 const MAX_GAMES = 600
 
 /** Map insertion order as recency: move `key` to the back. */
@@ -68,6 +70,11 @@ export class BrowseModel {
   private details = new Map<string, AlbumDetail>()
   private detailsPending = new Map<string, Promise<AlbumDetail | null>>()
   private staleDetails = new Set<string>()
+  /** When each pending album list / track list fetch started (epoch ms), for progress estimates. */
+  private albumsStarted = new Map<string, number>()
+  private detailStarted = new Map<string, number>()
+  /** Track lists that failed to load: shown as such, and not fetched again on their own for a while. */
+  private detailErrors = new Map<string, { message: string; at: number }>()
   private games = new Map<string, Game | null>()
   private gamesPending = new Set<string>()
   private listeners = new Set<Listener>()
@@ -104,6 +111,7 @@ export class BrowseModel {
     this.stalePages.clear()
     this.albums.clear()
     this.albumsPending.clear()
+    this.albumsStarted.clear()
     this.staleAlbums.clear()
     this.emit({ type: 'reset' })
     return this.loadPage(0)
@@ -225,10 +233,12 @@ export class BrowseModel {
     if (have && !this.staleAlbums.has(key)) return have
     const gen = this.gen
     this.albumsPending.set(key, gen)
+    this.albumsStarted.set(key, Date.now())
     try {
       const list = await ghost().catalog.groupAlbums(key, this.query)
       if (gen !== this.gen) return null
       this.albumsPending.delete(key)
+      this.albumsStarted.delete(key)
       this.staleAlbums.delete(key)
       touch(this.albums, key, list)
       this.trim(this.albums, MAX_ALBUM_LISTS, this.staleAlbums)
@@ -237,6 +247,7 @@ export class BrowseModel {
     } catch (err) {
       if (gen === this.gen) {
         this.albumsPending.delete(key)
+        this.albumsStarted.delete(key)
         this.albums.set(key, [])
         this.emit({ type: 'albums', key })
         this.emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
@@ -247,13 +258,37 @@ export class BrowseModel {
 
   detailFor(albumId: string): AlbumDetail | undefined {
     const have = this.details.get(albumId)
-    if ((!have || this.staleDetails.has(albumId)) && !this.detailsPending.has(albumId)) void this.loadDetail(albumId)
+    if ((!have || this.staleDetails.has(albumId)) && !this.detailsPending.has(albumId) && !this.detailError(albumId)) void this.loadDetail(albumId)
     if (have) touch(this.details, albumId, have)
     return have
   }
 
   peekDetail(albumId: string): AlbumDetail | undefined {
     return this.details.get(albumId)
+  }
+
+  /** The album's track list is cached and current (loadDetail answers without fetching). */
+  hasDetail(albumId: string): boolean {
+    return this.details.has(albumId) && !this.staleDetails.has(albumId)
+  }
+
+  /** Why the album's track list couldn't be loaded, if that happened recently (an explicit loadDetail tries again). */
+  detailError(albumId: string): string | null {
+    const e = this.detailErrors.get(albumId)
+    if (!e) return null
+    if (Date.now() - e.at < DETAIL_RETRY_MS) return e.message
+    this.detailErrors.delete(albumId)
+    return null
+  }
+
+  /** When the pending fetch of an album's track list started (epoch ms), or null if none is pending. */
+  detailSince(albumId: string): number | null {
+    return this.detailStarted.get(albumId) ?? null
+  }
+
+  /** When the pending fetch of a group's album list started (epoch ms), or null if none is pending. */
+  albumsSince(key: string): number | null {
+    return this.albumsPending.get(key) === this.gen ? (this.albumsStarted.get(key) ?? null) : null
   }
 
   /** Keep `m` to `max` entries, dropping the least recently stored/used. */
@@ -274,6 +309,8 @@ export class BrowseModel {
       .catalog.album(albumId)
       .then((d) => {
         this.detailsPending.delete(albumId)
+        this.detailStarted.delete(albumId)
+        this.detailErrors.delete(albumId)
         this.staleDetails.delete(albumId)
         touch(this.details, albumId, d)
         this.trim(this.details, MAX_DETAILS, this.staleDetails)
@@ -281,11 +318,18 @@ export class BrowseModel {
         return d
       })
       .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
         this.detailsPending.delete(albumId)
-        this.emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        this.detailStarted.delete(albumId)
+        if (this.detailErrors.size > 200) this.detailErrors.clear()
+        this.detailErrors.set(albumId, { message, at: Date.now() })
+        // Rows waiting on it stop loading (they say it failed).
+        this.emit({ type: 'detail', albumId })
+        this.emit({ type: 'error', message })
         return null
       })
     this.detailsPending.set(albumId, p)
+    this.detailStarted.set(albumId, Date.now())
     return p
   }
 

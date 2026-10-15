@@ -295,6 +295,10 @@
   box-shadow: 0 0 8px rgb(var(--accent-rgb) / 0.7);
   transition: transform 420ms var(--ease-out-quint);
 }
+.dl-item__load {
+  --g-progress-h: 3px;
+  margin: 6px 0 4px;
+}
 .dl-item__stats {
   display: flex;
   align-items: center;

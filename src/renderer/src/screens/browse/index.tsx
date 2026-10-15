@@ -39,6 +39,7 @@ import { browseModel } from './model'
 import { openExternalSearch, setSearchText } from './query'
 import { SearchBar } from './SearchBar'
 import { naturalQuery, useBrowse, type SelInfo } from './store'
+import { beginReveal, endReveal, useBrowseWaits } from './waits'
 import './browse.css'
 
 /** Props: lifecycle ('entering' | 'active' | 'exiting'), direction, from, to. */
@@ -82,8 +83,20 @@ function openMenu(sel: SelInfo, at: { x: number; y: number }): void {
   } else if (sel.group) openContextMenu(at, groupMenu(sel))
 }
 
-/** After an import: refetch and land on the new album (switching the query if it's filtered out). */
+/**
+ * After an import: refetch and land on the new album (switching the query if it's filtered out).
+ * That can take a few catalog pages; the wedge shows the wait meanwhile.
+ */
 async function revealImported(d: AlbumDetail): Promise<void> {
+  beginReveal(d.album.title)
+  try {
+    await reveal(d)
+  } finally {
+    endReveal()
+  }
+}
+
+async function reveal(d: AlbumDetail): Promise<void> {
   const st = useBrowse.getState()
   const keyFor = () => {
     const g = useBrowse.getState().group
@@ -125,7 +138,9 @@ function EmptyState() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [suggestions, setSuggestions] = useState<string[]>([])
   const autoQuery = useBrowse((s) => s.externalAuto)
-  const show = total === 0 && !loading
+  // revealing an import re-runs queries: don't flash the empty state (and its search) in between
+  const revealing = useBrowseWaits((s) => !!s.reveal)
+  const show = total === 0 && !loading && !revealing
   useEffect(() => {
     if (show && ref.current) tween(ref.current).clear().set({ opacity: 0, y: 18 }).fadeIn(300, 'outQuad').moveToY(0, 600, 'outQuint')
   }, [show, query])

@@ -22,6 +22,7 @@ import type {
   PlaylistItem,
   QueueItem,
   Settings,
+  TaskProgress,
   TrackAnalysis,
   TrackView
 } from '@shared/types'
@@ -302,6 +303,8 @@ const player: PlayerState = {
   queueIndex: -1,
   context: null,
   preview: null,
+  loading: null,
+  previewLoading: null,
   error: null,
   voices: null
 }
@@ -462,13 +465,136 @@ setInterval(() => {
     }
     changed = true
   }
-  const queued = downloads.filter((d) => d.status === 'queued')
-  for (const d of queued.slice(0, Math.max(0, 3 - active.length))) {
+  // finding a source first (a sweep in the overlay), like the real queue
+  const resolving = downloads.filter((d) => d.status === 'resolving')
+  for (const d of resolving) {
+    if (now() < (resolveUntil.get(d.id) ?? 0)) continue
+    resolveUntil.delete(d.id)
     d.status = 'downloading'
+    changed = true
+  }
+  const queued = downloads.filter((d) => d.status === 'queued')
+  for (const d of queued.slice(0, Math.max(0, 3 - active.length - resolving.length))) {
+    d.status = 'resolving'
+    resolveUntil.set(d.id, now() + mockMs(900 + hash(d.id) * 900))
     changed = true
   }
   if (changed) pushDownloads()
 }, 300)
+const resolveUntil = new Map<string, number>()
+
+// ---------------------------------------------------------------------------
+// waits: what the real app fetches takes time (album pages, chiptune sets, streams, web searches,
+// imports, folder scans), reported the way main does ('progress' events, PlayerState.previewLoading)
+// so the progress bars can be seen here. ?mockSlow=3 stretches every wait (0.2 shrinks them).
+
+const SLOW = Math.max(0.05, Number(new URLSearchParams(location.search).get('mockSlow') || 1))
+const mockMs = (n: number) => Math.round(n * SLOW)
+const sleep = (n: number) => new Promise<void>((r) => setTimeout(r, mockMs(n)))
+const PROVIDER_NAMES: Record<string, string> = { khinsider: 'KHInsider', chip: 'Zophar’s Domain', youtube: 'YouTube', soundcloud: 'SoundCloud', archive: 'the Internet Archive', bandcamp: 'Bandcamp' }
+const mbOf = (b: number, total: number) => `${(b / 1048576).toFixed(1)} of ${(total / 1048576).toFixed(1)} MB`
+
+function task(p: TaskProgress): void {
+  emit('progress', p)
+}
+
+/** Album track lists the "app" already has; the others fetch their source page (or chiptune set) first. */
+const fetchedAlbums = new Set<string>()
+const albumFetches = new Map<string, Promise<void>>()
+
+function fetchAlbum(album: Album): Promise<void> {
+  if (fetchedAlbums.has(album.id)) return Promise.resolve()
+  let p = albumFetches.get(album.id)
+  if (!p) {
+    p = fetchAlbumOnce(album).finally(() => {
+      fetchedAlbums.add(album.id)
+      albumFetches.delete(album.id)
+    })
+    albumFetches.set(album.id, p)
+  }
+  return p
+}
+
+async function fetchAlbumOnce(album: Album): Promise<void> {
+  const key = `album:${album.id}`
+  let last: TaskProgress
+  if (album.formats.includes('chip')) {
+    // a chiptune rip set: a measured download, then unpacking
+    const total = Math.round((4 + hash(album.id) * 10) * 1048576)
+    const since = now()
+    for (let b = 0; b < total; b += total / 14) {
+      task((last = { key, label: 'Downloading the chiptune set', detail: mbOf(b, total), fraction: b / total, expectMs: null, since, span: [0, 0.85] }))
+      await sleep(170)
+    }
+    task((last = { key, label: 'Unpacking', detail: null, fraction: null, expectMs: 500, since: now(), span: [0.85, 1] }))
+    await sleep(420)
+  } else if (album.provider === 'khinsider' && hash(album.id + 'remote') < 0.6) {
+    task((last = { key, label: 'Loading tracks from KHInsider', detail: null, fraction: null, expectMs: 1600, since: now() }))
+    await sleep(800 + hash(album.id) * 1600)
+  } else return // already in the catalog: no fetch, no events
+  task({ ...last, fraction: 1, expectMs: null, done: true })
+}
+
+/** A preview's wait (PlayerState.previewLoading) the way the player reports it: resolve, then open. */
+let previewRun = 0
+async function previewTrack(id: string): Promise<boolean> {
+  const run = ++previewRun
+  const t = tracks.find((x) => x.id === id)
+  if (!t) return false
+  const wait = `${id}#0`
+  const step = (pl: NonNullable<PlayerState['previewLoading']>) => {
+    if (run !== previewRun) return false
+    player.previewLoading = pl
+    pushState()
+    return true
+  }
+  const provider = t.source?.provider ?? 'khinsider'
+  if (!step({ trackId: id, label: 'Finding a source', detail: null, fraction: null, expectMs: 300, since: now(), span: [0, 0.65], wait })) return false
+  await sleep(220)
+  const streamMs = provider === 'youtube' || provider === 'soundcloud' ? 4500 : provider === 'chip' ? 500 : 1100
+  const label = provider === 'youtube' ? 'Getting the stream from YouTube' : `Getting the track from ${PROVIDER_NAMES[provider] ?? provider}`
+  if (!step({ trackId: id, label, detail: null, fraction: null, expectMs: streamMs, since: now(), span: [0, 0.65], wait })) return false
+  await sleep(streamMs * (0.7 + hash(id) * 0.6))
+  const since = now()
+  for (let f = 0; f <= 1; f += 0.25) {
+    if (!step({ trackId: id, label: 'Buffering', detail: null, fraction: f, expectMs: null, since, span: [0.65, 1], wait })) return false
+    await sleep(110)
+  }
+  if (run !== previewRun) return false
+  player.preview = { track: strip(t), startedAt: now() }
+  pushState()
+  await sleep(100)
+  if (run === previewRun && player.previewLoading) {
+    player.previewLoading = null
+    pushState()
+  }
+  return true
+}
+
+/** How long each web source takes to answer a search (YouTube / SoundCloud via yt-dlp are slow). */
+const SEARCH_MS: Record<string, number> = { youtube: 6500, soundcloud: 7500, archive: 900, bandcamp: 1500 }
+
+/** Adding a local folder: "Looking for music files" (a count), then reading tags (measured). */
+let scanRun = 0
+async function scanFolders(): Promise<void> {
+  const run = ++scanRun
+  const total = 600 + Math.floor(Math.random() * 600)
+  let since = now()
+  for (let found = 0; found < total; found = Math.min(total, found + 90 + Math.floor(Math.random() * 60))) {
+    task({ key: 'scan', label: 'Looking for music files', detail: `${found} found`, fraction: null, expectMs: null, since })
+    await sleep(160)
+    if (run !== scanRun) return
+  }
+  since = now()
+  let last: TaskProgress | null = null
+  for (let i = 0; i <= total; i = i === total ? total + 1 : Math.min(total, i + 45)) {
+    task((last = { key: 'scan', label: 'Reading tags', detail: `${i} of ${total} files`, fraction: i / total, expectMs: null, since }))
+    await sleep(140)
+    if (run !== scanRun) return
+  }
+  if (last) task({ ...last, done: true })
+}
+let folderSeq = 0
 
 // ---------------------------------------------------------------------------
 // synthetic analysis frames
@@ -548,6 +674,28 @@ export function installMockGhost(): void {
     etaMs: null
   }
 
+  // "Re-index now": a refresh run the way catalog:status reports it (unknown while grouping, then measured).
+  const sendStatus = () => emit('catalog:status', { ...catalogStatus, sources: catalogStatus.sources!.map((x) => ({ ...x })) })
+  let indexRun = 0
+  const runIndex = async () => {
+    const run = ++indexRun
+    const kh = catalogStatus.sources![0]
+    Object.assign(catalogStatus, { indexing: true, progress: null, message: 'Reading the KHInsider index…', etaMs: null })
+    Object.assign(kh, { state: 'running', progress: null, detail: 'Reading the index' })
+    sendStatus()
+    await sleep(1500)
+    for (let p = 0; p <= 1.0001 && run === indexRun; p += 0.05) {
+      Object.assign(catalogStatus, { progress: p, message: 'Indexing KHInsider…', etaMs: Math.round((1 - p) * 6000 * SLOW) })
+      Object.assign(kh, { progress: p, detail: `${Math.round(p * 4200)} of 4,200 albums`, etaMs: catalogStatus.etaMs })
+      sendStatus()
+      await sleep(300)
+    }
+    if (run !== indexRun) return
+    Object.assign(catalogStatus, { indexing: false, progress: null, message: null, etaMs: null, lastIndexedAt: now() })
+    Object.assign(kh, { state: 'idle', progress: null, detail: null, etaMs: null, lastIndexedAt: now() })
+    sendStatus()
+  }
+
   const sortGroups = (gs: Game[], sort: BrowseQuery['sort']) => {
     const arr = [...gs]
     if (sort === 'year') arr.sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
@@ -559,14 +707,15 @@ export function installMockGhost(): void {
   const api: GhostAPI = {
     catalog: {
       status: () => delay(catalogStatus),
-      reindex: () => delay(undefined),
+      reindex: async () => void runIndex(),
       browse: (q) => {
         const filtered = sortGroups(games.filter((g) => matches(q.text, g)), q.sort)
         return delay({ total: filtered.length, offset: q.offset, groups: filtered.slice(q.offset, q.offset + q.limit).map(toGroup) })
       },
       groupAlbums: (key) => delay(albums.filter((a) => `game:${a.gameId}` === key)),
-      album: (id) => {
+      album: async (id) => {
         const album = albums.find((a) => a.id === id)!
+        await fetchAlbum(album)
         const detail: AlbumDetail = {
           album,
           game: games.find((g) => g.id === album.gameId) ?? null,
@@ -580,17 +729,39 @@ export function installMockGhost(): void {
         const q = text.toLowerCase()
         return delay(tracks.filter((t) => t.title.toLowerCase().includes(q)).slice(0, limit).map(strip))
       },
-      searchExternal: (query) => {
+      searchExternal: async (query, providers) => {
         const q = query.trim()
-        if (!q) return delay([])
+        if (!q) return []
+        const want = providers ?? (['youtube', 'archive', 'bandcamp', 'soundcloud'] as const)
         const hits: ExternalAlbumHit[] = [
           { provider: 'youtube', ref: `PL${hash(q).toString(36).slice(2, 12)}`, title: `${q} — Full Original Soundtrack`, subtitle: 'Label - Topic', cover: null, trackCount: 24, totalMs: 24 * 170000, url: 'https://www.youtube.com/', score: 0.92 },
           { provider: 'youtube', ref: `v${hash(q + 'v').toString(36).slice(2, 12)}`, title: `${q} OST (complete, with timestamps)`, subtitle: 'VGM uploader', cover: null, trackCount: 31, totalMs: 31 * 150000, url: 'https://www.youtube.com/', score: 0.71 },
-          { provider: 'archive', ref: `${q.toLowerCase().replace(/\W+/g, '-')}-soundtrack`, title: `${q} Soundtrack`, subtitle: 'Internet Archive', cover: null, trackCount: 18, totalMs: 18 * 160000, url: 'https://archive.org/', score: 0.55 }
+          { provider: 'archive', ref: `${q.toLowerCase().replace(/\W+/g, '-')}-soundtrack`, title: `${q} Soundtrack`, subtitle: 'Internet Archive', cover: null, trackCount: 18, totalMs: 18 * 160000, url: 'https://archive.org/', score: 0.55 },
+          { provider: 'soundcloud', ref: `sets/${q.toLowerCase().replace(/\W+/g, '-')}-ost`, title: `${q} OST`, subtitle: 'game rips', cover: null, trackCount: 12, totalMs: 12 * 140000, url: 'https://soundcloud.com/', score: 0.62 },
+          { provider: 'bandcamp', ref: `https://label.bandcamp.com/album/${q.toLowerCase().replace(/\W+/g, '-')}`, title: `${q} (Original Game Soundtrack)`, subtitle: 'Label', cover: null, trackCount: 20, totalMs: 20 * 165000, url: 'https://bandcamp.com/', score: 0.84 }
         ]
-        return delay(hits, 600)
+        // each source answers in its own time; "fail" in the query makes SoundCloud fail (to see that state)
+        await sleep(Math.max(...want.map((p) => SEARCH_MS[p] ?? 2000)) * (0.75 + hash(q + want.join()) * 0.5))
+        if (want.includes('soundcloud') && /fail/i.test(q)) throw new Error('SoundCloud didn’t answer')
+        return hits.filter((h) => want.includes(h.provider))
       },
       importExternal: async (hit, opts) => {
+        // like the worker: a SoundCloud set resolves track by track (measured), the others are estimated
+        const key = `import:${hit.provider}:${hit.ref}`
+        let last: TaskProgress = { key, label: 'Importing', fraction: null, expectMs: null, since: now() }
+        if (hit.provider === 'soundcloud') {
+          const n = hit.trackCount ?? 8
+          const since = now()
+          for (let i = 0; i <= n; i++) {
+            task((last = { key, label: 'Reading the SoundCloud set', detail: `${i} of ${n} tracks`, fraction: i / n, expectMs: null, since }))
+            await sleep(260)
+          }
+        } else {
+          const expectMs = hit.provider === 'youtube' ? 4000 : 1500
+          task((last = { key, label: hit.provider === 'youtube' ? 'Reading the YouTube playlist' : `Importing from ${PROVIDER_NAMES[hit.provider]}`, detail: null, fraction: null, expectMs, since: now() }))
+          await sleep(expectMs * 0.8)
+        }
+        task({ ...last, fraction: 1, expectMs: null, done: true })
         const gi = games.length + 1
         const gameId = `g${gi}`
         const name = opts?.gameName ?? hit.title.replace(/\s*[—-].*$/, '').replace(/\s*OST.*$/i, '')
@@ -718,13 +889,11 @@ export function installMockGhost(): void {
         pushState()
       },
       jumpTo: async (i) => loadIndex(i),
-      preview: async (id) => {
-        player.preview = { track: strip(tracks.find((t) => t.id === id)!), startedAt: now() }
-        pushState()
-        return true
-      },
+      preview: (id) => previewTrack(id),
       stopPreview: async () => {
+        previewRun++
         player.preview = null
+        player.previewLoading = null
         pushState()
       },
       setOverlayFilter: async () => {},
@@ -832,11 +1001,14 @@ export function installMockGhost(): void {
     settings: {
       get: () => delay(structuredClone(settings), 0),
       set: async (patch) => {
+        const folders = settings.sources.localFolders
         settings = mergeSettings(settings, patch)
         emit('settings:changed', structuredClone(settings))
+        // a folder was added: main rescans the local folders
+        if (settings.sources.localFolders.some((f) => !folders.includes(f))) void scanFolders()
         return structuredClone(settings)
       },
-      pickFolder: async () => '~/Music/GHOST'
+      pickFolder: async () => `~/Music/Soundtracks ${++folderSeq}`
     },
     system: {
       openExternal: async (url) => void window.open(url, '_blank'),

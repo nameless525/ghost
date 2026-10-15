@@ -3,6 +3,7 @@ import { Bell, CircleAlert, CircleCheck, Info, LoaderCircle, Trash2 } from 'luci
 import { useEffect, useState } from 'react'
 import { Button } from '../ui/Button'
 import { CoverArt } from '../ui/CoverArt'
+import { ProgressBar } from '../ui/ProgressBar'
 import { OverlayHeader } from '../ui/OverlayHeader'
 import { ScrollArea } from '../ui/ScrollArea'
 import { cx } from '../ui/util'
@@ -69,11 +70,7 @@ export default function NotificationCenter({ open }: OverlayProps) {
             <div className="g-toast__text">
               <div className="g-toast__title">{n.title}</div>
               {n.body && <div className="g-toast__body">{n.body}</div>}
-              {n.kind === 'progress' && (n.progress ?? 0) < 1 && (
-                <div className="g-toast__progress">
-                  <div className="g-toast__progress-fill" style={{ transform: `scaleX(${n.progress ?? 0})` }} />
-                </div>
-              )}
+              {n.kind === 'progress' && (n.progress ?? 0) < 1 && <ProgressBar progress={n.progress ?? null} waitKey={n.id} style={{ marginTop: 8 }} />}
             </div>
             <div className="g-ncenter__time">{ago(n.createdAt)}</div>
           </div>

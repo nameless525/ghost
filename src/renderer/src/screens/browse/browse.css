@@ -585,8 +585,37 @@
   font-size: var(--fs-sm);
 }
 .bc-item--loading .bc-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--fg-3);
   font-weight: var(--fw-medium);
+}
+.bc-detail {
+  flex: none;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+.bc-detail:empty {
+  display: none;
+}
+/* What the row waits on, along its bottom edge (the ProgressBar look; carousel.ts drives the fill). */
+.bc-load {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  background: rgb(var(--accent-rgb) / 0.14);
+}
+.bc-load:not(.is-indeterminate) .g-progress__sweep,
+.bc-item.is-static .bc-load,
+.bc-item.is-static .bc-spin,
+.bc-item.is-free .bc-spin {
+  display: none;
 }
 .bc-spin {
   width: 14px;
@@ -682,6 +711,71 @@
 .bw__previewing svg {
   width: 13px;
   height: 13px;
+}
+/* What the selection waits on (CoverStatus.tsx). Fades in only after a beat, so waits that end
+   sooner never show. */
+.bw__wait {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px 8px;
+  border-radius: 9px;
+  background: rgb(10 9 16 / 0.84);
+  box-shadow:
+    0 0 0 1px rgb(var(--accent-rgb) / 0.4),
+    0 6px 18px rgb(0 0 0 / 0.45);
+  animation: bw-wait-in 320ms var(--ease-out-quint) 240ms both;
+}
+@keyframes bw-wait-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.bw__wait-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--accent-hi);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.bw__wait-head svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.bw__wait-kicker {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.bw__wait-pct {
+  margin-left: auto;
+  flex: none;
+  color: var(--fg-2);
+  letter-spacing: 0;
+}
+.bw__wait-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--fg-1);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.bw__wait-detail {
+  color: var(--fg-3);
+  white-space: nowrap;
 }
 .bw__heading {
   flex: 1;
@@ -1161,37 +1255,14 @@
   left: 0;
   right: 0;
   bottom: 0;
-  height: 2px;
   opacity: 0;
   transition: opacity 400ms;
-  background: rgb(var(--accent-rgb) / 0.12);
-  overflow: hidden;
 }
 .bs-progress--on {
   opacity: 1;
 }
-.bs-progress__fill {
-  position: absolute;
-  inset: 0;
-  transform-origin: left center;
-  transform: scaleX(0);
-  background: linear-gradient(90deg, var(--accent-lo), var(--accent));
-  box-shadow: 0 0 10px var(--accent);
-  transition: transform 500ms var(--ease-out-quint);
-}
-.bs-progress--indeterminate .bs-progress__fill {
-  width: 30%;
-  transform: none;
-  animation: bs-sweep 1.4s var(--ease-in-out-quint) infinite;
-  transition: none;
-}
-@keyframes bs-sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(340%);
-  }
+.bs-progress .g-progress__track {
+  border-radius: 0;
 }
 
 /* =========================================================================
@@ -1426,22 +1497,42 @@
   flex-direction: column;
   gap: 10px;
 }
-.bx__loading {
-  display: flex;
-  align-items: center;
+/* One segment per source (ExternalSearch.tsx SearchProgress): each eases along that source's usual
+   answer time and fills when it answers. */
+.bx-progress {
+  flex: none;
+  align-self: center;
+  width: min(440px, 100%);
+}
+.bx-progress--solo {
+  padding: 24px 0;
+}
+.bx-progress:not(.bx-progress--solo) {
+  padding-bottom: 2px;
+}
+.bx-progress .g-progress__caption {
   justify-content: center;
-  gap: 14px;
-  padding: 26px 0;
+  font-size: var(--fs-sm);
+}
+.bx-progress .g-progress__label {
+  font-weight: var(--fw-medium);
   color: var(--fg-2);
 }
-.bx__more {
-  flex: none;
+.bx-progress__segs {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--fg-3);
-  font-size: var(--fs-sm);
+  gap: 4px;
+  transition: opacity 360ms var(--ease-out-quint) 420ms;
+}
+.bx-seg {
+  flex: 1;
+}
+.bx-seg--failed .g-progress__fill {
+  background: rgb(var(--danger-rgb) / 0.55);
+  box-shadow: none;
+}
+/* finished: the caption stays as a summary ("Searched 4 sources"), the segments go */
+.bx-progress--done .bx-progress__segs {
+  opacity: 0;
 }
 .bx__msg {
   display: flex;
@@ -1465,6 +1556,8 @@
   gap: 8px;
 }
 .bx-hit {
+  position: relative;
+  overflow: hidden;
   flex: none;
   display: flex;
   align-items: center;
@@ -1521,6 +1614,19 @@
 .bx-hit__prov {
   color: var(--ph);
   font-weight: var(--fw-semibold);
+}
+/* importing (ImportWait): what it's doing in place of the sub line, and a line along the row */
+.bx-hit__sub--wait {
+  color: var(--fg-2);
+}
+.bx-hit__load {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+.bx-hit__load .g-progress__track {
+  border-radius: 0;
 }
 .bx-score {
   flex: none;

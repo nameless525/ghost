@@ -642,20 +642,6 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.g-toast__progress {
-  height: 4px;
-  margin-top: 8px;
-  border-radius: 4px;
-  background: rgb(255 255 255 / 0.1);
-  overflow: hidden;
-}
-.g-toast__progress-fill {
-  height: 100%;
-  transform-origin: left;
-  background: linear-gradient(90deg, var(--accent-lo), var(--accent));
-  box-shadow: 0 0 8px rgb(var(--accent-rgb) / 0.7);
-  transition: transform 400ms var(--ease-out-quint);
-}
 .g-toast__close {
   position: relative;
   z-index: 1;

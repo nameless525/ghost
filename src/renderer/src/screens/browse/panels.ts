@@ -2,10 +2,11 @@
 // everything here is "build once, refill many": no React, no per-fill allocation beyond
 // strings, and only text/attribute writes when a value actually changed.
 import { intensityColor } from '@shared/defaults'
-import type { Album, AlbumKind, AudioFormat, BrowseGroup, TrackView } from '@shared/types'
+import type { Album, AlbumKind, AudioFormat, BrowseGroup, Progress, TrackView } from '@shared/types'
 import { artUrl } from '../../lib/art'
 import { sourceLabel } from '../../ui/Badges'
 import { formatTime } from '../../ui/format'
+import { ProgressAnimator, progressMode, progressValue } from '../../ui/progress'
 
 export type PanelType = 'group' | 'album' | 'track' | 'loading'
 
@@ -23,8 +24,25 @@ export interface PanelNode {
   img: HTMLImageElement | null
   right: HTMLElement | null
   num: HTMLElement | null
+  /** Loading rows: what the row waits on, as a line along its bottom. */
+  load: LoadLine | null
   /** Last values written, to skip redundant DOM writes. */
   cache: Record<string, string>
+}
+
+/**
+ * A loading row's progress line (the ProgressBar look, driven imperatively). Its animator exists
+ * only while the row shows a wait; the motion is a Web Animation, so nothing runs per frame.
+ */
+interface LoadLine {
+  bar: HTMLElement
+  fill: HTMLElement
+  detail: HTMLElement
+  anim: ProgressAnimator | null
+  /** The wait it shows (a new one starts the line where that wait already is). */
+  key: string | null
+  /** Last planned step, so unchanged progress isn't re-planned. */
+  sig: string
 }
 
 const STAR =
@@ -92,6 +110,7 @@ export function createPanel(type: PanelType): PanelNode {
   let meta: HTMLElement | null = null
   let right: HTMLElement | null = null
   let num: HTMLElement | null = null
+  let load: LoadLine | null = null
   let title: HTMLElement
   if (type === 'group') {
     const art = div('bc-art', panel)
@@ -122,12 +141,16 @@ export function createPanel(type: PanelType): PanelNode {
     const content = div('bc-content', panel)
     content.innerHTML = '<span class="bc-spin" aria-hidden="true"></span>'
     title = span('bc-title', content)
+    const detail = span('bc-detail tnum', content)
+    const bar = div('bc-load', panel)
+    bar.innerHTML = '<span class="g-progress__fill g-keep-motion"></span><span class="g-progress__sweep g-keep-motion"></span>'
+    load = { bar, fill: bar.firstElementChild as HTMLElement, detail, anim: null, key: null, sig: '' }
   }
   // Siblings of the panel (not children) so their opacity can live on their own compositor
   // layers without the panel's rounded overflow clip.
   const ring = div('bc-ring', el)
   const glow = div('bc-glow', el)
-  return { type, el, panel, glow, ring, title, sub, meta, img, right, num, cache: {} }
+  return { type, el, panel, glow, ring, title, sub, meta, img, right, num, load, cache: {} }
 }
 
 function setText(n: PanelNode, key: string, el: HTMLElement | null, text: string): void {
@@ -267,12 +290,70 @@ export function fillTrack(n: PanelNode, t: TrackView, title: string, playing: 'o
   setHTML(n, 'right', n.right, html)
 }
 
-export function fillLoading(n: PanelNode, label: string): void {
+/**
+ * A loading row: its label, and when it waits on something (`key` names the wait, `p` how far it
+ * is) the detail ("4.2 of 12.0 MB") and the progress line. Without a wait ("No albums match") the
+ * spinner and line go.
+ */
+export function fillLoading(n: PanelNode, label: string, key: string | null = null, p: Progress | null = null, done = false): void {
   setText(n, 'title', n.title, label)
+  const l = n.load
+  if (!l) return
+  setText(n, 'detail', l.detail, (key && p?.detail) || '')
+  setClass(n, 'is-static', !key)
+  if (!key || !p) {
+    stopLoadLine(n)
+    return
+  }
+  const indeterminate = !done && progressMode(p) === 'indeterminate'
+  if (n.cache.indet !== String(indeterminate)) {
+    n.cache.indet = String(indeterminate)
+    l.bar.classList.toggle('is-indeterminate', indeterminate)
+  }
+  const a = (l.anim ??= new ProgressAnimator({ el: l.fill, kind: 'scaleX' }))
+  if (l.key !== key) {
+    // rows appear a moment into their wait: start where it already is
+    l.key = key
+    l.sig = ''
+    a.jump(progressValue(p) ?? 0)
+  }
+  const sig = done ? 'done' : `${p.fraction}|${p.expectMs}|${p.since}|${p.span?.[0]}|${p.span?.[1]}`
+  if (sig === l.sig) return
+  l.sig = sig
+  if (done) a.finish()
+  else a.set(p)
+}
+
+/** A loading row is leaving (what it waited for arrived): its line fills as it fades. */
+export function finishLoading(n: PanelNode): void {
+  const l = n.load
+  if (!l?.anim || l.sig === 'done') return
+  l.sig = 'done'
+  l.bar.classList.remove('is-indeterminate')
+  delete n.cache.indet
+  l.anim.finish()
+}
+
+function stopLoadLine(n: PanelNode): void {
+  const l = n.load
+  if (!l) return
+  // no sweep left running on a pooled (hidden) node
+  if (n.cache.indet === 'true') l.bar.classList.remove('is-indeterminate')
+  delete n.cache.indet
+  l.anim?.dispose()
+  l.anim = null
+  l.key = null
+  l.sig = ''
+}
+
+/** A node leaves for good (dropped from the pool): stop what it runs. */
+export function disposePanel(n: PanelNode): void {
+  stopLoadLine(n)
 }
 
 /** Reset per-use state when a node goes back to the pool. */
 export function resetPanel(n: PanelNode): void {
+  stopLoadLine(n)
   n.el.classList.remove('is-selected', 'is-hover', 'is-active', 'is-lit')
   n.el.removeAttribute('aria-selected')
   delete n.cache['c:is-selected']
