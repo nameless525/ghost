@@ -262,6 +262,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
       random: (text) => catalog.random(text),
       suggest: (text, limit) => catalog.suggest(text, limit),
       sources: () => catalog.sources(),
+      warmSources: async (ids) => catalog.warmSources(Array.isArray(ids) ? ids.slice(0, 3) : []),
       searchExternal: (query, providers) => catalog.searchExternal(query, providers),
       importExternal: async (hit, opts) => {
         const d = await catalog.importExternal(hit, opts)

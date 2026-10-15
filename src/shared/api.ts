@@ -56,6 +56,8 @@ export interface CatalogAPI {
   suggest(text: string, limit?: number): Promise<string[]>
   /** Albums per source and index freshness, for Settings → Sources. */
   sources(): Promise<SourceStat[]>
+  /** Resolve these tracks' stream URLs ahead of a likely play (background priority, bounded). Fire-and-forget. */
+  warmSources(trackIds: ID[]): void | Promise<void>
 }
 
 export interface PlayerAPI {
@@ -181,6 +183,7 @@ export const API_METHODS = [
   'catalog.random',
   'catalog.suggest',
   'catalog.sources',
+  'catalog.warmSources',
   'catalog.searchExternal',
   'catalog.importExternal',
   'player.getState',

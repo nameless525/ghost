@@ -619,6 +619,7 @@ export function installMockGhost(): void {
         const as = albums.filter((a) => a.gameId === g.id)
         return delay({ groupKey: `game:${g.id}`, albumId: as[Math.floor(Math.random() * as.length)]?.id ?? null })
       },
+      warmSources: () => delay(undefined),
       sources: () =>
         delay([
           { id: 'khinsider', albums: albums.length, lastIndexedAt: Date.now() - 2 * 86_400_000, indexing: false },

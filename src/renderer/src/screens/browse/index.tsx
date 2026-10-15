@@ -328,6 +328,26 @@ export default function BrowseScreen(props: BrowseScreenProps) {
     }
   }, [])
 
+  // ---- resting on a track: resolve its stream URL (and the next one's) ahead of Enter, so the play
+  // starts without a source-page round trip (the catalog bounds and dedupes these)
+  useEffect(() => {
+    let t = 0
+    const off = useBrowse.subscribe((s, p) => {
+      if (s.sel?.id === p.sel?.id) return
+      window.clearTimeout(t)
+      const sel = s.sel
+      const track = sel?.track
+      if (!track || !sel.detail || track.downloaded) return
+      const i = sel.detail.tracks.findIndex((x) => x.id === track.id)
+      const ids = sel.detail.tracks.slice(Math.max(0, i), Math.max(0, i) + 2).map((x) => x.id)
+      t = window.setTimeout(() => void Promise.resolve(ghost().catalog.warmSources(ids)).catch(() => {}), 450)
+    })
+    return () => {
+      off()
+      window.clearTimeout(t)
+    }
+  }, [])
+
   // ---- osu!-style previews: rest on a selection for 400 ms while nothing is playing
   useEffect(() => {
     let t = 0
