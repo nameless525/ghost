@@ -449,3 +449,30 @@ describe('several index sources', () => {
     svc.stop()
   }, 20_000)
 })
+
+describe('albums a source lists without files', () => {
+  it('opening one hides it and says why instead of playing nothing', async () => {
+    const settings: Settings = defaultSettings('/tmp/ghost-dl')
+    const hitOf = (ref: string, title: string) => ({ provider: 'zophar', ref, title, titleFromRef: false, platforms: [], kind: 'gamerip' as const, typeLabel: null, year: null, thumb: null, cover: null, catalogNo: null, addedAt: null })
+    const empty: Provider = {
+      id: 'zophar',
+      name: "Zophar's Domain",
+      async getAlbum(ref: string) {
+        return { ...hitOf(ref, 'Fushigi no Dungeon 2'), altTitles: [], titleOriginal: null, developers: [], publishers: [], composers: [], images: [], description: null, formats: [], totalSizes: {}, externalId: null, tracks: [] }
+      },
+      async resolveStream(): Promise<StreamInfo[]> {
+        return []
+      }
+    }
+    const db = memoryDb()
+    const svc = createCatalogService({ db, broadcast: (() => {}) as never, getSettings: () => settings }, { registry: new ProviderRegistry().register(empty), disableEnrichment: true, startDelayMs: 1e9, log: () => {} })
+    const { CatalogRepo } = await import('./repo')
+    const repo = new CatalogRepo(db)
+    const [id] = repo.upsertHits([hitOf('snes/fushigi-2', 'Fushigi no Dungeon 2')], { initial: false })
+    repo.assignGames([id])
+    expect((await svc.browse({ text: '', group: 'album', sort: 'title', offset: 0, limit: 10 })).total).toBe(1)
+    await expect(svc.album(String(id))).rejects.toThrow(/lists “Fushigi no Dungeon 2” but has no tracks/)
+    expect((await svc.browse({ text: '', group: 'album', sort: 'title', offset: 0, limit: 10 })).total).toBe(0)
+    svc.stop()
+  })
+})

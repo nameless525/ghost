@@ -836,6 +836,15 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       if (!album) throw new NetError('not_found', `no album ${albumId}`)
       const game = album.gameId ? repo.game(Number(album.gameId)) : null
       const tracks = repo.toTrackViews(repo.trackRows('t.album_id = ? AND t.removed = 0', [id], 'ORDER BY t.position'), quality())
+      if (!tracks.length) {
+        // The source lists it but has no files (Zophar has a few empty sets): hide it from Browse
+        // instead of offering an album that silently plays nothing.
+        const name = getRegistry().get(st.provider)?.name ?? st.provider
+        const msg = `${name} lists “${album.title}” but has no tracks for it.`
+        repo.markAlbumError(id, msg, true)
+        notify()
+        throw new NetError('not_found', msg)
+      }
       prefetchAfterDwell(id, tracks[0]?.id)
       if (game && !internals.disableEnrichment) {
         enricher.want([Number(game.id)])
