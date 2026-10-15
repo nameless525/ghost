@@ -252,11 +252,12 @@ describe.runIf(unix)('yt-dlp: locate / download / update / run', () => {
     await y.ensure()
     const before = trackedChildren().length
     const run = y.run(['--hang'], { timeoutMs: 10_000 }).catch((e) => e)
-    for (let i = 0; i < 100 && trackedChildren().length === before; i++) await new Promise((r) => setTimeout(r, 10))
+    // Up to 5 s: the run first checks the binary's version (another process) on a possibly busy CI machine.
+    for (let i = 0; i < 500 && trackedChildren().length === before; i++) await new Promise((r) => setTimeout(r, 10))
     expect(trackedChildren().length).toBe(before + 1)
     killTrackedChildren() // what the main thread does on quit
     expect(isNetError(await run)).toBe(true) // the run fails instead of hanging on
-    for (let i = 0; i < 50 && trackedChildren().length > before; i++) await new Promise((r) => setTimeout(r, 10))
+    for (let i = 0; i < 500 && trackedChildren().length > before; i++) await new Promise((r) => setTimeout(r, 10))
     expect(trackedChildren().length).toBe(before)
   })
 

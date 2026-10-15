@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+- yt-dlp's state file is written atomically, so another part of the app reading it mid-write can't mistake it for a missing install and download yt-dlp again.
+- The engine reports a stream's cache as complete even when the track ended first (the offline renderer used by `ghost-cli render` and the tests could outrun the download).
+
 ## 0.3.3 (2026-10-14)
 
 ### Open source

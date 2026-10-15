@@ -260,10 +260,10 @@ pub struct Controller {
     next: Option<Track>,
     preview: Option<Track>,
     prev_album_key: Option<String>,
-    /// Tracks that just ended on their own (key, id), newest last. A decoder's error can arrive
-    /// after the mixer ended its track (offline sinks end a failed voice at once): it's still
-    /// reported against the right id.
-    ended: VecDeque<(u64, String)>,
+    /// Tracks that just ended on their own (key, id, cache key), newest last. A decoder's error or
+    /// the cache finishing can arrive after the mixer ended the track (an offline render outruns
+    /// the download): they're still reported against the right id.
+    ended: VecDeque<(u64, String, Option<String>)>,
     playing: bool,
     state: (PlaybackState, Option<String>),
 
@@ -1138,7 +1138,7 @@ impl Controller {
         if self.ended.len() == 8 {
             self.ended.pop_front();
         }
-        self.ended.push_back((t.key, t.load.id.clone()));
+        self.ended.push_back((t.key, t.load.id.clone(), t.cache_key().map(str::to_string)));
     }
 
     fn track_by_key(&mut self, key: u64) -> Option<(u8, &mut Track)> {
@@ -1197,7 +1197,7 @@ impl Controller {
                     if slot == 0 {
                         self.set_buffering(true);
                     }
-                } else if let Some((_, id)) = self.ended.iter().rev().find(|(k, _)| *k == key) {
+                } else if let Some((_, id, _)) = self.ended.iter().rev().find(|(k, _, _)| *k == key) {
                     // Its track already ended (the error raced the mixer's end event).
                     let id = id.clone();
                     self.emit(EngineEvent::Error { id: Some(id), message, recoverable: true });
@@ -1218,6 +1218,11 @@ impl Controller {
         for t in [&self.current, &self.next, &self.preview].into_iter().flatten() {
             if t.cache_key() == Some(cache_key.as_str()) && !ids.contains(&t.load.id) {
                 ids.push(t.load.id.clone());
+            }
+        }
+        for (_, id, key) in &self.ended {
+            if key.as_deref() == Some(cache_key.as_str()) && !ids.contains(id) {
+                ids.push(id.clone());
             }
         }
         for id in ids {

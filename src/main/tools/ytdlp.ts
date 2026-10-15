@@ -306,7 +306,11 @@ export class YtDlp {
 
   private async writeState(s: ManagedState): Promise<void> {
     await mkdir(this.opts.binDir, { recursive: true })
-    await writeFile(this.stateFile, JSON.stringify(s, null, 2))
+    // Atomic: another reader (the other thread's copy of this class) never sees half a file, which
+    // readState would take for no state at all.
+    const tmp = `${this.stateFile}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+    await writeFile(tmp, JSON.stringify(s, null, 2))
+    await rename(tmp, this.stateFile)
   }
 
   private async get(url: string, timeoutMs: number): Promise<Response> {
