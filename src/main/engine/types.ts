@@ -2,7 +2,7 @@
 // The main process owns the queue and decides what plays; the engine only knows
 // `current`, a preloaded `next` (for gapless) and an optional `preview`.
 //
-// Contract between the engine workstream and the player workstream: change additively.
+// Contract between the engine and the player: change additively.
 
 /** Optional addressing inside a source, shared by both kinds. */
 export interface EngineSourceExtras {

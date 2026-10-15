@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Catalog latencies as the renderer sees them (IPC → main → catalog worker → back), on a running app.
-//   CDP_PORT=9244 node scripts/catalog-rpc-bench.mjs browse [runs=10]
-//   CDP_PORT=9244 node scripts/catalog-rpc-bench.mjs album <albumId>...      first open (album page fetch) vs cached
-//   CDP_PORT=9244 node scripts/catalog-rpc-bench.mjs play <albumId>:<index>...  click → URL resolved → playing
+//   CDP_PORT=9244 node scripts/perf/catalog-rpc-bench.mjs browse [runs=10]
+//   CDP_PORT=9244 node scripts/perf/catalog-rpc-bench.mjs album <albumId>...      first open (album page fetch) vs cached
+//   CDP_PORT=9244 node scripts/perf/catalog-rpc-bench.mjs play <albumId>:<index>...  click → URL resolved → playing
 // `play` keeps the volume at 0.1 and pauses at the end. Each album/play target costs real requests
 // to the source: use a handful.
 const port = process.env.CDP_PORT || 9223

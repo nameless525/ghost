@@ -16,7 +16,7 @@ import { UIHosts } from './ui'
 // ?screen=…&overlay=… deep links, before the first render
 applyDeepLinks()
 
-/** ?kit shows the UI kit gallery instead of the screens (a living reference for every workstream). */
+/** ?kit shows the UI kit gallery instead of the screens (a living reference for the UI). */
 const showKit = new URLSearchParams(window.location.search).has('kit')
 const Gallery = lazy(() => import('./ui/Gallery'))
 

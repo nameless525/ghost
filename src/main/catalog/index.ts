@@ -1,4 +1,4 @@
-// Contract between the catalog workstream (implements) and the services workstream (consumes).
+// Contract between the catalog (implements) and the main-process services (consume).
 // Change additively.
 import type { CatalogAPI } from '../../shared/api'
 import type { Album, AudioFormat, Game, ID, Settings, TrackAnalysis, TrackView } from '../../shared/types'

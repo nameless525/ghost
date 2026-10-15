@@ -139,6 +139,11 @@ fn patched(out: &Path, src: &Path, patches: &[(&str, &[(&str, &str)])]) -> PathB
     dst
 }
 
+/// MSVC (Windows) spells the language and codegen flags differently from GCC / Clang.
+fn msvc() -> bool {
+    std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+}
+
 fn base(cpp: bool) -> cc::Build {
     let mut b = cc::Build::new();
     b.cpp(cpp).opt_level(2).debug(false).warnings(false).extra_warnings(false).pic(true);
@@ -232,11 +237,13 @@ fn main() {
         .include(gme.join("gme"))
         .define("GEN_TYPES_H", None)
         .define("BLARGG_LITTLE_ENDIAN", Some("1"))
-        .define(if gens { "VGM_YM2612_GENS" } else { "VGM_YM2612_NUKED" }, None)
-        .flag("-std=c++11")
-        .flag("-fwrapv")
-        .flag("-fno-exceptions")
-        .flag("-fno-rtti");
+        .define(if gens { "VGM_YM2612_GENS" } else { "VGM_YM2612_NUKED" }, None);
+    if msvc() {
+        // C++14 is MSVC's oldest language mode, and it has no -fwrapv switch.
+        b.std("c++14").flag("/GR-");
+    } else {
+        b.std("c++11").flag("-fwrapv").flag("-fno-exceptions").flag("-fno-rtti");
+    }
     let skip = if gens { ["Ym2612_Nuked.cpp", "Ym2612_MAME.cpp"] } else { ["Ym2612_GENS.cpp", "Ym2612_MAME.cpp"] };
     for f in files_in(&gme.join("gme"), "cpp") {
         let name = f.file_name().unwrap().to_string_lossy().into_owned();
@@ -265,7 +272,12 @@ fn main() {
     for (k, val) in defs {
         b.define(k, *val);
     }
-    b.flag("-std=c++17").flag("-fexceptions").flag("-frtti");
+    b.std("c++17");
+    if msvc() {
+        b.flag("/EHsc").flag("/GR").flag("/bigobj");
+    } else {
+        b.flag("-fexceptions").flag("-frtti");
+    }
     b.files(files_in(&mpt.join("common"), "cpp"));
     b.files(files_in(&mpt.join("soundlib"), "cpp"));
     b.files(files_in(&mpt.join("soundlib/plugins"), "cpp"));

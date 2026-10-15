@@ -1,6 +1,6 @@
 appId: dev.ghost.app
 productName: GHOST
-copyright: GHOST — Game Haven OST (private build)
+copyright: Copyright © 2026 nameless525
 directories:
   output: release/${version}
   buildResources: resources/build
@@ -18,16 +18,26 @@ mac:
     - target: dmg
       arch: [arm64]
   icon: resources/build/icon.icns
-  # Private build: ad-hoc signed, not notarized.
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  # Not signed with a Developer ID, so not notarized either (README: first launch on macOS).
   identity: null
   extendInfo:
     NSMicrophoneUsageDescription: GHOST does not use the microphone.
 linux:
   category: Audio
-  target: [AppImage]
+  target: [AppImage, deb]
   icon: resources/build/icons
+  executableName: ghost
+  synopsis: Stream the soundtrack of any video game
+  description: A desktop music player for video game soundtracks, with an osu!-inspired interface that moves to the music.
+  maintainer: nameless525 <342860605+nameless525@users.noreply.github.com>
+appImage:
+  artifactName: ${productName}-${version}-linux-x86_64.${ext}
+deb:
+  artifactName: ${productName}-${version}-linux-amd64.${ext}
 win:
   target: [nsis]
   icon: resources/build/icon.ico
+  artifactName: ${productName}-${version}-windows-${arch}-setup.${ext}
 nsis:
   oneClick: true

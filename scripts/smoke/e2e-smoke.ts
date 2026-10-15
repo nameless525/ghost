@@ -1,7 +1,7 @@
 // Headless end-to-end smoke test of the real main-process stack (catalog → resolver → engine →
 // player → downloads) without a window. Uses a temp userData dir.
 //
-//   npx esbuild scripts/e2e-smoke.ts --bundle --platform=node --format=esm --external:electron \
+//   npx esbuild scripts/smoke/e2e-smoke.ts --bundle --platform=node --format=esm --external:electron \
 //     --outfile=/tmp/ghost-e2e/e2e.mjs \
 //     "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
 //   GHOST_NATIVE_ADDON=$PWD/native/dist/ghost.node npx electron /tmp/ghost-e2e/e2e.mjs
@@ -9,9 +9,9 @@ import { app } from 'electron'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServices } from '../src/main/services'
-import { handleArtProtocol, registerArtScheme } from '../src/main/net/art-protocol'
-import type { PlayerState } from '../src/shared/types'
+import { createServices } from '../../src/main/services'
+import { handleArtProtocol, registerArtScheme } from '../../src/main/net/art-protocol'
+import type { PlayerState } from '../../src/shared/types'
 
 const tmp = process.env.GHOST_SMOKE_DIR || mkdtempSync(join(tmpdir(), 'ghost-e2e-'))
 app.setPath('userData', tmp)

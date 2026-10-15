@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Capture a CPU profile of the Electron MAIN process (start the app with --inspect 9229),
 // or of the renderer with CPU_PORT=9223 (start with --remote-debugging-port 9223).
-//   node scripts/cpuprofile-main.mjs <seconds> <out.cpuprofile>   then summarise with --summary
+//   node scripts/perf/cpuprofile-main.mjs <seconds> <out.cpuprofile>   then summarise with --summary
 import { readFileSync, writeFileSync } from 'node:fs'
 const [secs = '10', out = 'main.cpuprofile', mode] = process.argv.slice(2)
 if (mode === '--summary' || secs === '--summary') {

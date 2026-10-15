@@ -2,7 +2,7 @@
 // pieces, album writes and (optionally) the FTS rebuild and full re-cluster, against a COPY of a real
 // catalog database. Never point it at a database an app instance has open.
 //
-//   npx esbuild scripts/catalog-bench.ts --bundle --platform=node --format=esm --outfile=<dir>/bench.mjs \
+//   npx esbuild scripts/perf/catalog-bench.ts --bundle --platform=node --format=esm --outfile=<dir>/bench.mjs \
 //     "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
 //   ELECTRON_RUN_AS_NODE=1 npx electron <dir>/bench.mjs <copy-of-ghost.db> [--runs 15] [--compact] [--heavy] [--json out.json]
 //
@@ -11,12 +11,12 @@
 // on this thread (what a catalog-worker call costs before the RPC hop).
 import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { BrowseQuery, GroupBy, SortBy } from '../src/shared/types'
-import { QueryEngine } from '../src/main/catalog/query'
-import { CatalogRepo } from '../src/main/catalog/repo'
-import { openWorkerDb } from '../src/main/catalog/server'
-import { parseAlbumPage, parseBrowsePage, parseLatestPage, parseTrackPage } from '../src/main/providers/khinsider'
-import { parseAlbumPage as parseZopharAlbum, parseListingPage as parseZopharListing } from '../src/main/providers/zophar'
+import type { BrowseQuery, GroupBy, SortBy } from '../../src/shared/types'
+import { QueryEngine } from '../../src/main/catalog/query'
+import { CatalogRepo } from '../../src/main/catalog/repo'
+import { openWorkerDb } from '../../src/main/catalog/server'
+import { parseAlbumPage, parseBrowsePage, parseLatestPage, parseTrackPage } from '../../src/main/providers/khinsider'
+import { parseAlbumPage as parseZopharAlbum, parseListingPage as parseZopharListing } from '../../src/main/providers/zophar'
 
 const args = process.argv.slice(2)
 const file = args.find((a) => !a.startsWith('--') && !/^\d+$/.test(a))

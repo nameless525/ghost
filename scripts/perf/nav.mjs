@@ -2,7 +2,7 @@
 // Screen / overlay transition latency: time from a key press to the first frame with the target's
 // real content (not a loading ring), on a fresh load. Measures first visits (cold chunks / lazy
 // boundaries) and second visits.
-//   CDP_PORT=9241 node scripts/nav.mjs [runs=3]
+//   CDP_PORT=9241 node scripts/perf/nav.mjs [runs=3]
 // Steps (from the title screen): Enter (menu) · Enter → Browse rows · Mod+L → Library ·
 // Esc · Mod+O → Settings · Esc · F6 → Now Playing · F6 · Esc → Title · Enter/Enter → Browse again.
 const runs = Number(process.argv[2] ?? 3)

@@ -2,7 +2,7 @@
 // Long-session memory soak for Browse: random jumps (F2), step into the albums, expand one (loads
 // its tracks), repeat. Reports JS heap after a forced GC, DOM nodes, listeners and process RSS
 // (renderer + GPU) at the start, halfway and the end.
-//   CDP_PORT=9241 node scripts/soak.mjs [iterations=200]
+//   CDP_PORT=9241 node scripts/perf/soak.mjs [iterations=200]
 // Start it on Browse (it navigates there via ?screen=browse).
 import { execFileSync } from 'node:child_process'
 

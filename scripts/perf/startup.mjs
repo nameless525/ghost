@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Renderer startup timing: reloads the running app N times and reports medians.
-//   CDP_PORT=9241 node scripts/startup.mjs [runs=5] [--screen browse] [--trace out.json]
+//   CDP_PORT=9241 node scripts/perf/startup.mjs [runs=5] [--screen browse] [--trace out.json]
 // Milestones (ms since navigation start), recorded by a probe injected before any app script runs:
 //   fcp         first contentful paint (toolbar / background)
 //   screen      first frame after the initial screen's content is in the DOM (not its loading ring)

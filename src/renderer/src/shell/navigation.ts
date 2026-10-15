@@ -36,7 +36,7 @@ export function navigate(s: ScreenId): void {
 }
 
 /**
- * Apply ?screen=…&overlay=… deep links (used by every workstream for screenshots).
+ * Apply ?screen=…&overlay=… deep links (handy for screenshots and UI work).
  *   ?screen=title|browse|play     ?overlay=library|settings|downloads|nowPlaying|notifications
  */
 export function applyDeepLinks(search = window.location.search): void {

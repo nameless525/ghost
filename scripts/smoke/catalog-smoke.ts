@@ -2,7 +2,7 @@
 // Crawls ONE letter page, fetches ONE album page, resolves ONE track's audio URLs, and exercises
 // the ghost-art:// protocol. Everything lands in a temp userData dir.
 //
-//   npx esbuild scripts/catalog-smoke.ts --bundle --platform=node --format=esm --external:electron \
+//   npx esbuild scripts/smoke/catalog-smoke.ts --bundle --platform=node --format=esm --external:electron \
 //     --outfile=/tmp/ghost-smoke/smoke.mjs \
 //     "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
 //   npx electron /tmp/ghost-smoke/smoke.mjs
@@ -11,11 +11,11 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
-import { createCatalogService } from '../src/main/catalog/service'
-import { openDb } from '../src/main/db'
-import { artAccent, handleArtProtocol, registerArtScheme } from '../src/main/net/art-protocol'
-import { defaultSettings } from '../src/shared/defaults'
-import type { CatalogStatus } from '../src/shared/types'
+import { createCatalogService } from '../../src/main/catalog/service'
+import { openDb } from '../../src/main/db'
+import { artAccent, handleArtProtocol, registerArtScheme } from '../../src/main/net/art-protocol'
+import { defaultSettings } from '../../src/shared/defaults'
+import type { CatalogStatus } from '../../src/shared/types'
 
 const tmp = process.env.GHOST_SMOKE_DIR || mkdtempSync(join(tmpdir(), 'ghost-smoke-'))
 app.setPath('userData', tmp)

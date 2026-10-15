@@ -1,4 +1,4 @@
-// Catalog tables (DESIGN §6.5). Owned by the catalog workstream; created idempotently at startup.
+// Catalog tables (DESIGN §6.5), created idempotently at startup.
 //
 // IDs are INTEGER rowids exposed to the rest of the app as decimal strings ("123"). Rows in
 // albums/tracks are never deleted (only flagged), so ids other modules store (likes, playlists,

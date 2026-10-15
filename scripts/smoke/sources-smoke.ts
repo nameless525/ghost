@@ -4,7 +4,7 @@
 // checks them with HTTP Range requests. Everything lands in a temp userData dir
 // (GHOST_SMOKE_DIR reuses one, so yt-dlp isn't downloaded twice).
 //
-//   npx esbuild scripts/sources-smoke.ts --bundle --platform=node --format=esm --external:electron \
+//   npx esbuild scripts/smoke/sources-smoke.ts --bundle --platform=node --format=esm --external:electron \
 //     --outfile=/tmp/ghost-smoke/sources-smoke.mjs \
 //     "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
 //   npx electron /tmp/ghost-smoke/sources-smoke.mjs
@@ -12,13 +12,13 @@ import { app } from 'electron'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CatalogRepo } from '../src/main/catalog/repo'
-import { createCatalogService } from '../src/main/catalog/service'
-import { openDb } from '../src/main/db'
-import { sharedYtDlp } from '../src/main/tools/ytdlp'
-import { defaultSettings } from '../src/shared/defaults'
-import type { ExternalAlbumHit } from '../src/shared/types'
-import type { ResolvedSource } from '../src/main/catalog'
+import { CatalogRepo } from '../../src/main/catalog/repo'
+import { createCatalogService } from '../../src/main/catalog/service'
+import { openDb } from '../../src/main/db'
+import { sharedYtDlp } from '../../src/main/tools/ytdlp'
+import { defaultSettings } from '../../src/shared/defaults'
+import type { ExternalAlbumHit } from '../../src/shared/types'
+import type { ResolvedSource } from '../../src/main/catalog'
 
 const tmp = process.env.GHOST_SMOKE_DIR || mkdtempSync(join(tmpdir(), 'ghost-sources-smoke-'))
 mkdirSync(tmp, { recursive: true })

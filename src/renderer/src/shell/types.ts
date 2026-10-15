@@ -1,4 +1,4 @@
-// Props contracts between the shell and the screens / overlays other workstreams build.
+// Props contracts between the shell and the screens / overlays it hosts.
 import type { OverlayId, ScreenId } from '../state/ui'
 
 export type { OverlayId, ScreenId }

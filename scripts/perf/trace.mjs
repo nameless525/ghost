@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Record a Chrome trace of the renderer (devtools timeline categories) and summarise where main-
 // thread and compositor time went. Start the app with --remote-debugging-port 9223.
-//   node scripts/trace.mjs <seconds> <out.json>      node scripts/trace.mjs --summary <out.json>
+//   node scripts/perf/trace.mjs <seconds> <out.json>      node scripts/perf/trace.mjs --summary <out.json>
 import { readFileSync, writeFileSync } from 'node:fs'
 const args = process.argv.slice(2)
 if (args[0] === '--summary') {

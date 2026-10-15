@@ -2,6 +2,11 @@
 
 ## 0.3.3 (2026-10-14)
 
+### Open source
+- GHOST is now on GitHub under the MIT License. Every release comes with installers for macOS (Apple Silicon), Windows and Linux.
+- The Windows and Linux builds are new and haven't had much real-world testing yet. If something doesn't work, please [open an issue](https://github.com/nameless525/ghost/issues).
+- The requests GHOST sends to music sites now name the project page, so site owners can see what it is.
+
 ### Catalog refreshes while GHOST stays open
 - Sources are checked for a due refresh every 24 hours while GHOST is open, as well as at launch. The check follows the clock on the wall, so a Mac that sleeps overnight doesn't push it back.
 - Turning a source on in Settings starts adding it straight away instead of at the next launch. Turning one off stops its indexing, which picks up where it left off when you turn it back on.
@@ -187,7 +192,6 @@ The catalog grows from about 88,000 to about 93,000 games, and from 106,000 to 1
 - One index crawl per source, each resumable page by page; the chiptune index runs after all of them.
 - Existing catalogs rebuild their search index (about 10 s) and regroup games (about 4 s) once, in the background, on first launch.
 - Saved source orders gain the new sources next to their default neighbours.
-- The research behind the source choices is in `docs/research/sources-2026-10.md`.
 
 ## 0.1.0 (2026-10-14)
 First release: the KHInsider catalog, the Rust audio engine, the osu!-style interface, and the jitter and performance pass.

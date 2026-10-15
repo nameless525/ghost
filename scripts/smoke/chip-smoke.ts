@@ -1,4 +1,4 @@
-// Real smoke test of the chiptune rip workstream: crawls ONE joshw.info listing page (SPC, letter
+// Real smoke test of the chiptune rip index: crawls ONE joshw.info listing page (SPC, letter
 // C), matches Chrono Trigger to the game a KHInsider search put in the catalog, opens its chip album
 // (the engine fetches and lists the .7z), plays a track through the real player and engine for a
 // few seconds, checks that the sound-chip voices arrive in PlayerState and toggles a voice mask.
@@ -7,7 +7,7 @@
 // Other sets: GHOST_CHIP_HOST=nsf.joshw.info GHOST_CHIP_PAGE=/m/ GHOST_CHIP_GAME="Mega Man 2";
 // GHOST_CHIP_HOST=vgmrips.net GHOST_CHIP_GAME="Dinosaur" reads vgmrips' first pack-list page.
 //
-//   npx esbuild scripts/chip-smoke.ts --bundle --platform=node --format=esm --external:electron \
+//   npx esbuild scripts/smoke/chip-smoke.ts --bundle --platform=node --format=esm --external:electron \
 //     --outfile=/tmp/ghost-smoke/chip-smoke.mjs \
 //     "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
 //   GHOST_NATIVE_ADDON=$PWD/native/dist/ghost.node npx electron /tmp/ghost-smoke/chip-smoke.mjs
@@ -15,18 +15,18 @@ import { app } from 'electron'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CatalogRepo } from '../src/main/catalog/repo'
-import { createCatalogService } from '../src/main/catalog/service'
-import { openDb } from '../src/main/db'
-import { loadEngine } from '../src/main/engine/native'
-import { createLibrary } from '../src/main/library'
-import { createHttpClient } from '../src/main/net/http'
-import { setSharedHttp } from '../src/main/net/shared'
-import { Player } from '../src/main/player'
-import { KhinsiderProvider } from '../src/main/providers/khinsider'
-import { applyEngineSettings } from '../src/main/settings'
-import { defaultSettings } from '../src/shared/defaults'
-import type { PlayerState } from '../src/shared/types'
+import { CatalogRepo } from '../../src/main/catalog/repo'
+import { createCatalogService } from '../../src/main/catalog/service'
+import { openDb } from '../../src/main/db'
+import { loadEngine } from '../../src/main/engine/native'
+import { createLibrary } from '../../src/main/library'
+import { createHttpClient } from '../../src/main/net/http'
+import { setSharedHttp } from '../../src/main/net/shared'
+import { Player } from '../../src/main/player'
+import { KhinsiderProvider } from '../../src/main/providers/khinsider'
+import { applyEngineSettings } from '../../src/main/settings'
+import { defaultSettings } from '../../src/shared/defaults'
+import type { PlayerState } from '../../src/shared/types'
 
 const tmp = process.env.GHOST_SMOKE_DIR || mkdtempSync(join(tmpdir(), 'ghost-chip-smoke-'))
 mkdirSync(tmp, { recursive: true })

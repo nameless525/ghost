@@ -2,7 +2,7 @@
 // React render counts per interaction (needs component names: run against `electron-vite dev`).
 // Installs a minimal React DevTools hook before the app loads, then counts, per commit, every
 // function/class component that actually rendered (PerformedWork), grouped by name.
-//   CDP_PORT=9241 node scripts/render-count.mjs [keys|hold|type|idle] [--screen browse]
+//   CDP_PORT=9241 node scripts/perf/render-count.mjs [keys|hold|type|idle] [--screen browse]
 //     keys  20 × ArrowDown, 120 ms apart      hold  60 × ArrowDown, 16 ms apart (key repeat)
 //     type  types "final fantasy" into the search box     idle  5 s of nothing (playback ticking)
 const args = process.argv.slice(2)

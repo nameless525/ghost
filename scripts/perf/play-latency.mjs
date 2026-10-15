@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Click→sound latency: plays an album through window.ghost and prints the main-process play:* marks
 // (request → load → resolved → engine-set → playing) as deltas, plus what the renderer saw.
-//   CDP_PORT=9223 node scripts/play-latency.mjs <albumId> [startIndex]
+//   CDP_PORT=9223 node scripts/perf/play-latency.mjs <albumId> [startIndex]
 // IPC traffic per channel: start the app with GHOST_PERF_IPC=1 and read window.ghost.__perf().ipc.
 const [albumId, start = '0'] = process.argv.slice(2)
 const port = process.env.CDP_PORT || 9223

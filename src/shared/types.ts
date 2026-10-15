@@ -1,5 +1,5 @@
 // Domain types shared by the main process, preload and renderer.
-// This file is a contract between parallel workstreams: change it additively only.
+// It's the contract between those processes: change it additively only.
 
 export type ID = string
 

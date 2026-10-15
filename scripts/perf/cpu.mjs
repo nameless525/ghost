@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CPU use of every Electron process (browser/main, renderer, GPU, utility) over a window, plus the
 // renderer main thread's breakdown and how many ticker frames ran. For idle/unfocused checks.
-//   CDP_PORT=9241 node scripts/cpu.mjs [seconds=10] [--focus|--blur] [--settle s] [--eval "<js run first>"]
+//   CDP_PORT=9241 node scripts/perf/cpu.mjs [seconds=10] [--focus|--blur] [--settle s] [--eval "<js run first>"]
 // --focus emulates a focused window, --blur a visible but unfocused one, so the pacing policy is
 // deterministic without touching the real window (whose occlusion would otherwise decide).
 const args = process.argv.slice(2)

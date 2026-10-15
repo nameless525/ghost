@@ -1,6 +1,5 @@
 // Zophar's Domain (www.zophar.net/music): per-track MP3 renders of emulated game-music rip sets,
-// including the PSF/2SF/GSF/USF/3SF families GHOST can't emulate (DESIGN §6.2, research notes
-// docs/research/sources-2026-10.md §1).
+// including the PSF/2SF/GSF/USF/3SF families GHOST can't emulate (DESIGN §6.2).
 //
 // Page shapes (verified 2026-10-14):
 //  - Platform listing /music/<platform>[?page=N]: `p.found_stats` "Found 1639 games with 36175 tracks!",

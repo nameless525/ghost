@@ -1,4 +1,4 @@
-// Tables owned by the library/services workstream. Idempotent DDL, applied at startup.
+// Library tables (likes, playlists, history, downloads). Idempotent DDL, applied at startup.
 import { ensureSchema, type DB } from '../db'
 
 export const LIBRARY_DDL = `

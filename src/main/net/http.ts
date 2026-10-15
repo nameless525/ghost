@@ -13,7 +13,7 @@ import { GHOST_VERSION } from '../../shared/version'
 import { blockedMessage, NetError } from './errors'
 import { HostLimiter, type Priority } from './limiter'
 
-export const GHOST_USER_AGENT = `GHOST/${GHOST_VERSION} (personal video game soundtrack player)`
+export const GHOST_USER_AGENT = `GHOST/${GHOST_VERSION} (video game soundtrack player; +https://github.com/nameless525/ghost)`
 
 export const DAY = 24 * 3600_000
 export const TTL = {

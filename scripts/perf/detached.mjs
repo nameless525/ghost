@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Who keeps detached DOM alive? Takes a heap snapshot of the renderer and prints the most common
 // retainer chains of detached DOM trees (the JS objects holding them), plus counts.
-//   CDP_PORT=9241 node scripts/detached.mjs [--save out.heapsnapshot] [--depth 6]
+//   CDP_PORT=9241 node scripts/perf/detached.mjs [--save out.heapsnapshot] [--depth 6]
 const args = process.argv.slice(2)
 const flag = (k, d) => {
   const i = args.indexOf(k)

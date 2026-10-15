@@ -1,0 +1,87 @@
+name: Release
+
+# Push a version tag (git tag v0.3.3 && git push origin v0.3.3) to build installers for
+# macOS, Windows and Linux and publish them as a GitHub release. Run it by hand from the
+# Actions tab to build the installers without publishing (they're kept as workflow artifacts).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            target: --mac
+          - name: Windows
+            os: windows-latest
+            target: --win
+          # The oldest supported Ubuntu, so the AppImage runs on older distributions too.
+          - name: Linux
+            os: ubuntu-22.04
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Install ALSA headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - run: npm ci
+      - run: npm run build:native
+      - run: npx electron-vite build
+      - run: npx electron-builder ${{ matrix.target }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            release/*/*.dmg
+            release/*/*.exe
+            release/*/*.AppImage
+            release/*/*.deb
+
+  publish:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## " v "( |$)" { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          printf '\n---\n\n**Install:** download the file for your system below. First launch on macOS, Windows or Linux: see the [README](https://github.com/%s#install).\n' "$GITHUB_REPOSITORY" >> notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "GHOST ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md

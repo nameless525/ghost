@@ -1,4 +1,4 @@
-// SoundCloud via yt-dlp: a last-resort search source (docs/research/sources-2026-10.md §7).
+// SoundCloud via yt-dlp: a last-resort search source (DESIGN §6.2).
 //
 //  - searchExternal: yt-dlp only searches tracks (`scsearch`). It has no set search (and reads a
 //    soundcloud.com/search/sets URL as a user page), so album-like hits come from the track results:

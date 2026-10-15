@@ -1,14 +1,23 @@
+# Dependencies and build output
 node_modules/
 out/
 dist/
 release/
-*.log
-.DS_Store
 native/target/
 native/dist/
+native/native/
 *.node
+*.tsbuildinfo
 .vite/
 coverage/
+
+# Local app data and tooling
 .ghost-dev/
-*.tsbuildinfo
-native/native/
+.claude/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

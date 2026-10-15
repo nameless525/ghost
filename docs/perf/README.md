@@ -6,19 +6,19 @@
 | `window.__ghostPerf.stats(reset)` (renderer) | frame-time histogram (ticker rawDt), long tasks / long animation frames, heap |
 | `window.ghost.__perf(reset)` (renderer → main) | main-process event-loop delay p50/p99/max, stalls > 40 ms (with last slow-op hint), slow SQL statements (> 8 ms) |
 | `window.__ghostPacing.override = Infinity \| null` | disable/restore adaptive frame pacing while measuring |
-| `node scripts/perf-scenario.mjs <scenario>` | scripted Browse scenarios + both stats (app must run with `--remoteDebuggingPort 9223`) |
-| `node scripts/cpuprofile-main.mjs <secs> <out>` / `--summary <out>` | CPU profile of the main process (`--inspect 9229`) or renderer (`CPU_PORT=9223`) |
-| `node scripts/trace.mjs <secs> <out>` / `--summary <out>` | Chrome trace (style/layout/paint/raster/GPU) |
+| `node scripts/perf/perf-scenario.mjs <scenario>` | scripted Browse scenarios + both stats (app must run with `--remoteDebuggingPort 9223`) |
+| `node scripts/perf/cpuprofile-main.mjs <secs> <out>` / `--summary <out>` | CPU profile of the main process (`--inspect 9229`) or renderer (`CPU_PORT=9223`) |
+| `node scripts/perf/trace.mjs <secs> <out>` / `--summary <out>` | Chrome trace (style/layout/paint/raster/GPU) |
 | `GHOST_PERF_LOG=1` | log main stalls live (otherwise the detectors only run while a window is focused, or for 10 min after `__perf()`) |
 | `GHOST_PERF_IPC=1` | count IPC bytes per channel (`window.ghost.__perf().ipc`) |
-| `node scripts/startup.mjs [runs] [--screen browse]` | renderer startup milestones (first screen, canvas, settled) over N reloads |
-| `node scripts/nav.mjs` | screen / overlay open latency |
-| `node scripts/cpu.mjs [secs] [--focus\|--blur] [--settle s]` | CPU per Electron process + renderer main-thread breakdown (idle checks) |
-| `node scripts/soak.mjs` / `detached.mjs` | long-session heap growth / who keeps detached DOM alive |
-| `node scripts/render-count.mjs` | React renders per action (dev build) |
-| `node scripts/bundle-report.mjs` | renderer bundle size by source |
-| `node scripts/play-latency.mjs <albumId> [index]` | click → sound milestones (request → resolved → engine-set → playing) |
-| `node scripts/catalog-rpc-bench.mjs` / `npx tsx scripts/catalog-bench.ts <db copy>` | catalog queries through the app / offline on a DB copy |
+| `node scripts/perf/startup.mjs [runs] [--screen browse]` | renderer startup milestones (first screen, canvas, settled) over N reloads |
+| `node scripts/perf/nav.mjs` | screen / overlay open latency |
+| `node scripts/perf/cpu.mjs [secs] [--focus\|--blur] [--settle s]` | CPU per Electron process + renderer main-thread breakdown (idle checks) |
+| `node scripts/perf/soak.mjs` / `detached.mjs` | long-session heap growth / who keeps detached DOM alive |
+| `node scripts/perf/render-count.mjs` | React renders per action (dev build) |
+| `node scripts/perf/bundle-report.mjs` | renderer bundle size by source |
+| `node scripts/perf/play-latency.mjs <albumId> [index]` | click → sound milestones (request → resolved → engine-set → playing) |
+| `node scripts/perf/catalog-rpc-bench.mjs` / `npx tsx scripts/perf/catalog-bench.ts <db copy>` | catalog queries through the app / offline on a DB copy |
 | `cd native && cargo run --release -p ghost-engine --example bench` | engine time-to-first-audio, seek, decode hashes against a simulated (throttled) server; also `idle`, `devbench`, `cachebench`, ghost-art `art_bench` |
 
 All scripts take `CDP_PORT` (default 9223).

@@ -2,9 +2,9 @@
 
 **GHOST** = **G**ame **H**aven **OST**.
 
-A private, personal-use desktop app for macOS, Linux and Windows that streams (and optionally downloads) video game soundtracks. It finds music the way ani-cli finds anime (type a name, get playback) and wraps that in a GUI that moves and feels like osu!.
+A desktop app for macOS, Linux and Windows that streams (and optionally downloads) video game soundtracks. It finds music the way ani-cli finds anime (type a name, get playback) and wraps that in a GUI that moves and feels like osu!.
 
-Status: implemented (M0–M6 plus most of M7); see README.md for running and building. Last updated 2026-10-14.
+Status: implemented (M0–M6 plus most of M7); see the [README](../README.md) to install it and [DEVELOPMENT.md](DEVELOPMENT.md) to build it. Last updated 2026-10-14.
 
 ---
 
@@ -15,7 +15,7 @@ Status: implemented (M0–M6 plus most of M7); see README.md for running and bui
 3. **Everything reacts to the music.** Visuals follow what you *hear*: the clock is compensated for output latency, so it tracks audible sound rather than decoded samples.
 4. **Any game, best available source.** There is one canonical catalog. Each track has several possible sources, ranked, with automatic fallback when one fails.
 5. **Keyboard first, mouse friendly.** Every action has a key, the way osu!'s song select does.
-6. **Private use.** All sources ship in the core app. There's no plugin isolation, no accounts and no telemetry.
+6. **Local and private.** All sources ship in the core app. There are no accounts, no servers of its own and no telemetry: everything GHOST knows lives on your computer.
 
 ---
 
@@ -63,7 +63,7 @@ Status: implemented (M0–M6 plus most of M7); see README.md for running and bui
 
 | Layer | Choice | Why |
 |---|---|---|
-| Shell | **Electron** | Ships the same Chromium on all three OSes, so rendering behaves identically everywhere. Reliable 120 Hz `requestAnimationFrame`. Mature GPU compositing. App size doesn't matter for private use. |
+| Shell | **Electron** | Ships the same Chromium on all three OSes, so rendering behaves identically everywhere. Reliable 120 Hz `requestAnimationFrame`. Mature GPU compositing. A larger download is worth that consistency. |
 | UI | **React 19 + TypeScript + Vite** (electron-vite) | React builds the structure. Per-frame motion is imperative (rAF writes `transform`/`opacity` directly), so React never re-renders 120 times a second. |
 | GPU layer | **PixiJS v8** canvas under the DOM | Blurred background art, the drifting-pixel field, visualizers, kiai flashes and particles. |
 | Motion | Small transform toolkit (osu!framework-style `fadeTo`/`moveTo`/`scaleTo` with easings) plus **Motion** for layout and mount transitions | Copies osu!'s motion semantics exactly. |
@@ -252,7 +252,7 @@ The resolver asks each enabled provider in priority order and scores the candida
    - SoundCloud serves only HLS, so each track is downloaded once into a 1 GiB LRU cache before it plays.
 10. **Rainwave**, for radio mode (later milestone).
 
-Researched but not used (see `docs/research/sources-2026-10.md`):
+Researched but not used:
 - **VGMdb:** behind a Cloudflare challenge.
 - **SNESmusic:** its robots.txt disallows the set downloads.
 - **project2612:** dead.
@@ -460,7 +460,7 @@ Results where every word is a whole word of the game's name rank first. Next com
 
 ---
 
-## 9. Needed from the owner
+## 9. Outside inputs
 | Item | When | Notes |
 |---|---|---|
 | Twitch developer app client ID and secret (IGDB) | M2 | dev.twitch.tv, free |

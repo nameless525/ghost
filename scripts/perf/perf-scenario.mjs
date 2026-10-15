@@ -1,5 +1,5 @@
 // Perf scenario runner (needs the app running with --remote-debugging-port 9223 and the instrumented
-// build). Usage: node scripts/perf-scenario.mjs <idle|browse-keys|browse-hold|fling|search>
+// build). Usage: node scripts/perf/perf-scenario.mjs <idle|browse-keys|browse-hold|fling|search>
 // Runs a named scenario against the app via CDP and prints renderer + main perf stats.
 import { execFileSync, spawn } from 'node:child_process'
 const cdp = (...a) => execFileSync('node', ['scripts/cdp.mjs', ...a], { encoding: 'utf8' })
