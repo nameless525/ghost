@@ -30,6 +30,13 @@ const ART_QUEUE_MAX = 60
 const EXTERNAL_SEARCH_TIMEOUT_MS = 60_000
 const EXTERNAL_HITS_MAX = 40
 const LOCAL_FOLDERS_POLL_MS = 4000
+/** While the app stays open, sources are checked for a due refresh this often (and at every launch). */
+export const REFRESH_CHECK_MS = 24 * 3600_000
+/**
+ * How often the clock is read for that check. Timers stall while the Mac sleeps but the wall clock
+ * doesn't, so a plain 24-hour timer could wait days on a laptop that sleeps every night.
+ */
+const REFRESH_TICK_MS = 15 * 60_000
 /** Rest this long on an album (no other album opened) before its first track's stream is resolved ahead. */
 export const PREFETCH_DWELL_MS = 600
 /** Site searches remembered (one per distinct query, while a source's first crawl is incomplete). */
@@ -67,6 +74,10 @@ export interface CatalogInternals {
   now?: () => number
   /** Delay before the startup crawl begins (ms). */
   startDelayMs?: number
+  /** Check for due source refreshes this often while running (default REFRESH_CHECK_MS)… */
+  refreshCheckMs?: number
+  /** …reading the clock this often (default REFRESH_TICK_MS). */
+  refreshTickMs?: number
   crawlPageDelayMs?: number
   crawlSections?: string[]
   crawlMaxPagesPerSection?: number
@@ -306,6 +317,49 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     return anyCrawling()
   }
 
+  // --- refresh checks -------------------------------------------------------------------------
+  // At launch, and then every REFRESH_CHECK_MS while the app stays open, each source is checked
+  // against its own refresh period (an interrupted crawl resumes too). Turning a source on in
+  // Settings starts it right away; turning one off stops its crawl (it resumes when turned back on).
+  const checkEveryMs = internals.refreshCheckMs ?? REFRESH_CHECK_MS
+  let lastCheck: number | null = null
+  let checkTick: ReturnType<typeof setInterval> | null = null
+  let disabledKey = ''
+  const disabledNow = () => JSON.stringify([...deps.getSettings().sources.disabled].sort())
+
+  /** Start whatever is due: the index crawls, or the chiptune rip index once nothing else crawls. */
+  function startDue(): boolean {
+    if (scheduleCrawls()) return true
+    maybeStartChip()
+    return false
+  }
+  /** The launch / daily check. Returns whether anything is crawling. */
+  function checkDue(): boolean {
+    lastCheck = now()
+    disabledKey = disabledNow()
+    return startDue()
+  }
+  /** Settings changed: follow sources turned on or off. */
+  function onSourcesToggled(): void {
+    if (stopped || lastCheck == null) return // the launch check reads the current list anyway
+    const key = disabledNow()
+    if (key === disabledKey) return
+    disabledKey = key
+    const off = new Set(deps.getSettings().sources.disabled)
+    for (const [id, c] of crawlers) if (off.has(id)) c.stop()
+    if (off.has(CHIP_ID)) chipIndexer?.stop()
+    startDue()
+    notify()
+  }
+  /** When a source's next background refresh starts if the app stays open: the first check after it's due. */
+  function nextRefreshAt(c: Crawler): number | null {
+    if (lastCheck == null) return null
+    const next = lastCheck + checkEveryMs
+    if (c.wants()) return next
+    const dueAt = (c.lastFinished() ?? 0) + c.refreshEveryMs
+    return dueAt <= next ? next : next + Math.ceil((dueAt - next) / checkEveryMs) * checkEveryMs
+  }
+
   // One-time setup notices: when a source is added for the first time, say so (and that it won't
   // happen again); when the last first-time crawl ends, say the catalog is ready.
   const SETUP_NOTICE = 'catalog-setup'
@@ -368,10 +422,13 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   /** Every enabled index source and what its crawl is doing, plus the chip index while it runs. */
   function sourceStatuses(): SourceIndexStatus[] {
     const disabled = new Set(deps.getSettings().sources.disabled)
+    // Queued behind a crawl that's running (or one that just ended): it starts when that's done. A
+    // source that comes due while nothing runs is idle until the next check (nextRefreshAt).
+    const underway = anyCrawling() || chipTimer != null
     const out: SourceIndexStatus[] = indexProviders().map((p) => {
       const c = crawlerFor(p)
       const off = disabled.has(p.id)
-      const waiting = !off && !c.running && c.wants(forceCrawl.has(p.id))
+      const waiting = !off && !c.running && underway && c.wants(forceCrawl.has(p.id))
       return {
         id: p.id,
         name: p.name,
@@ -381,7 +438,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
         detail: c.running ? c.detail : null,
         etaMs: c.running ? c.etaMs : null,
         lastIndexedAt: c.lastFinished(),
-        refreshEveryMs: c.refreshEveryMs
+        refreshEveryMs: c.refreshEveryMs,
+        nextRefreshAt: off || c.running || waiting ? null : nextRefreshAt(c)
       }
     })
     const chip = chipIndexer
@@ -822,13 +880,15 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       stopped = false
       localKey = null
       timers.push(setTimeout(() => checkLocalFolders(true), (internals.startDelayMs ?? 1500) + 500))
-      if (!internals.disableLocalScan) {
-        offSettings?.()
-        offSettings = deps.onSettingsChanged?.(() => checkLocalFolders()) ?? null
-        if (!offSettings) {
-          localPoll = setInterval(() => checkLocalFolders(), LOCAL_FOLDERS_POLL_MS)
-          localPoll.unref?.()
-        }
+      offSettings?.()
+      const onSettings = () => {
+        checkLocalFolders()
+        onSourcesToggled()
+      }
+      offSettings = deps.onSettingsChanged?.(onSettings) ?? null
+      if (!offSettings) {
+        localPoll = setInterval(onSettings, LOCAL_FOLDERS_POLL_MS)
+        localPoll.unref?.()
       }
       if (!internals.disableEnrichment) {
         unsubscribeArt = (internals.onArtFetched ?? defaultOnArtFetched)((url, bytes, hex) => accent.onArtFetched(url, bytes, hex))
@@ -840,13 +900,17 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
           // Fresh shuffle for 'random' sort each launch (a seeded hash order; no rows are rewritten).
           reseedRandom()
           void upgradeIndexes()
-          if (!scheduleCrawls()) {
-            schedulePrewarm(3000)
-            maybeStartChip()
-          }
+          if (!checkDue()) schedulePrewarm(3000)
           notify()
         }, internals.startDelayMs ?? 1500)
       )
+      checkTick = setInterval(
+        () => {
+          if (!stopped && lastCheck != null && now() - lastCheck >= checkEveryMs) checkDue()
+        },
+        Math.min(internals.refreshTickMs ?? REFRESH_TICK_MS, checkEveryMs)
+      )
+      checkTick.unref?.()
       const trim = internals.trimArtCache ?? (internals.accentOf ? null : async () => (await artProtocol()).trimArtCache())
       if (!internals.disableEnrichment && trim) timers.push(setTimeout(() => void trim().catch(() => {}), 60_000))
     },
@@ -872,6 +936,9 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       searchTimer = null
       if (localPoll) clearInterval(localPoll)
       localPoll = null
+      if (checkTick) clearInterval(checkTick)
+      checkTick = null
+      lastCheck = null
       offSettings?.()
       offSettings = null
     },

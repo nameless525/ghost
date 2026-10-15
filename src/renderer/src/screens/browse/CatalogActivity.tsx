@@ -11,12 +11,17 @@ import { AnchoredPopover } from './Popover'
 import { useRestartKey } from './waits'
 import './catalog-activity.css'
 
-function nextRefresh(s: SourceIndexStatus, now: number): string | null {
-  if (s.lastIndexedAt == null) return null
-  const left = s.lastIndexedAt + s.refreshEveryMs - now
-  if (left <= 0) return 'refreshes on next launch'
-  const d = Math.ceil(left / DAY)
-  return d <= 1 ? 'next refresh within a day' : `next in ${d} days`
+/** An idle source: up to date (and when it's next re-read), or due and when that starts. */
+function idleLine(s: SourceIndexStatus, now: number): string {
+  const dueAt = s.lastIndexedAt == null ? null : s.lastIndexedAt + s.refreshEveryMs
+  // When it really starts: the first launch-or-daily check after it's due (older mocks: when due).
+  const at = s.nextRefreshAt ?? dueAt
+  if (dueAt == null || dueAt <= now) {
+    const starts = at != null && at > now ? `starts in ${formatEta(at - now)}` : null
+    return [s.lastIndexedAt == null ? 'Not added yet' : 'Refresh due', starts].filter(Boolean).join(' · ')
+  }
+  const d = Math.ceil(((at ?? dueAt) - now) / DAY)
+  return ['Up to date', `refreshes ${formatEvery(s.refreshEveryMs)}`, d <= 1 ? 'next refresh within a day' : `next in ${d} days`].join(' · ')
 }
 
 function stateLine(s: SourceIndexStatus, now: number): ReactNode {
@@ -28,8 +33,7 @@ function stateLine(s: SourceIndexStatus, now: number): ReactNode {
   }
   if (s.state === 'waiting') return s.initial ? 'Up next (first time)' : 'Up next'
   if (s.state === 'off') return 'Turned off in Settings'
-  const next = nextRefresh(s, now)
-  return ['Up to date', `refreshes ${formatEvery(s.refreshEveryMs)}`, next].filter(Boolean).join(' · ')
+  return idleLine(s, now)
 }
 
 /** One row per source: icon by state, name, what it's doing, a progress bar while it runs. */

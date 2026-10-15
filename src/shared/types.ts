@@ -200,7 +200,7 @@ export interface CatalogStatus {
 export interface SourceIndexStatus {
   id: string
   name: string
-  /** waiting: queued behind other crawls; running; idle: index current; off: source disabled. */
+  /** waiting: queued behind a crawl that's running; running; idle: not crawling now; off: source disabled. */
   state: 'waiting' | 'running' | 'idle' | 'off'
   /** The queued / running crawl is this source's first complete read (one-time setup). */
   initial: boolean
@@ -212,6 +212,11 @@ export interface SourceIndexStatus {
   lastIndexedAt: number | null
   /** How often the source is re-read in the background. */
   refreshEveryMs: number
+  /**
+   * While idle: when its next refresh starts if the app stays open (sources are checked at launch
+   * and once a day); at or before now + a day when it's already due. Null while busy, off, or unknown.
+   */
+  nextRefreshAt?: number | null
 }
 
 /** One catalog source in Settings → Sources: how much of the catalog it contributes. */

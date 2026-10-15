@@ -73,7 +73,8 @@ export interface CatalogDeps {
   onResolveStep?: (step: ResolveStep) => void
   /**
    * Settings pushed to the catalog (the worker gets them from main): called after `getSettings`
-   * returns the new ones. Without it, settings the catalog acts on (local folders) are polled.
+   * returns the new ones. Without it, settings the catalog acts on (local folders, sources turned
+   * on or off) are polled.
    */
   onSettingsChanged?: (fn: () => void) => () => void
 }

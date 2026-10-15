@@ -450,6 +450,103 @@ describe('several index sources', () => {
   }, 20_000)
 })
 
+describe('refresh checks', () => {
+  const H = 3600_000
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  function fakeIndex(id: string, titles: string[][], calls: string[]): Provider {
+    return {
+      id,
+      name: id.toUpperCase(),
+      indexPageDelayMs: 0,
+      indexSections: () => [{ key: 'all', label: 'All' }],
+      async fetchIndexPage(_k: string, page: number) {
+        calls.push(`${id}:${page}`)
+        const items = titles[page - 1].map((t) => ({ provider: id, ref: `${id}-${t}`, title: t, titleFromRef: false, platforms: [], kind: 'gamerip' as const, typeLabel: null, year: null, thumb: null, cover: null, catalogNo: null, addedAt: null }))
+        return { items, page, totalPages: titles.length, totalAlbums: null }
+      },
+      async resolveStream(): Promise<StreamInfo[]> {
+        return []
+      }
+    } as never
+  }
+
+  it('checks at launch and once a day while open; a source that comes due waits for the next check', async () => {
+    const calls: string[] = []
+    let t = Date.UTC(2026, 0, 1)
+    const src = Object.assign(fakeIndex('khinsider', [['Chrono Trigger OST']], calls), { indexRefreshMs: 36 * H })
+    const svc = createCatalogService(
+      { db: memoryDb(), broadcast: (() => {}) as never, getSettings: () => defaultSettings('/tmp/ghost-dl') },
+      { registry: new ProviderRegistry().register(src), now: () => t, startDelayMs: 0, refreshTickMs: 5, disableEnrichment: true, disableLocalScan: true, chip: false, log: () => {} }
+    )
+    const row = async () => (await svc.status()).sources!.find((x) => x.id === 'khinsider')!
+    svc.start()
+    await until(() => calls.length === 1)
+    await until(async () => (await row()).state === 'idle')
+    await sleep(1100) // the hand-off after a crawl (whatever was waiting for it starts then)
+    const t0 = t
+    // due at 36 h: the first check after that is the one at 48 h
+    expect((await row()).nextRefreshAt).toBe(t0 + 48 * H)
+    t = t0 + 24 * H // the daily check: not due yet
+    await sleep(40)
+    expect(calls).toHaveLength(1)
+    t = t0 + 40 * H // due, but not re-read before the next check (nor shown as queued)
+    await sleep(40)
+    expect(calls).toHaveLength(1)
+    expect(await row()).toMatchObject({ state: 'idle', nextRefreshAt: t0 + 48 * H })
+    t = t0 + 48 * H
+    await until(() => calls.length === 2)
+    svc.stop()
+  })
+
+  it('turning a source on adds it now; turning it off stops its crawl until it is turned back on', async () => {
+    const calls: string[] = []
+    const base = defaultSettings('/tmp/ghost-dl')
+    let settings: Settings = { ...base, sources: { ...base.sources, disabled: ['extra', 'slow'] } }
+    const listeners = new Set<() => void>()
+    const setDisabled = (disabled: string[]) => {
+      settings = { ...settings, sources: { ...settings.sources, disabled } }
+      for (const fn of listeners) fn()
+    }
+    // 'slow' pauses a minute between its two pages: it gets turned off in that pause
+    const slow = Object.assign(fakeIndex('slow', [['Ys OST'], ['Ys II OST']], calls), { indexPageDelayMs: 60_000 })
+    const svc = createCatalogService(
+      {
+        db: memoryDb(),
+        broadcast: (() => {}) as never,
+        getSettings: () => settings,
+        onSettingsChanged: (fn) => {
+          listeners.add(fn)
+          return () => listeners.delete(fn)
+        }
+      },
+      {
+        registry: new ProviderRegistry().register(fakeIndex('khinsider', [['Chrono Trigger OST']], calls)).register(fakeIndex('extra', [['Mother 3 (Gamerip)']], calls)).register(slow),
+        startDelayMs: 0,
+        disableEnrichment: true,
+        disableLocalScan: true,
+        chip: false,
+        log: () => {}
+      }
+    )
+    const row = async (id: string) => (await svc.status()).sources!.find((x) => x.id === id)!
+    svc.start()
+    await until(() => calls.includes('khinsider:1'))
+    await until(async () => (await row('khinsider')).state === 'idle')
+    setDisabled(['slow'])
+    await until(() => calls.includes('extra:1'))
+    await until(async () => (await row('extra')).state === 'idle')
+    setDisabled([])
+    await until(() => calls.includes('slow:1'))
+    setDisabled(['slow'])
+    await until(async () => (await row('slow')).state === 'off' && !(await svc.status()).indexing)
+    expect(calls).not.toContain('slow:2')
+    setDisabled([]) // resumes where it stopped
+    await until(() => calls.includes('slow:2'))
+    expect(calls.filter((c) => c === 'slow:1')).toHaveLength(1)
+    svc.stop()
+  })
+})
+
 describe('albums a source lists without files', () => {
   it('opening one hides it and says why instead of playing nothing', async () => {
     const settings: Settings = defaultSettings('/tmp/ghost-dl')

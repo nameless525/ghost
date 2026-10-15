@@ -270,6 +270,9 @@ Two tiers, so the app is useful on day one and gets richer over time:
    - Zophar's Domain and the IA collections then crawl together. They are different hosts, each paced politely on its own.
    - Modland follows them, because it keeps some albums only for games the others know.
    - The chiptune rip index runs last. Each source has its own refresh period, and disabled sources aren't crawled.
+   - Sources are checked for a due refresh at launch and every 24 hours while the app stays open. The check follows the wall clock (read every 15 min), because timers stall while the Mac sleeps.
+     - A source that comes due between checks waits for the next one. One queued behind a running crawl starts when that crawl ends.
+     - Turning a source on in Settings starts its crawl at once. Turning one off stops its crawl, which resumes where it stopped when the source is turned back on.
    - First-time setup is explicit. A notice names the sources being added and says it only happens once, and the Browse status line ("One-time setup · … · ~3 min left") opens per-source progress. Afterwards, refreshes are quiet.
    - Albums cluster into games by normalized title (§6.4), so a second source's copy joins the game the first created.
    - Track lists and file URLs are fetched lazily (album page first, track page at play time) and cached.

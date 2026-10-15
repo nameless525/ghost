@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 (2026-10-14)
+
+### Catalog refreshes while GHOST stays open
+- Sources are checked for a due refresh every 24 hours while GHOST is open, as well as at launch. The check follows the clock on the wall, so a Mac that sleeps overnight doesn't push it back.
+- Turning a source on in Settings starts adding it straight away instead of at the next launch. Turning one off stops its indexing, which picks up where it left off when you turn it back on.
+- Catalog activity no longer shows a due source as "Up next" while nothing is running. It says "Refresh due · starts in about 5 h" (the next check), and "next in N days" counts to the check that will actually refresh it.
+
 ## 0.3.2 (2026-10-14)
 
 ### Search online, where you search
