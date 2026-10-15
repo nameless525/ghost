@@ -12,8 +12,13 @@ permissions:
   contents: read
 
 jobs:
+  tests:
+    name: Tests
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build (${{ matrix.name }})
+    needs: tests
     strategy:
       fail-fast: false
       matrix:

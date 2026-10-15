@@ -1,3 +1,11 @@
+# Text files use LF everywhere (also in a Windows checkout), so fixtures, snapshots and the
+# native build's source patches read the same on every OS.
+* text=auto eol=lf
+
 # Vendored C/C++ libraries stay byte-for-byte as released (the native build patches some
 # of them by exact text), so Git never converts their line endings.
 native/vendor/** -text
+
+# Saved pages and API responses the source parsers are tested against: kept exactly as the sites
+# sent them.
+src/main/providers/__fixtures__/** -text
