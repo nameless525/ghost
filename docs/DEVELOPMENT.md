@@ -34,7 +34,11 @@ npm run dist
 
 This builds the engine and the app, then writes an installer for the current OS to `release/<version>/`: a `.dmg` on macOS, an `.exe` installer on Windows, and an `.AppImage` plus a `.deb` on Linux. `npm run dist:dir` writes an unpacked app instead, which is quicker to try.
 
-Builds aren't code-signed. Pushing a tag such as `v0.3.3` makes the [release workflow](../.github/workflows/release.yml) build all three platforms and attach them to a GitHub release.
+Builds aren't code-signed. Pushing a tag such as `v0.3.3` starts the [release workflow](../.github/workflows/release.yml):
+
+1. It runs every test (app and engine) on macOS, Windows and Linux.
+2. Only if they all pass, it builds the installers on each platform and opens each freshly built app with the launch check below.
+3. Only if all three launch, it publishes a GitHub release with the installers and the notes from [CHANGELOG.md](../CHANGELOG.md).
 
 ## Everyday commands
 
@@ -78,6 +82,14 @@ node scripts/cdp.mjs shot screen.png
 ```
 
 `cdp.mjs` can also `eval` JavaScript in the window, press keys, type, click and scroll; see the top of the file. The performance tools in `scripts/perf/` work the same way and are described in [perf/README.md](perf/README.md). The smoke tests in `scripts/smoke/` exercise the real stack (catalog, sources, player, engine) without a window; each file's header says how to run it.
+
+`scripts/smoke/launch.mjs` checks a packaged build: it opens the app with a throwaway profile (every catalog source off, so nothing is crawled) and makes sure the window, the catalog worker and the audio engine come up. For example, after `npm run dist:dir` on a Mac:
+
+```bash
+node scripts/smoke/launch.mjs release/0.3.3/mac-arm64/GHOST.app/Contents/MacOS/GHOST
+```
+
+`GHOST_NET_TESTS=1 npm test` also downloads the real yt-dlp release for your OS, checks it against the published checksums and runs it. CI does this on every platform.
 
 ## Conventions
 

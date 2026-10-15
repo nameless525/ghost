@@ -59,6 +59,9 @@ function setup(opts: { db?: ReturnType<typeof memoryDb>; files?: Set<string>; th
   return { engine, catalog, bc, db, settings, files, lib, dm, shell, dirs, settle, items, byTrack, downloadCall }
 }
 
+/** A path under the test download folder, with this OS's separator (as the manager builds them). */
+const dl = (rel: string) => '/dl' + (process.platform === 'win32' ? '\\' + rel.replaceAll('/', '\\') : '/' + rel)
+
 const statuses = (xs: DownloadItem[]) => Object.fromEntries(xs.map((d) => [d.trackId, d.status]))
 
 describe('DownloadManager', () => {
@@ -69,10 +72,10 @@ describe('DownloadManager', () => {
     expect(t.engine.callsOf('download')).toHaveLength(3)
     expect(statuses(await t.items())).toEqual({ t1: 'downloading', t2: 'downloading', t3: 'downloading', t4: 'queued', t5: 'queued' })
     const first = t.downloadCall(0)
-    expect(first.dest).toBe('/dl/Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1.mp3')
+    expect(first.dest).toBe(dl('Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1.mp3'))
     expect(first.source).toEqual(httpSource('t1', 'a').source)
     expect(first.tags).toMatchObject({ title: 'Song 1', album: 'Chrono Trigger OSV', albumArtist: 'Chrono Trigger', genre: 'Video Game', comment: 'GHOST', trackNumber: 1, trackTotal: 6, year: 1995 })
-    expect(t.dirs).toContain('/dl/Chrono Trigger/Chrono Trigger OSV (1995)')
+    expect(t.dirs).toContain(dl('Chrono Trigger/Chrono Trigger OSV (1995)'))
     expect(t.catalog.resolveCalls[0].opts).toMatchObject({ quality: 'lossless' })
     // list order: newest batch first, tracks in enqueue order within it
     expect((await t.items()).map((d) => d.trackId)).toEqual(['t1', 't2', 't3', 't4', 't5'])
@@ -178,21 +181,21 @@ describe('DownloadManager', () => {
   })
 
   it('avoids path collisions with files on disk and with other downloads in flight', async () => {
-    const t = setup({ files: new Set(['/dl/Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1.mp3']) })
+    const t = setup({ files: new Set([dl('Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1.mp3')]) })
     t.catalog.addTracks(makeTrack('dupe', { number: 1, title: 'Song 1', gameName: 'Chrono Trigger', albumTitle: 'Chrono Trigger OSV' }))
     t.catalog.addTracks(makeTrack('dupe2', { number: 1, title: 'SONG 1', gameName: 'Chrono Trigger', albumTitle: 'Chrono Trigger OSV' }))
     await t.dm.enqueue({ trackIds: ['t1', 'dupe'] })
     await t.settle()
     expect([0, 1].map((i) => t.downloadCall(i).dest)).toEqual([
-      '/dl/Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1 (2).mp3',
-      '/dl/Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1 (3).mp3'
+      dl('Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1 (2).mp3'),
+      dl('Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1 (3).mp3')
     ])
     // In-flight reservations compare case-insensitively (APFS/NTFS are case-insensitive by default).
     const u = setup()
     u.catalog.addTracks(makeTrack('dupe2', { number: 1, title: 'SONG 1', gameName: 'Chrono Trigger', albumTitle: 'Chrono Trigger OSV' }))
     await u.dm.enqueue({ trackIds: ['t1', 'dupe2'] })
     await u.settle()
-    expect(u.downloadCall(1).dest).toBe('/dl/Chrono Trigger/Chrono Trigger OSV (1995)/1-01 SONG 1 (2).mp3')
+    expect(u.downloadCall(1).dest).toBe(dl('Chrono Trigger/Chrono Trigger OSV (1995)/1-01 SONG 1 (2).mp3'))
   })
 
   it('enqueues albums and playlists as a batch with one aggregated notification', async () => {

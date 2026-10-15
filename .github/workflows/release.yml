@@ -26,13 +26,17 @@ jobs:
           - name: macOS
             os: macos-latest
             target: --mac
+            app: mac-arm64/GHOST.app/Contents/MacOS/GHOST
           - name: Windows
             os: windows-latest
             target: --win
+            app: win-unpacked/GHOST.exe
           # The oldest supported Ubuntu, so the AppImage runs on older distributions too.
           - name: Linux
             os: ubuntu-22.04
             target: --linux
+            app: linux-unpacked/ghost
+            display: xvfb-run -a
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -43,14 +47,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: native
-      - name: Install ALSA headers
+          workspaces: native -> target/bindings
+      - name: Install ALSA headers (and a virtual display for the launch check)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev xvfb
       - run: npm ci
       - run: npm run build:native
       - run: npx electron-vite build
       - run: npx electron-builder ${{ matrix.target }} --publish never
+      # Open the app that was just built: its window, catalog and audio engine must come up.
+      - name: Launch check
+        shell: bash
+        run: ${{ matrix.display }} node scripts/smoke/launch.mjs release/*/${{ matrix.app }}
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.name }}

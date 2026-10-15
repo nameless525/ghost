@@ -13,9 +13,9 @@ const alive = (pid: number) => {
   }
 }
 
-describe.skipIf(!unix)('child process registry', () => {
+describe('child process registry', () => {
   it('tracks and ends children of this thread', async () => {
-    const c = spawn('sleep', ['30'])
+    const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'])
     const exited = new Promise((r) => c.once('exit', r))
     trackChild(c.pid)
     expect(trackedChildren()).toContain(c.pid)
@@ -31,7 +31,7 @@ describe.skipIf(!unix)('child process registry', () => {
     const w = new Worker(
       `const { spawn } = require('node:child_process')
        const { BroadcastChannel, parentPort } = require('node:worker_threads')
-       const c = spawn('sleep', ['30'])
+       const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'])
        const bc = new BroadcastChannel('ghost:child-processes')
        bc.postMessage({ t: 'add', pid: c.pid })
        c.once('exit', (code, signal) => { parentPort.postMessage({ exited: c.pid, signal }); bc.close() })
@@ -48,7 +48,8 @@ describe.skipIf(!unix)('child process registry', () => {
     const exited = next()
     killTrackedChildren()
     await exited
-    expect(msgs[1]).toEqual({ exited: pid, signal: 'SIGTERM' })
+    // Windows has no signals: the child is just terminated.
+    expect(msgs[1]).toEqual({ exited: pid, signal: unix ? 'SIGTERM' : null })
     await w.terminate()
   })
 })

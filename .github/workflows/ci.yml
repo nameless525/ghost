@@ -12,7 +12,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Per calling workflow too, so a release's test run and a push's never cancel each other.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,9 +30,21 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # The engine addon too, so the tests that load it (cover art) run instead of skipping.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target/bindings
+      - name: Install ALSA headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run build:native -- --debug
+      # GHOST_NET_TESTS: also download, verify and run the real yt-dlp release for this OS.
       - run: npm test
+        env:
+          GHOST_NET_TESTS: '1'
 
   engine:
     name: Engine (${{ matrix.os }})

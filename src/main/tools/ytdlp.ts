@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto'
 import { constants as FS, existsSync } from 'node:fs'
 import { access, chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
 import { NetError } from '../net/errors'
 import { GHOST_USER_AGENT } from '../net/http'
 import { HostLimiter, type Priority } from '../net/limiter'
@@ -75,7 +75,7 @@ export function versionDate(v: string | null | undefined): number | null {
 
 /** Directories to look in for system binaries: PATH plus the usual places Finder-launched apps miss. */
 export function searchDirs(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
-  const dirs = (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : delimiter).filter(Boolean)
+  const dirs = (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean)
   if (platform !== 'win32') dirs.push('/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), '/usr/bin')
   return [...new Set(dirs)]
 }
@@ -399,7 +399,7 @@ export class YtDlp {
 
   private exec(file: string, args: string[], opts: RunOptions, extraEnv: Record<string, string>): Promise<RunResult> {
     const dirs = searchDirs(process.env, this.platform)
-    const env = { ...process.env, PATH: dirs.join(this.platform === 'win32' ? ';' : delimiter), PYTHONIOENCODING: 'utf-8', ...extraEnv }
+    const env = { ...process.env, PATH: dirs.join(this.platform === 'win32' ? ';' : ':'), PYTHONIOENCODING: 'utf-8', ...extraEnv }
     return new Promise((resolve, reject) => {
       const child = execFile(
         file,
