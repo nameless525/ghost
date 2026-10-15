@@ -27,6 +27,7 @@ import type { EngineBridge, EngineEvent, EnginePlaybackState, EngineSource, Engi
 import { sliderToDb } from '../engine/types'
 import type { Broadcast } from '../ipc'
 import { ACCESS_DENIED } from '../net/errors'
+import type { ResolveStep, ToolProgress } from '../catalog/progress'
 import type { SessionData, SessionStore } from './session'
 import { fisherYates, smartShuffle, type Rng } from './shuffle'
 
@@ -1625,6 +1626,15 @@ export class Player implements PlayerAPI {
     this.mutations++
     void this.loadIndex(index, true, 0)
   }
+
+  // ---------------------------------------------------------------------------
+  // Progress from the catalog (see catalog/progress.ts)
+
+  /** The catalog went to the network to resolve a track (services.ts forwards these from the worker). */
+  onResolveStep(_step: ResolveStep): void {}
+
+  /** A tool the catalog needs (yt-dlp) is being installed. */
+  onToolProgress(_p: ToolProgress): void {}
 
   // ---------------------------------------------------------------------------
   // Previews

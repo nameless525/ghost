@@ -31,6 +31,7 @@ import type {
   Settings,
   ShuffleMode,
   SourceStat,
+  TaskProgress,
   TrackView
 } from './types'
 
@@ -152,6 +153,8 @@ export interface GhostEvents {
   /** The audio output devices changed (plugged / unplugged / new system default). */
   'player:devices': AudioDevice[]
   notify: GhostNotification
+  /** A long task's progress (opening a chiptune set, an import, a folder scan…); see TaskProgress.key. */
+  progress: TaskProgress
 }
 export type GhostEventName = keyof GhostEvents
 

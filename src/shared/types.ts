@@ -226,6 +226,41 @@ export interface SourceStat {
 }
 
 // ---------------------------------------------------------------------------
+// Progress
+
+/**
+ * How far along a wait is, for progress bars (ui/ProgressBar). A step is either measured
+ * (`fraction`), estimated (`expectMs`: the bar eases toward the end over about that long and never
+ * reaches it until the step ends) or unknown (both null: an indeterminate sweep).
+ */
+export interface Progress {
+  /** What is happening, e.g. "Getting the stream from YouTube", "Buffering". */
+  label: string
+  /** Secondary text, e.g. "1.2 of 4.5 MB", "3 of 4 sources". */
+  detail?: string | null
+  /** 0..1 within this step when measured, else null. */
+  fraction: number | null
+  /** Typical length of this step in ms when it can't be measured, else null. */
+  expectMs: number | null
+  /** Epoch ms (Date.now() domain) at which this step began. */
+  since: number
+  /** Where this step sits in the whole wait, as [from, to] within 0..1 (default [0, 1]), so bars stay monotonic across steps. */
+  span?: [number, number]
+}
+
+/** A long task's progress, pushed as the 'progress' event. Bars find theirs by `key`. */
+export interface TaskProgress extends Progress {
+  /**
+   * What it belongs to: `album:<albumId>` (fetching an album's track list or chiptune set),
+   * `import:<provider>:<ref>` (importing an external result), `scan` (adding local folders),
+   * `tool:yt-dlp` (the one-time yt-dlp download).
+   */
+  key: string
+  /** The task finished (or failed): bars complete and go. */
+  done?: boolean
+}
+
+// ---------------------------------------------------------------------------
 // Player
 
 export type PlayStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'buffering' | 'error'
@@ -266,6 +301,13 @@ export interface PlayerState {
   queueIndex: number
   context: PlayContext | null
   preview: { track: TrackView; startedAt: number } | null
+  /**
+   * While the current track loads or buffers (status 'loading' / 'buffering'): what it waits on.
+   * null otherwise. Optional for older mocks.
+   */
+  loading?: Progress | null
+  /** A preview being fetched (before `preview` is set): its track and progress. */
+  previewLoading?: (Progress & { trackId: ID }) | null
   error: string | null
   /**
    * Mutable sound-chip voices of the current source (chiptune rips: "Square 1", "Triangle", "Noise",
