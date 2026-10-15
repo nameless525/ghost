@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.3.0 (2026-10-14)
+
+### Fixed
+- **YouTube imports no longer stop with "8 tracks in a row couldn't be played (HTTP 403)".** Two causes:
+  - YouTube links break after a while: they expire, are tied to your network address, and refuse requests past the first ~2 MB.
+  - A refreshed link was handed back stale, and the player gave up on it.
+
+  Now a refused link is fetched fresh and retried at the same spot, and so are its sibling tracks (chapters of the same video). The engine also requests YouTube in bounded chunks: open-ended requests were throttled to real time.
+- **Albums a source lists but has no files for** (a few Zophar sets) disappear when opened, with a message, instead of silently playing nothing.
+- **Track counts and lengths:** unknown values show "–", and partial sums show "+", instead of "0 tracks · 0:00".
+
+### Indexing: faster, and explicit
+- **Faster:** Zophar's Domain and the Internet Archive collections are indexed at the same time after KHInsider, and Modland after them. First-time setup of the new sources is about a third faster.
+- **Explicit:**
+  - A notice says which sources are being added, roughly how long it takes, and that it only happens once.
+  - The Browse status line shows "One-time setup · Zophar's Domain · 42% · ~3 min left" and opens a per-source panel with progress and when each source next refreshes. Later refreshes are quiet.
+  - Settings → Sources shows the same live state per source.
+
+### Faster everywhere (full code review and performance pass; numbers in docs/perf/README.md)
+- **Startup:** the first screen appears in about 40 ms instead of about 340 ms. React was holding every first screen and overlay back by 300 ms. The renderer bundle is less than half its old size.
+- **Playback starts sooner:**
+  - Uncached KHInsider: about 0.4 s, and less when you rest on a track first (its link is fetched ahead).
+  - Zophar: under 1 s instead of about 6 s.
+  - YouTube: late chapters start in a third of a second instead of nearly four.
+  - Seeks are about twice as fast.
+- **Search:** typical queries take 1–3 ms, 2–5× faster. Page parsing is 2–4× faster, and weekly catalog refreshes do about a tenth of the work.
+- **Idle:** about 0% CPU and GPU when the window is unfocused and nothing is playing, and about half when focused. The main process and audio engine wake far less often. Memory stays flat over long sessions.
+- **Audio engine:** about 15–40% less CPU while playing. Analysis memory is down from up to 2 GB to under 100 MB. Output is bit-identical.
+
+### Robustness
+- **Navigation lock:** the window can no longer be navigated away from the app, for example by dropping a file on it. Only web and mail links open externally.
+- **Engine crashes:** a crash in an audio thread or a malformed chip-music file no longer takes the app down. Fuzzing found and fixed 12 memory-safety bugs in the emulators.
+- **Quitting:** yt-dlp downloads are stopped when you quit, and the database is closed cleanly.
+- **Interface fixes:** about 40, including:
+  - ⌘←/→ in text fields skipping tracks.
+  - Sliders hijacking the scroll wheel.
+  - Toasts covering the notification centre.
+  - "Add to playlist" being empty on first use.
+  - Focus-trap fights between dialogs.
+- **Other:** downloads retry a refreshed link on 403. The output-device list updates live. Unhandled errors show a message instead of failing silently.
+
 ## 0.2.0 (2026-10-14)
 
 ### New sources

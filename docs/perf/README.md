@@ -9,7 +9,19 @@
 | `node scripts/perf-scenario.mjs <scenario>` | scripted Browse scenarios + both stats (app must run with `--remoteDebuggingPort 9223`) |
 | `node scripts/cpuprofile-main.mjs <secs> <out>` / `--summary <out>` | CPU profile of the main process (`--inspect 9229`) or renderer (`CPU_PORT=9223`) |
 | `node scripts/trace.mjs <secs> <out>` / `--summary <out>` | Chrome trace (style/layout/paint/raster/GPU) |
-| `GHOST_PERF_LOG=1` | log main stalls live |
+| `GHOST_PERF_LOG=1` | log main stalls live (otherwise the detectors only run while a window is focused, or for 10 min after `__perf()`) |
+| `GHOST_PERF_IPC=1` | count IPC bytes per channel (`window.ghost.__perf().ipc`) |
+| `node scripts/startup.mjs [runs] [--screen browse]` | renderer startup milestones (first screen, canvas, settled) over N reloads |
+| `node scripts/nav.mjs` | screen / overlay open latency |
+| `node scripts/cpu.mjs [secs] [--focus\|--blur] [--settle s]` | CPU per Electron process + renderer main-thread breakdown (idle checks) |
+| `node scripts/soak.mjs` / `detached.mjs` | long-session heap growth / who keeps detached DOM alive |
+| `node scripts/render-count.mjs` | React renders per action (dev build) |
+| `node scripts/bundle-report.mjs` | renderer bundle size by source |
+| `node scripts/play-latency.mjs <albumId> [index]` | click → sound milestones (request → resolved → engine-set → playing) |
+| `node scripts/catalog-rpc-bench.mjs` / `npx tsx scripts/catalog-bench.ts <db copy>` | catalog queries through the app / offline on a DB copy |
+| `cd native && cargo run --release -p ghost-engine --example bench` | engine time-to-first-audio, seek, decode hashes against a simulated (throttled) server; also `idle`, `devbench`, `cachebench`, ghost-art `art_bench` |
+
+All scripts take `CDP_PORT` (default 9223).
 
 Launch for profiling (isolated profile):
 `GHOST_USER_DATA=/tmp/ghost-perf npx electron-vite dev --remoteDebuggingPort 9223 --inspect 9229`
@@ -48,3 +60,48 @@ On macOS the Electron main thread also delivers native window input, so main-thr
 | Audio under 24.6 load average | not measured | 0 underruns, worst callback 101 µs of 21.3 ms |
 
 What changed: catalog moved to a `worker_threads` worker (RPC for `net.fetch`, `inspectArchive`, broadcasts), incremental counts and chunked work; image decode/resize/accent in a Rust thread pool with size-bucketed art; stepped accent variables, compositor-only glows and pulses, `display:none` closed overlays, 1× background / ≤1.5× visualizer canvases, off-thread texture decode; structural-sharing player store and queue-revision IPC; live backdrop blur only where sharp art sits behind (Play); App Nap blocked while playing; GHOST caches moved out of Chromium's `Cache/`.
+
+## Second pass (0.3.0, 2026-10-14): code review + every layer
+
+Same machine and profile (93k games / 135k albums), production build unless noted.
+
+| Area | Before | After |
+|---|---|---|
+| Renderer: first screen after launch | 338–347 ms (React.lazy's 300 ms fallback throttle) | 34–44 ms (median 40) |
+| Renderer: first Title → Browse / first overlay open | ~345 / ~300 ms | ~45 / 2–19 ms |
+| Renderer: startup JS / total JS / fonts | 1355 KB / 2879 KB / 10.6 MB | 504 KB / 1236 KB / 4.9 MB |
+| Idle, unfocused (renderer / GPU) | 2.2 % / 2.4 % | 0.2 % / 0 % (drawing paused after 10 s) |
+| Idle, focused at 30 fps (renderer / GPU) | 3.3–4.6 % / 3.8–6.1 % | 1.2 % / 2 % |
+| Browse key steps / hold / search | p99 18.6 ms, rare 33 ms frames | p99 18.6 ms, 0 frames > 25 ms; main loop p99 12.5 ms |
+| Long-session renderer heap (200-step soak) | 11.9 → 39.8 MB, growing | 11.8 → 18.2 MB, flat |
+| Main, backgrounded & paused | ~800 context switches/s, ~1.1 % CPU | ~170/s, ~0.3 % |
+| Playback IPC | 10.5 KB/s | ~1.7 KB/s |
+| Search (worker, p50) | "final fantasy" 5.0 ms, platform filter after a change 62–128 ms | 2.1 ms, 9–18 ms |
+| KHInsider listing parse / weekly refresh writes | 30.5 ms per page / ~6 s | 8.2 ms / < 1 s |
+| Click → sound, uncached KHInsider MP3 | ~0.9–1.3 s | 0.43 s (≈0.27 s when its URL was warmed by resting on it; the track-page fetch is ~0.16 s) |
+| Click → sound, uncached Zophar MP3 | ~5.9 s (often "stalled") | 0.87–0.98 s |
+| Click → sound, preloaded next / cached | — | 22–28 ms |
+| YouTube chapter at 19 min (fragmented MP4 seek) | 3.7 s | 0.35 s |
+| Engine CPU playing MP3 / idle | 16.96 / 1.57 ms per s | 10.14 / 0.77 ms per s |
+| Analysis memory, 6-min MP3 / 60-min track | +200 MB / 2.15 GB | +22 MB / 87 MB |
+
+What changed, briefly:
+- **Renderer:** `shell/lazyModule.ts` instead of React.lazy; Pixi driven from our ticker; the
+  ticker sleeps on a timer below display rate and pauses when unfocused and silent; LRU-bounded
+  Browse caches; minified renderer.
+- **Main:** stall detectors and the player heartbeat only run when needed; volume/seek echoes
+  coalesced; queue resends skipped; HTML cache writes off the request path; a V8 compile cache
+  for the worker.
+- **Catalog:**
+  - htmlparser2 with direct tree walks.
+  - Unchanged rows are skipped on refresh.
+  - `platform_names` table; trigger-kept per-source counts; paced FTS merges.
+  - Bounded statement cache.
+  - Pre-resolving stream URLs (album rest, track rest, next queued).
+- **Engine:**
+  - Bounded HTTP ranges over pooled connections.
+  - Partial-chunk reads; no trailing-tag probe before first audio.
+  - sidx-based fragmented-MP4 seeks.
+  - Streaming offline analysis.
+  - Division-free limiter.
+  - Device-change listener instead of polling.

@@ -262,8 +262,11 @@ Two tiers, so the app is useful on day one and gets richer over time:
 
 1. **Playable index (fast, full).**
    - Every index source (KHInsider, Zophar's Domain, Modland, the IA collections) has its own crawl, resumable page by page.
-   - KHInsider runs first and builds the catalog. The others follow one at a time, at a polite rate, each on its own refresh period.
-   - The chiptune rip index runs last. Disabled sources aren't crawled.
+   - KHInsider runs first, alone, and builds the catalog.
+   - Zophar's Domain and the IA collections then crawl together. They are different hosts, each paced politely on its own.
+   - Modland follows them, because it keeps some albums only for games the others know.
+   - The chiptune rip index runs last. Each source has its own refresh period, and disabled sources aren't crawled.
+   - First-time setup is explicit. A notice names the sources being added and says it only happens once, and the Browse status line ("One-time setup · … · ~3 min left") opens per-source progress. Afterwards, refreshes are quiet.
    - Albums cluster into games by normalized title (§6.4), so a second source's copy joins the game the first created.
    - Track lists and file URLs are fetched lazily (album page first, track page at play time) and cached.
 2. **Enrichment.**
