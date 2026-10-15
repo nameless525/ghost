@@ -98,7 +98,8 @@ export type EngineEvent =
       error?: string
     }
   | { type: 'devices'; devices: { id: string; name: string; isDefault: boolean }[] }
-  | { type: 'previewEnded' }
+  /** `id`: the engine id of the preview that ended. */
+  | { type: 'previewEnded'; id?: string }
 
 export interface EnginePosition {
   id: string | null

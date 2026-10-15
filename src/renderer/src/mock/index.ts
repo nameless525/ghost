@@ -721,6 +721,7 @@ export function installMockGhost(): void {
       preview: async (id) => {
         player.preview = { track: strip(tracks.find((t) => t.id === id)!), startedAt: now() }
         pushState()
+        return true
       },
       stopPreview: async () => {
         player.preview = null

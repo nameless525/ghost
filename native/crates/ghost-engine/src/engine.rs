@@ -466,8 +466,8 @@ impl Controller {
             }
             self.next = Some(nx);
         }
-        if self.preview.take().is_some() {
-            self.emit(EngineEvent::PreviewEnded);
+        if let Some(p) = self.preview.take() {
+            self.emit(EngineEvent::PreviewEnded { id: p.load.id });
         }
         self.send_transition();
     }
@@ -938,7 +938,7 @@ impl Controller {
             self.send(MixerCmd::Preview(v));
             self.preview = Some(t);
         } else {
-            self.emit(EngineEvent::PreviewEnded);
+            self.emit(EngineEvent::PreviewEnded { id: t.load.id });
         }
     }
 
@@ -1021,9 +1021,8 @@ impl Controller {
             }
             MixerEvent::PreviewStarted(_) => {}
             MixerEvent::PreviewEnded(key) => {
-                if self.preview.as_ref().is_some_and(|p| p.key == key) {
-                    self.preview = None;
-                    self.emit(EngineEvent::PreviewEnded);
+                if let Some(p) = self.preview.take_if(|p| p.key == key) {
+                    self.emit(EngineEvent::PreviewEnded { id: p.load.id });
                 }
             }
             MixerEvent::Paused => {}

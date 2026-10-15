@@ -984,6 +984,131 @@ describe('volume, loop mode, previews, devices', () => {
     expect(t.st().preview?.track.id).toBe('t2')
   })
 
+  it('resuming the queue ends a preview: never two songs at once', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    t.started()
+    await t.player.pause()
+    await t.player.preview('t4')
+    await t.settle()
+    expect(t.st().preview?.track.id).toBe('t4')
+    expect(t.engine.callsOf('pause')).toHaveLength(1) // only the user's pause: the queue was already paused
+    await t.player.toggle()
+    expect(t.engine.callsOf('stopPreview')).toHaveLength(1)
+    expect(t.engine.previewing).toBeNull()
+    expect(t.st().preview).toBeNull()
+    expect(t.st().status).toBe('playing')
+    // The preview's fade-out ending afterwards changes nothing.
+    t.engine.emit({ type: 'previewEnded', id: (t.engine.lastCall('preview') as [EngineTrack])[0].id })
+    expect(t.st().status).toBe('playing')
+    expect(t.engine.callsOf('pause')).toHaveLength(1)
+  })
+
+  it('a preview pauses an audible queue and resumes it when it ends', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    t.started()
+    await t.player.preview('t4')
+    await t.settle()
+    expect(t.engine.callsOf('pause')).toHaveLength(1)
+    expect(t.st().status).toBe('paused')
+    expect(t.st().preview?.track.id).toBe('t4')
+    // Natural end (the 30 s limit): the queue picks up where it was.
+    t.engine.emit({ type: 'previewEnded', id: t.engine.previewing!.track.id })
+    await t.settle()
+    expect(t.st().preview).toBeNull()
+    expect(t.st().status).toBe('playing')
+    expect(t.engine.callsOf('play')).toHaveLength(1)
+    // Stopped by hand (P again, moving away): same.
+    await t.player.preview('t5')
+    await t.settle()
+    expect(t.st().status).toBe('paused')
+    await t.player.stopPreview()
+    await t.settle()
+    expect(t.st().status).toBe('playing')
+    expect(t.engine.callsOf('play')).toHaveLength(2)
+  })
+
+  it('pausing during a preview keeps the queue paused after it; skipping plays the next track', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2', 't3'])
+    await t.settle()
+    t.started()
+    await t.player.preview('t4')
+    await t.settle()
+    await t.player.pause()
+    t.engine.emit({ type: 'previewEnded', id: t.engine.previewing!.track.id })
+    await t.settle()
+    expect(t.st().status).toBe('paused')
+    expect(t.engine.callsOf('play')).toHaveLength(0)
+
+    await t.player.play()
+    t.started()
+    await t.player.preview('t5')
+    await t.settle()
+    expect(t.st().status).toBe('paused')
+    await t.player.next() // the queue was only paused for the preview: the skip plays
+    await t.settle()
+    expect(t.engine.previewing).toBeNull()
+    expect(t.st().preview).toBeNull()
+    const [track, , autoplay] = t.engine.lastCall('setCurrent') as [EngineTrack, number, boolean]
+    expect(track.id).toBe(t.uidAt(1))
+    expect(autoplay).toBe(true)
+  })
+
+  it('a queue still loading (to play) waits for the preview to end', async () => {
+    const t = setup()
+    await t.player.preview('t4')
+    await t.settle()
+    let open!: () => void
+    t.catalog.gate = new Promise((r) => (open = r))
+    await t.player.playTracks(['t1'])
+    // Playing the queue ended the preview.
+    expect(t.engine.previewing).toBeNull()
+    expect(t.st().preview).toBeNull()
+    // A preview requested while it still resolves holds it back.
+    t.catalog.gate = null
+    await t.player.preview('t5')
+    await flush()
+    open()
+    await t.settle()
+    expect(t.st().preview?.track.id).toBe('t5')
+    expect(t.engine.lastCall('setCurrent')?.[2]).toBe(false)
+    expect(t.st().status).toBe('paused')
+    await t.player.stopPreview()
+    await t.settle()
+    expect(t.st().status).toBe('playing')
+  })
+
+  it('ignores the end of a preview a newer one already replaced', async () => {
+    const t = setup()
+    await t.player.preview('t2')
+    await t.settle()
+    const first = t.engine.previewing!.track.id
+    await t.player.preview('t3')
+    await t.settle()
+    t.engine.emit({ type: 'previewEnded', id: first })
+    expect(t.st().preview?.track.id).toBe('t3')
+  })
+
+  it('a preview with nothing playable silences the one it replaced', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1'])
+    await t.settle()
+    t.started()
+    await t.player.preview('t2')
+    await t.settle()
+    expect(t.st().status).toBe('paused')
+    t.catalog.sources.set('t3', [])
+    expect(await t.player.preview('t3')).toBe(false)
+    await t.settle()
+    expect(t.engine.previewing).toBeNull()
+    expect(t.st().preview).toBeNull()
+    expect(t.st().status).toBe('playing')
+  })
+
   it('passes the overlay filter through and lists devices', async () => {
     const t = setup()
     await t.player.setOverlayFilter(true)

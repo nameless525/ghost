@@ -23,6 +23,7 @@ import {
   likeSelection,
   playSelection,
   previewAlbumId,
+  previewEnded,
   previewState,
   queueSelection,
   startPreview,
@@ -365,9 +366,10 @@ export default function BrowseScreen(props: BrowseScreenProps) {
         void startPreview(sel)
       }, 400)
     })
-    // real playback starting (from anywhere) ends an automatic preview
+    // The player itself ends a preview when the queue starts playing (from anywhere: the now-playing
+    // bar, media keys…) or at its time limit; keep our bookkeeping in step.
     const offPlayer = usePlayer.subscribe((s, p) => {
-      if (s.status === 'playing' && p.status !== 'playing' && s.current?.id !== p.current?.id) stopPreview()
+      if (p.preview && !s.preview) previewEnded(p.preview.track.id)
     })
     return () => {
       window.clearTimeout(t)

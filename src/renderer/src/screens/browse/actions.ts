@@ -65,6 +65,11 @@ export function stopPreview(): void {
     .catch(() => {})
 }
 
+/** The player ended a preview on its own (the queue started playing, the time limit, an error). */
+export function previewEnded(trackId: ID): void {
+  if (previewing?.trackId === trackId) previewing = null
+}
+
 /** Album the selection would preview (so moving within an album doesn't cut the music). */
 export function previewAlbumId(sel: SelInfo | null): ID | null {
   if (!sel) return null
@@ -82,17 +87,19 @@ export async function startPreview(sel: SelInfo): Promise<boolean> {
   if (seq !== previewSeq || !d || !d.tracks.length) return false
   const t = sel.track ?? d.tracks[signatureIndex(d.tracks)]
   if (previewing?.trackId === t.id) return true
-  previewing = { trackId: t.id, albumId: d.album.id }
+  const mine = { trackId: t.id, albumId: d.album.id }
+  previewing = mine
+  let ok = false
   try {
-    await ghost().player.preview(t.id)
-    return true
+    ok = (await ghost().player.preview(t.id)) !== false
   } catch {
-    previewing = null
-    return false
+    ok = false
   }
+  if (!ok && previewing === mine) previewing = null
+  return ok
 }
 
-/** Auto-preview allowed? (setting on, and nothing is actually playing). */
+/** Auto-preview allowed? (setting on, and nothing is actually playing: the player would pause it). */
 export function canAutoPreview(): boolean {
   if (!useSettings.getState().audio.previewOnSelect) return false
   const st = usePlayer.getState().status

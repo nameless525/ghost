@@ -335,7 +335,7 @@ fn describe(ev: &EngineEvent) -> String {
             error.as_deref().unwrap_or("")
         ),
         EngineEvent::Devices(d) => format!("devices {}", d.len()),
-        EngineEvent::PreviewEnded => "preview-ended".into(),
+        EngineEvent::PreviewEnded { id } => format!("preview-ended {id}"),
     }
 }
 

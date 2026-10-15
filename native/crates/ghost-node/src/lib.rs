@@ -622,7 +622,7 @@ impl GhostEngine {
                 name: "Speakers".into(),
                 is_default: true,
             }]),
-            EngineEvent::PreviewEnded,
+            EngineEvent::PreviewEnded { id: "preview".into() },
         ];
         for ev in events {
             deliver(&self.sink, ev);

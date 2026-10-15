@@ -255,7 +255,8 @@ pub enum EngineEvent {
     CacheComplete { id: String, cache_key: String, path: PathBuf, bytes: u64 },
     Download { download_id: String, status: DownloadStatus, bytes: u64, total_bytes: Option<u64>, path: Option<PathBuf>, error: Option<String> },
     Devices(Vec<DeviceInfo>),
-    PreviewEnded,
+    /// `id`: the preview's track id.
+    PreviewEnded { id: String },
 }
 
 #[derive(Clone, Debug)]

@@ -1,5 +1,7 @@
 // The player: source of truth for PlayerState. Owns the queue and decides what plays; the
 // engine only knows `current`, a preloaded `next` (gapless) and an optional `preview`.
+// One song is audible at a time: a preview pauses audible playback and gives it back when it ends
+// (see holdForPreview), and anything that makes the queue audible ends the preview.
 import { randomUUID } from 'node:crypto'
 import type { PlayerAPI } from '../../shared/api'
 import type {
@@ -204,6 +206,8 @@ export class Player implements PlayerAPI {
   private loadSeq = 0
   private preSeq = 0
   private pvSeq = 0
+  /** The queue item a preview paused (P while music plays): it resumes when the preview ends. */
+  private hold: { seq: number } | null = null
   private engineState: EnginePlaybackState = 'idle'
   private seekHold: { ms: number; at: number } | null = null
 
@@ -652,6 +656,8 @@ export class Player implements PlayerAPI {
   private async doLoad(i: number, autoplay: boolean, startMs: number): Promise<void> {
     const item = this.item(i)
     if (!item) return this.stopAtEnd()
+    if (autoplay) this.endPreviewForMain()
+    else this.hold = null
     const seq = ++this.loadSeq
     const wasAudible = !!this.cur?.loaded && (this.s.status === 'playing' || this.s.status === 'buffering')
     // Reuse the preloaded next's sources when the user skips to it.
@@ -884,7 +890,7 @@ export class Player implements PlayerAPI {
         case 'analysis':
           return this.onAnalysis(e.id, e.result)
         case 'previewEnded':
-          return this.onPreviewEnded()
+          return this.onPreviewEnded(e.id)
         default:
           return // cacheComplete (engine auto-analyses), devices, download: not ours
       }
@@ -1031,7 +1037,7 @@ export class Player implements PlayerAPI {
       if (recoverable) {
         this.markFailed(pv, message)
         void this.track(this.startPreviewSource(pv))
-      } else this.clearPreviewState()
+      } else this.stopPreviewNow()
       return
     }
     const cur = this.cur
@@ -1350,6 +1356,7 @@ export class Player implements PlayerAPI {
 
   async play(): Promise<void> {
     if (!this.s.queue.length) return
+    this.endPreviewForMain()
     if (this.s.queueIndex < 0) {
       void this.loadIndex(0, true, 0)
       return
@@ -1374,6 +1381,13 @@ export class Player implements PlayerAPI {
   }
 
   async pause(): Promise<void> {
+    // Paused on purpose: a running preview no longer hands playback back when it ends.
+    this.hold = null
+    this.pauseMain()
+    this.scheduleSave()
+  }
+
+  private pauseMain(): void {
     const cur = this.cur
     if (cur?.loaded) {
       this.safe(() => this.engine.pause())
@@ -1385,11 +1399,11 @@ export class Player implements PlayerAPI {
       this.setStatus('paused')
     }
     this.changed()
-    this.scheduleSave()
   }
 
+  /** Whether a skip should start playing (a queue paused only for a preview counts as playing). */
   private keepPlaying(): boolean {
-    return this.s.status !== 'paused'
+    return this.s.status !== 'paused' || this.hold !== null
   }
 
   async next(): Promise<void> {
@@ -1627,10 +1641,11 @@ export class Player implements PlayerAPI {
     return track.durationMs ? Math.round(track.durationMs * 0.35) : 0
   }
 
-  async preview(trackId: ID, startMs?: number): Promise<void> {
+  /** Resolves true once the preview is playing, false if it was superseded or had no playable source. */
+  async preview(trackId: ID, startMs?: number): Promise<boolean> {
     const seq = ++this.pvSeq
     const [track] = await this.library.fetchTracks([trackId])
-    if (!track || seq !== this.pvSeq) return
+    if (!track || seq !== this.pvSeq) return false
     const pv: Preview = {
       id: `preview:${seq}:${trackId}`,
       trackId,
@@ -1654,18 +1669,19 @@ export class Player implements PlayerAPI {
       pv.remoteResolved = true
     }
     if (point) pv.startMs = await point
-    if (pv !== this.pv || pv.seq !== this.pvSeq) return
-    await this.startPreviewSource(pv)
+    if (pv !== this.pv || pv.seq !== this.pvSeq) return false
+    return this.startPreviewSource(pv)
   }
 
-  private async startPreviewSource(pv: Preview): Promise<void> {
+  private async startPreviewSource(pv: Preview): Promise<boolean> {
     for (;;) {
       const src = await this.nextSource(pv)
       // A newer preview() call (still fetching its track, so not yet in this.pv) supersedes this one.
-      if (pv !== this.pv || pv.seq !== this.pvSeq) return
+      if (pv !== this.pv || pv.seq !== this.pvSeq) return false
       if (!src) {
-        this.clearPreviewState()
-        return
+        // An earlier preview may still be sounding (this one replaced it before reaching the engine).
+        this.stopPreviewNow()
+        return false
       }
       try {
         this.engine.preview(this.engineTrack(pv.id, pv.track, src), pv.startMs)
@@ -1675,9 +1691,42 @@ export class Player implements PlayerAPI {
       }
       this.uidTrack.set(pv.id, pv.trackId)
       this.s.preview = { track: pv.track, startedAt: this.now() }
+      this.holdForPreview()
       this.changed()
-      return
+      return true
     }
+  }
+
+  /**
+   * A preview took the speakers while the queue was audible (or about to be): pause the queue
+   * until the preview ends. The engine fades one out as the other fades in.
+   */
+  private holdForPreview(): void {
+    const cur = this.cur
+    if (!cur || this.hold) return
+    const st = this.s.status
+    if (!(st === 'playing' || st === 'buffering' || (st === 'loading' && cur.autoplay))) return
+    this.hold = { seq: cur.seq }
+    this.pauseMain()
+  }
+
+  /** The preview is over: resume what it paused, unless the user has since taken over. */
+  private releaseHold(): void {
+    const h = this.hold
+    this.hold = null
+    if (!h || this.disposed || this.cur?.seq !== h.seq || this.s.status === 'playing') return
+    void this.play()
+  }
+
+  /** The queue is about to be audible: end any preview (and any pending one) without resuming a hold. */
+  private endPreviewForMain(): void {
+    this.hold = null
+    this.pvSeq++
+    if (!this.pv && !this.s.preview) return
+    this.pv = null
+    this.safe(() => this.engine.stopPreview())
+    this.s.preview = null
+    this.changed()
   }
 
   private clearPreviewState(): void {
@@ -1686,18 +1735,23 @@ export class Player implements PlayerAPI {
       this.s.preview = null
       this.changed()
     }
+    this.releaseHold()
   }
 
-  private onPreviewEnded(): void {
+  private onPreviewEnded(id: string | undefined): void {
+    // Ended after a newer preview had already started (the event was in flight): not ours.
+    if (id && this.pv && id !== this.pv.id) return
+    this.clearPreviewState()
+  }
+
+  private stopPreviewNow(): void {
+    this.safe(() => this.engine.stopPreview())
     this.clearPreviewState()
   }
 
   async stopPreview(): Promise<void> {
     this.pvSeq++
-    this.pv = null
-    this.safe(() => this.engine.stopPreview())
-    this.s.preview = null
-    this.changed()
+    this.stopPreviewNow()
   }
 
   async setOverlayFilter(active: boolean): Promise<void> {

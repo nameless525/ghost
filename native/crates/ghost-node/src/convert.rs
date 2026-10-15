@@ -450,7 +450,7 @@ impl JsEvent {
                 | EngineEvent::CacheComplete { .. }
                 | EngineEvent::Download { .. }
                 | EngineEvent::Devices(_)
-                | EngineEvent::PreviewEnded
+                | EngineEvent::PreviewEnded { .. }
         )
     }
 }
@@ -583,8 +583,9 @@ impl ToNapiValue for JsEvent {
                     devices.into_iter().map(JsDeviceInfo::from).collect::<Vec<_>>(),
                 )?;
             }
-            EngineEvent::PreviewEnded => {
+            EngineEvent::PreviewEnded { id } => {
                 o.set("type", "previewEnded")?;
+                o.set("id", id)?;
             }
             _ => {
                 o.set("type", "unknown")?;

@@ -360,7 +360,7 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
   - Stats: length, BPM, intensity, loudness.
   - Which source will play.
 - **Background:** the selected game's hero art, blurred and dimmed, cross-fading on every change of selection.
-- **Browse previews:** when the selection rests on a game for 400 ms, its signature track starts from its preview point with a fade-in. If the queue is already playing, previews are opt-in (press P): the preview plays on the preview bus and the music bus is ducked and low-passed underneath. Otherwise the music changes as you browse, which is what makes osu!'s song select feel alive.
+- **Browse previews:** when the selection rests on a game for 400 ms, its signature track starts from its preview point with a fade-in. If the queue is already playing, previews are opt-in (press P). Only one song is ever audible: a preview pauses a playing queue (the engine fades one out as the other fades in) and resumes it when the preview ends, at its 30 s limit or when it is stopped. Playing, resuming or skipping in the queue, from anywhere, ends the preview. Otherwise the music changes as you browse, which is what makes osu!'s song select feel alive.
 - **Footer:** sheared buttons, plus the group and sort controls.
 
 **Play screen**, the analogue of osu!'s player screen.

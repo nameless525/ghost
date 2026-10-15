@@ -82,8 +82,12 @@ export interface PlayerAPI {
   moveInQueue(from: number, to: number): Promise<void>
   clearQueue(): Promise<void>
   jumpTo(index: number): Promise<void>
-  /** Song-select style preview on a separate bus (ducks the main bus if it's playing). */
-  preview(trackId: ID, startMs?: number): Promise<void>
+  /**
+   * Song-select style preview. One song is audible at a time: an audible queue pauses for the
+   * preview and resumes when it ends, and playing the queue ends the preview. Resolves true once
+   * the preview plays (false: superseded, or nothing playable).
+   */
+  preview(trackId: ID, startMs?: number): Promise<boolean>
   stopPreview(): Promise<void>
   /** Muffle the music (low-pass + duck) while a modal overlay is open. */
   setOverlayFilter(active: boolean): Promise<void>
