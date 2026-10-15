@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.3.1 (2026-10-14)
+
+### Fixed
+- **A preview no longer plays over your music.** With a song paused, resting on a game in Browse previews it; resuming the song (Space, the toolbar, media keys) used to leave both playing. Now only one song is ever audible:
+  - Playing, resuming or skipping in the queue, from anywhere, stops the preview.
+  - Pressing P while music plays pauses the music for the preview and resumes it when the preview ends.
+  - A late "preview ended" from the engine can no longer cancel a newer preview, and a preview that can't play stops the one it replaced.
+- **Album track lists that fail to load** now say so ("Couldn’t load the tracks · Enter tries again") instead of loading forever.
+- **Browse:** the "Search the web" offer no longer has track rows scrolling under its text.
+- **Lists** (Library, queue) show a track that is still loading as loading, not as playing.
+
+### Progress bars for every wait
+Anything you wait on now shows a bar that says what it is waiting for. The bar is measured where the app can measure it, and otherwise estimated from how long that source usually takes, learning as you use it. It never moves backwards, and a wait that runs long keeps visibly moving. The bars run on the GPU compositor and cost nothing when nothing waits.
+- **Starting a track:** the Play screen's title card, its seek bar, the toolbar's now-playing chip and the Now Playing panel show each step:
+  - "Finding a source"
+  - "Getting the stream from YouTube" or "Searching SoundCloud for this track"
+  - "Connecting to KHInsider"
+  - downloading a chiptune file (with MB)
+  - buffering
+
+  The title card stays while the track loads (up to 8 s).
+- **Stalls mid-track:** "Buffering", and after a few seconds "Waiting for the network · Trying another source in 5 s".
+- **Setting up YouTube support:** the one-time yt-dlp download shows its MB in a notice, the player and the bar. It used to be a silent 20 s wait.
+- **Browse:**
+  - Previews show "Loading preview" on the cover.
+  - Enter, Q and Download on an album whose track list isn't loaded show their wait there too.
+  - Track lists loading in the carousel get a progress line, with real MB for chiptune sets.
+  - "Search elsewhere" shows one segment per source ("2 of 4 sources").
+  - Imports show their progress on the row.
+- **Settings:** adding a music folder shows the scan's progress ("120 of 900 files") and ends with what it found. Before, there was no feedback at all. The catalog bars use the same design.
+- **Downloads:** items finding a source say so, and downloading an album from Browse shows a card at once.
+
+### Faster
+- The weekly yt-dlp self-update no longer occupies one of the two yt-dlp slots (for up to 5 minutes), so it can't delay YouTube and SoundCloud plays.
+- Adding or removing a music folder starts the scan immediately instead of within 4 s.
+
 ## 0.3.0 (2026-10-14)
 
 ### Fixed
