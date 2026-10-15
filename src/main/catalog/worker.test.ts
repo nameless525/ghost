@@ -300,7 +300,7 @@ describe('progress for the player crosses the worker boundary', () => {
     const c2 = new CatalogClient({ broadcast: (() => {}) as never, log: () => {}, onToolProgress: (p) => tools.push(p), inspectArchive: async (...args) => (inspected.push(args), { entries: [] }) as never })
     c2.attach(m)
     const worker = new RpcEndpoint(w)
-    worker.notify('toolProgress', { tool: 'yt-dlp', fraction: 0.5, detail: 'One-time download · 17.0 of 34.0 MB', done: false })
+    worker.notify('toolProgress', { tool: 'yt-dlp', phase: 'download', fraction: 0.5, detail: 'One-time download · 17.0 of 34.0 MB', done: false })
     const source = { kind: 'http', url: 'https://vgmrips.net/files/x.zip', cacheKey: 'chip:x' }
     await worker.call('inspectArchive', [source, { progressKey: 'album:3' }])
     await worker.call('inspectArchive', [source])

@@ -57,10 +57,11 @@ export class Typical {
     return this.ms.get(key) ?? Typical.defaultFor(key)
   }
 
+  /** One measurement moves the estimate 30 % of the way (from the default at first): one quick or slow run doesn't decide it. */
   record(key: string, ms: number): void {
     if (!(ms > 0) || ms > 120_000) return
-    const prev = this.ms.get(key)
-    this.ms.set(key, prev == null ? ms : prev * 0.7 + ms * 0.3)
+    const prev = this.get(key)
+    this.ms.set(key, prev * 0.7 + Math.max(100, ms) * 0.3)
   }
 }
 
@@ -92,7 +93,8 @@ export class WaitTracker {
   private stepAt: number
   private waitN = 0
   private wait: string
-  private toolActive = false
+  /** The part of the bar the one-time tool install takes, while it runs. */
+  private toolSpan: [number, number] | null = null
 
   constructor(
     private readonly id: string,
@@ -167,30 +169,45 @@ export class WaitTracker {
   onTool(p: ToolProgress): boolean {
     if (this.phase !== 'resolve') return false
     if (p.done) {
-      if (!this.toolActive) return false
-      this.toolActive = false
-      // Installed: the step it held up goes on. Failed: the catalog moves on to other sources.
-      this.begin(
-        p.error ? 'find' : 'stream:youtube',
-        this.make(p.error ? 'Trying other sources' : 'Getting the stream', null, null, this.typical.get(p.error ? 'find' : 'stream:youtube'), [this.spanStart(), RESOLVE_END])
-      )
+      if (!this.toolSpan) return false
+      // Installed: the step it held up goes on, after the install's part of the bar. Failed: the
+      // catalog moves on to other sources.
+      const from = this.toolSpan[1]
+      this.toolSpan = null
+      const key = p.error ? 'find' : 'stream:youtube'
+      this.begin(key, this.make(p.error ? 'Trying other sources' : 'Getting the stream', null, null, this.typical.get(key), [from, RESOLVE_END]))
       return true
     }
-    this.toolActive = true
-    this.stepKey = '' // not a step of any provider: don't learn from it
-    this.step = this.make('Setting up YouTube support (one-time)', p.detail ?? null, p.fraction, p.fraction == null ? 15_000 : null, [this.spanStart(), RESOLVE_END])
+    // Not a step of any provider: nothing to learn from it. Its span is fixed when it starts.
+    if (!this.toolSpan) {
+      this.endStep()
+      const a = this.spanStart()
+      this.toolSpan = [a, a + (RESOLVE_END - a) * 0.85]
+    }
+    this.stepKey = ''
+    const [a, b] = this.toolSpan
+    // The download is measured; the first run that checks it works takes a few seconds at the end.
+    const cut = a + (b - a) * 0.88
+    const check = p.phase === 'check'
+    const fraction = check ? null : p.fraction
+    const label = 'Setting up YouTube support (one-time)'
+    const next = this.make(label, p.detail ?? null, fraction, fraction == null ? (check ? 3000 : 15_000) : null, check ? [cut, b] : [a, cut])
+    if (this.step.label === label && this.step.detail === next.detail && this.step.fraction === next.fraction && this.step.span?.[0] === next.span?.[0]) return false
+    // Same step, more bytes: keep its start time (an estimate would otherwise restart).
+    if (this.step.label === label && this.step.span?.[0] === next.span?.[0]) next.since = this.step.since
+    this.step = next
     return true
   }
 
   /** Where a new resolve step starts on the bar: a little past the previous one, so the bar keeps moving. */
   private spanStart(): number {
     const prev = this.step.span ?? [0, RESOLVE_END]
-    return Math.min(RESOLVE_END * 0.8, prev[0] + (RESOLVE_END - prev[0]) * 0.35)
+    return Math.max(prev[0], Math.min(RESOLVE_END * 0.8, prev[0] + (RESOLVE_END - prev[0]) * 0.35))
   }
 
   /** A source was handed to the engine; `provider` is the one it comes from. */
   opened(provider: string): boolean {
-    this.toolActive = false
+    this.toolSpan = null
     this.phase = 'open'
     const local = provider === 'download' || provider === 'local'
     const name = this.typical.names.get(provider)

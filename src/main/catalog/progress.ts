@@ -24,6 +24,8 @@ export interface ResolveStep {
 /** A tool the catalog needs is being installed (the one-time yt-dlp download). */
 export interface ToolProgress {
   tool: 'yt-dlp'
+  /** 'download' while it arrives (measured), 'check' while its first run proves it works (a few seconds). */
+  phase: 'download' | 'check'
   /** 0..1 of the download, or null before its size is known. */
   fraction: number | null
   detail?: string | null

@@ -215,13 +215,13 @@ export function ytDlpInstallReporter(out: { broadcast: Broadcast; onTool?: (p: T
       if (p.phase === 'download') {
         const detail = `One-time download${size}`
         tasks.step(YTDLP_KEY, { label: YTDLP_TITLE, detail, fraction, expectMs: null, span: YTDLP_DOWNLOAD_SPAN })
-        run.tool.push({ tool: 'yt-dlp', fraction, detail, done: false }, first)
+        run.tool.push({ tool: 'yt-dlp', phase: 'download', fraction, detail, done: false }, first)
         if (fraction != null) toast.progress = fraction * YTDLP_DOWNLOAD_SPAN[1]
         run.toast.push(toast, first)
       } else {
         const detail = 'Checking that it works'
         tasks.step(YTDLP_KEY, { label: YTDLP_TITLE, detail, fraction: null, expectMs: 2500, span: [YTDLP_DOWNLOAD_SPAN[1], 1] })
-        run.tool.push({ tool: 'yt-dlp', fraction: 1, detail, done: false }, true)
+        run.tool.push({ tool: 'yt-dlp', phase: 'check', fraction: null, detail, done: false }, true)
         run.toast.push({ ...toast, body: `${detail}…`, progress: YTDLP_DOWNLOAD_SPAN[1] }, true)
       }
       return
@@ -231,7 +231,7 @@ export function ytDlpInstallReporter(out: { broadcast: Broadcast; onTool?: (p: T
     run = null
     tasks.done(YTDLP_KEY)
     const ok = p.phase === 'done'
-    out.onTool?.({ tool: 'yt-dlp', fraction: ok ? 1 : null, detail: null, done: true, error: ok ? null : (p.error ?? 'unknown error') })
+    out.onTool?.({ tool: 'yt-dlp', phase: 'check', fraction: ok ? 1 : null, detail: null, done: true, error: ok ? null : (p.error ?? 'unknown error') })
     out.broadcast(
       'notify',
       ok

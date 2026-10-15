@@ -41,8 +41,8 @@ describe('WaitTracker', () => {
     w.opened('youtube')
     expect(w.progress().label).toBe('Connecting to YouTube')
     expect(w.progress().span).toEqual([RESOLVE_END, 1])
-    // The first measurement replaces the default; later ones are averaged in.
-    expect(typical.get('stream:youtube')).toBe(3000)
+    // Measurements are averaged into the default (one fast run doesn't make the bar rush).
+    expect(typical.get('stream:youtube')).toBeCloseTo(Typical.defaultFor('stream:youtube') * 0.7 + 3000 * 0.3)
   })
 
   it('a search step says what it searches; a measured step reports its fraction', () => {
@@ -71,10 +71,21 @@ describe('WaitTracker', () => {
 
   it('shows the one-time yt-dlp download while resolving', () => {
     const { w } = setup()
-    w.onTool({ tool: 'yt-dlp', fraction: 0.4, detail: '12.0 of 30.0 MB', done: false })
+    w.onTool({ tool: 'yt-dlp', phase: 'download', fraction: 0.4, detail: '12.0 of 30.0 MB', done: false })
     expect(w.progress()).toMatchObject({ label: 'Setting up YouTube support (one-time)', fraction: 0.4 })
-    w.onTool({ tool: 'yt-dlp', fraction: 1, done: true })
+    const span = w.progress().span!
+    // More bytes: same span (the bar's mapping doesn't drift), same start time.
+    const since = w.progress().since
+    w.onTool({ tool: 'yt-dlp', phase: 'download', fraction: 0.8, detail: '24.0 of 30.0 MB', done: false })
+    expect(w.progress().span).toEqual(span)
+    expect(w.progress().since).toBe(since)
+    // Checking it works: an estimate after the download's span.
+    w.onTool({ tool: 'yt-dlp', phase: 'check', fraction: null, detail: 'Checking that it works', done: false })
+    expect(w.progress()).toMatchObject({ fraction: null, expectMs: 3000 })
+    expect(w.progress().span![0]).toBe(span[1])
+    w.onTool({ tool: 'yt-dlp', phase: 'check', fraction: 1, done: true })
     expect(w.progress().label).toBe('Getting the stream')
+    expect(w.progress().span![0]).toBeGreaterThan(span[1])
   })
 
   it('opening: waits on the connection, then the whole file or the first audio', () => {
@@ -131,13 +142,13 @@ describe('Typical', () => {
     const t = new Typical()
     const d = Typical.defaultFor('stream:khinsider')
     t.record('stream:khinsider', 400)
-    expect(t.get('stream:khinsider')).toBe(400)
+    const a = d * 0.7 + 400 * 0.3
+    expect(t.get('stream:khinsider')).toBeCloseTo(a)
     t.record('stream:khinsider', 1400)
-    expect(t.get('stream:khinsider')).toBeCloseTo(400 * 0.7 + 1400 * 0.3)
+    expect(t.get('stream:khinsider')).toBeCloseTo(a * 0.7 + 1400 * 0.3)
     t.record('stream:khinsider', -5)
     t.record('stream:khinsider', 10 * 60_000)
-    expect(t.get('stream:khinsider')).toBeCloseTo(700)
-    expect(d).toBeGreaterThan(0)
+    expect(t.get('stream:khinsider')).toBeCloseTo(a * 0.7 + 1400 * 0.3)
   })
 })
 

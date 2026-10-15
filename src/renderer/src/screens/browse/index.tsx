@@ -409,7 +409,9 @@ export default function BrowseScreen(props: BrowseScreenProps) {
       const fw = footerWrap.current
       if (!sw || !fw || !host) return
       const bs = sw.querySelector<HTMLElement>('.bs') ?? sw
-      const top = Math.round(topIn(bs) + bs.offsetHeight + 6)
+      // The "Search the web" offer under the panel (a few results) is part of the top: rows scroll below it.
+      const few = sw.querySelector<HTMLElement>('.bfew')
+      const top = Math.round(Math.max(topIn(bs) + bs.offsetHeight, few ? topIn(few) + few.offsetHeight : 0) + 6)
       const bottom = Math.round(host.clientHeight - topIn(fw) + 4)
       activeCarousel?.setInsets(top, bottom)
       // The empty state / external results live between the search panel and the footer too.

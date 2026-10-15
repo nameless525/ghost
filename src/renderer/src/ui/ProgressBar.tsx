@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { Progress } from '@shared/types'
 import { ProgressAnimator, progressMode, progressPercent, progressValue, type ProgressInput } from './progress'
 import { cx, hueStyle, type Hue } from './util'
@@ -23,6 +23,9 @@ export interface ProgressBarProps {
   style?: CSSProperties
   'aria-label'?: string
 }
+
+/** An estimated step running this many times its typical length gets the sweep too: it's slow, not stuck. */
+const OVERDUE_FACTOR = 2
 
 /** Linear progress for any wait (see ui/progress.ts for how it moves). */
 export function ProgressBar({ progress, waitKey, done, fadeWhenDone, size = 'regular', caption, hue, className, style, 'aria-label': ariaLabel }: ProgressBarProps) {
@@ -58,6 +61,18 @@ export function ProgressBar({ progress, waitKey, done, fadeWhenDone, size = 'reg
     []
   )
 
+  // An estimate past its due time holds near its ceiling; the sweep shows it's still going.
+  const [overdue, setOverdue] = useState(false)
+  const dueAt = !done && mode === 'estimated' && p?.expectMs ? p.since + OVERDUE_FACTOR * p.expectMs : null
+  useEffect(() => {
+    if (dueAt == null) return setOverdue(false)
+    const left = dueAt - Date.now()
+    if (left <= 0) return setOverdue(true)
+    setOverdue(false)
+    const t = window.setTimeout(() => setOverdue(true), left)
+    return () => window.clearTimeout(t)
+  }, [dueAt])
+
   const pct = done ? 100 : progressPercent(progress)
   return (
     <div
@@ -79,7 +94,7 @@ export function ProgressBar({ progress, waitKey, done, fadeWhenDone, size = 'reg
       )}
       <div className="g-progress__track">
         <span ref={fill} className="g-progress__fill g-keep-motion" />
-        {mode === 'indeterminate' && <span className="g-progress__sweep g-keep-motion" />}
+        {(mode === 'indeterminate' || (overdue && dueAt != null)) && <span className="g-progress__sweep g-keep-motion" />}
       </div>
     </div>
   )

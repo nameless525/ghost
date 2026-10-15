@@ -298,8 +298,11 @@
   animation: pl-hold 1.2s linear forwards;
 }
 .pl-card__load {
-  width: min(360px, 100%);
-  margin-top: 16px;
+  width: min(380px, 100%);
+  margin-top: 18px;
+}
+.pl-card__load .g-progress__caption {
+  font-size: var(--fs-sm);
 }
 @keyframes pl-hold {
   from {

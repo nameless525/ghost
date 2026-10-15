@@ -1452,7 +1452,14 @@
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  margin: 10px 26px 0 0;
+  width: fit-content;
+  max-width: calc(100% - 26px);
+  margin: 10px 26px 0 auto;
+  padding: 4px 4px 4px 14px;
+  border-radius: calc(var(--radius) + 4px);
+  /* Rows scrolling up fade out behind it (no backdrop blur: the carousel moves under it every frame). */
+  background: rgb(var(--bg-1-rgb) / 0.86);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
   color: var(--fg-3);
   font-size: var(--fs-sm);
   animation: bw-in 500ms var(--ease-out-quint) both;
@@ -1462,7 +1469,7 @@
   align-items: center;
   gap: 8px;
   height: 30px;
-  max-width: 70%;
+  max-width: min(560px, 46vw);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
