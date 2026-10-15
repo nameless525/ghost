@@ -125,6 +125,9 @@ describe('http client', () => {
     const ok = fake([() => new Response('cached copy', { status: 200 })])
     const c1 = createHttpClient({ cacheDir: dir, fetch: ok.fetch })
     await c1.pageFetch('https://example.test/stale', { ttlMs: 1 })
+    // The page is saved in the background; a cache read on the same client waits for that save
+    // (a fixed pause raced slow CI disks).
+    expect(await c1.pageFetch('https://example.test/stale', { ttlMs: 60_000 })).toMatchObject({ fromCache: true })
     await sleep(5)
     const bad = fake([() => Promise.reject(new Error('offline'))])
     const c2 = createHttpClient({ cacheDir: dir, fetch: bad.fetch, backoffMs: 1 })
