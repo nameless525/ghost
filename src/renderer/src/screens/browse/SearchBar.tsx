@@ -2,7 +2,7 @@
 // result count, group + sort selectors and a slim catalog-indexing progress line.
 import { Calendar, CalendarClock, DiscAlbum, Dices, Gamepad2, History, Layers, MicVocal, Monitor, Star, Timer, Type } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
-import type { CatalogStatus, GroupBy, SortBy } from '@shared/types'
+import type { GroupBy, SortBy } from '@shared/types'
 import { parseSearch } from '@shared/search'
 import { sfx } from '../../sound'
 import { SearchInput, type SearchInputHandle } from '../../ui/SearchInput'
@@ -59,15 +59,16 @@ export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHan
   const sort = useBrowse((s) => s.sort)
   const total = useBrowse((s) => s.total)
   const loading = useBrowse((s) => s.loading)
-  const status = useBrowse((s) => s.status)
+  // Only what the bar itself shows: the full status object changes ~3×/s while indexing, and
+  // re-rendering the whole bar (selects, input, syntax highlight) for it was wasted work.
+  const indexing = useBrowse((s) => !!s.status?.indexing)
+  const progress = useBrowse((s) => (s.status?.indexing ? (s.status.progress ?? null) : null))
   const parsed = useMemo(() => parseSearch(text), [text])
   const pending = text.trim() !== browseModel.query.text || loading
 
   const [one, many] = GROUP_NOUNS[group]
   const count = total == null ? null : total === 0 ? 'No matches' : `${total.toLocaleString()} ${total === 1 ? one : many}`
   const error = parsed.errors[0]?.message
-  const indexing = !!status?.indexing
-  const progress = status?.progress ?? null
 
   return (
     <div className="bs">
@@ -112,8 +113,8 @@ export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHan
             <div className="bs__status">
               {error ? (
                 <span className="bs__error">{error}</span>
-              ) : indexing && status ? (
-                <IndexingStatus status={status} />
+              ) : indexing ? (
+                <IndexingStatus />
               ) : parsed.filters.length ? (
                 <FilterSummary count={parsed.filters.length} />
               ) : (
@@ -132,9 +133,11 @@ export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHan
  * "One-time setup · Zophar's Domain and Internet Archive · 42% · about 3 min left" (first-time
  * crawls) or a quieter "Refreshing KHInsider · 57%". Opens the per-source activity popover.
  */
-function IndexingStatus({ status }: { status: CatalogStatus }) {
+function IndexingStatus() {
+  const status = useBrowse((s) => s.status)
   const [open, setOpen] = useState(false)
   const btn = useRef<HTMLButtonElement>(null)
+  if (!status) return null
   const running = (status.sources ?? []).filter((s) => s.state === 'running').map((s) => s.name)
   const names = running.length <= 2 ? running.join(' and ') : `${running.length} sources`
   const pct = status.progress != null ? Math.round(status.progress * 100) : null

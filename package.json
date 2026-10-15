@@ -37,7 +37,6 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "lucide-react": "^1.57.0",
-    "motion": "^14.2.0",
     "nanoid": "^6.0.2",
     "pixi.js": "^8.22.0",
     "react": "^19.3.0",

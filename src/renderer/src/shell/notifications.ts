@@ -89,6 +89,34 @@ function receive(n: GhostNotification): void {
 
 let installed = false
 
+/** "Error invoking remote method 'ghost:invoke': Error: HTTP 404 from …" → "HTTP 404 from …". */
+export function cleanIpcError(message: string): string {
+  return message
+    .replace(/^Error invoking remote method '[^']*':\s*/, '')
+    .replace(/^(?:[A-Z]\w*Error|Error):\s*/, '')
+    .replace(/^\[\w+\]\s*/, '') // NetError code ("[not_found] …")
+    .trim()
+}
+
+/**
+ * Safety net for fire-and-forget API calls (`void ghost().…()` without a catch): a failure becomes
+ * an error card instead of vanishing into the console. Cancellations stay quiet; the same message
+ * within 8 s shows once.
+ */
+function onUnhandled(e: PromiseRejectionEvent): void {
+  const r = e.reason as { name?: string; message?: string } | string | undefined
+  const raw = typeof r === 'string' ? r : (r?.message ?? '')
+  if (!raw || (typeof r === 'object' && r?.name === 'AbortError') || /\babort(?:ed)?\b|cancel(?:l)?ed/i.test(raw)) return
+  if (!/remote method/i.test(raw)) return // only app API calls; let other code's rejections be
+  e.preventDefault()
+  const body = cleanIpcError(raw)
+  const now = Date.now()
+  if (lastUnhandled && lastUnhandled.body === body && now - lastUnhandled.at < 8000) return
+  lastUnhandled = { body, at: now }
+  notify({ id: `unhandled-${body.slice(0, 60)}`, kind: 'error', title: 'Something went wrong', body })
+}
+let lastUnhandled: { body: string; at: number } | null = null
+
 /** Subscribe to main-process notifications. Called once by App. */
 export function initNotifications(): () => void {
   if (installed) return () => {}
@@ -97,9 +125,11 @@ export function initNotifications(): () => void {
   const offUi = useUI.subscribe((s, p) => {
     if (s.overlays.notifications && !p.overlays.notifications) useNotifications.getState().markAllRead()
   })
+  window.addEventListener('unhandledrejection', onUnhandled)
   return () => {
     off()
     offUi()
+    window.removeEventListener('unhandledrejection', onUnhandled)
     installed = false
   }
 }
