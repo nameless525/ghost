@@ -145,6 +145,8 @@ export interface GhostEvents {
   'downloads:changed': DownloadItem[]
   'library:changed': { kind: 'playlists' | 'likes' | 'history' | 'downloaded'; id?: ID }
   'settings:changed': Settings
+  /** The audio output devices changed (plugged / unplugged / new system default). */
+  'player:devices': AudioDevice[]
   notify: GhostNotification
 }
 export type GhostEventName = keyof GhostEvents

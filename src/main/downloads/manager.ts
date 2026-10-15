@@ -13,6 +13,7 @@ import type { CatalogService, ResolvedSource } from '../catalog'
 import type { EngineBridge, EngineEvent } from '../engine/types'
 import type { Broadcast } from '../ipc'
 import type { DownloadRecord, DownloadsRepo } from '../library/downloads-repo'
+import { ACCESS_DENIED } from '../net/errors'
 import { buildDownloadPath, expandHome, extensionFor, uniquePath } from './naming'
 import { buildTags, templateVars } from './tags'
 
@@ -51,6 +52,8 @@ interface Job {
   launched: boolean
   track: TrackView | null
   lastError: string | null
+  /** Already re-resolved once after a 401/403/410. */
+  refreshed?: boolean
 }
 
 interface Batch {
@@ -283,6 +286,20 @@ export class DownloadManager implements DownloadsAPI {
     }
   }
 
+  private async reresolve(rec: DownloadRecord, job: Job): Promise<void> {
+    try {
+      const fresh = await this.deps.catalog.resolveSources(rec.trackId, { quality: this.deps.getSettings().sources.quality })
+      if (job.canceled) return
+      if (fresh.length) {
+        job.sources = fresh
+        job.srcIdx = -1
+      }
+    } catch (e) {
+      job.lastError = (e as Error)?.message ?? String(e)
+    }
+    return this.launchNext(rec, job)
+  }
+
   private async launchNext(rec: DownloadRecord, job: Job): Promise<void> {
     for (;;) {
       if (job.canceled) return
@@ -359,6 +376,14 @@ export class DownloadManager implements DownloadsAPI {
           }
         }
         this.setStatus(rec, 'resolving', false)
+        // A remote URL refused with 401/403/410 has usually just gone stale (expired, or bound to an
+        // IP this machine no longer has): re-resolve once (the catalog now refreshes it) and retry
+        // from the top, before falling back to lower-ranked sources.
+        if (src && src.source.kind === 'http' && ACCESS_DENIED.test(msg) && !job.refreshed) {
+          job.refreshed = true
+          void this.track(this.reresolve(rec, job))
+          return
+        }
         void this.track(this.launchNext(rec, job))
         return
       }

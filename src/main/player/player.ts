@@ -69,6 +69,9 @@ export interface PlayerDeps {
 export const PREV_RESTART_MS = 3000
 /** History: a play counts after 30 s or half the track, whichever comes first. */
 export const HISTORY_MIN_MS = 30000
+/** A source refused again within this long after a refresh is treated as broken. */
+const REFRESH_AGAIN_MS = 10 * 60_000
+
 /** Stop auto-skipping after this many tracks in a row failed to play. */
 export const MAX_FAIL_STREAK = 8
 /** When a queue starts, the catalog pre-resolves this many tracks after the first (see warmUpcoming). */
@@ -204,8 +207,8 @@ export class Player implements PlayerAPI {
   private engineState: EnginePlaybackState = 'idle'
   private seekHold: { ms: number; at: number } | null = null
 
-  /** Track/cache-key pairs already given one fresh re-resolve after a 401/403/410 this session. */
-  private refreshed = new Set<string>()
+  /** Track/cache-key pairs re-resolved after a 401/403/410, and when (one refresh per REFRESH_AGAIN_MS). */
+  private refreshed = new Map<string, number>()
   /** Cache keys that failed this session, per track (passed to resolveSources as `exclude`). */
   private failed = new Map<ID, Set<string>>()
   private failStreak = new Set<string>()
@@ -574,10 +577,14 @@ export class Player implements PlayerAPI {
     // this machine no longer has): drop it from this attempt and re-resolve once, which fetches a
     // fresh URL under the same key, before treating the source as broken.
     const retryKey = `${a.trackId}\u0000${key}`
-    if (src.source.kind === 'http' && src.provider !== 'download' && ACCESS_DENIED.test(message) && !this.refreshed.has(retryKey)) {
-      this.refreshed.add(retryKey)
+    const now = this.now()
+    const last = this.refreshed.get(retryKey)
+    if (src.source.kind === 'http' && src.provider !== 'download' && ACCESS_DENIED.test(message) && (last == null || now - last > REFRESH_AGAIN_MS)) {
+      this.refreshed.set(retryKey, now)
       if (this.refreshed.size > 2000) this.refreshed.clear()
-      a.sources.splice(a.srcIdx, 1)
+      // Drop it and everything ranked below: the next step re-resolves right away (the fresh URL
+      // comes back first) instead of trying lower-ranked copies before the refresh.
+      a.sources.splice(a.srcIdx)
       a.srcIdx--
       a.remoteResolved = false
     } else this.failedSet(a.trackId).add(key)
@@ -696,7 +703,7 @@ export class Player implements PlayerAPI {
       if (cur !== this.cur || cur.seq !== this.loadSeq) return
       if (!src) return this.allSourcesFailed(cur)
       try {
-        this.engine.setCurrent(this.engineTrack(cur.id, cur.track, src), cur.startMs, cur.autoplay)
+        this.engineSetCurrent(this.engineTrack(cur.id, cur.track, src), cur.startMs, cur.autoplay)
       } catch (e) {
         this.markFailed(cur, (e as Error)?.message ?? String(e))
         continue
@@ -730,7 +737,7 @@ export class Player implements PlayerAPI {
       this.failStreak.clear()
       this.cur = null
       this.clearPreload()
-      this.safe(() => this.engine.stop())
+      this.safe(() => this.engineStop())
       this.finishPlay()
       this.s.error = streak > 1 ? `${streak} tracks in a row couldn't be played. ${reason}` : `Couldn't play “${title}”. ${reason}`
       this.setStatus('error')
@@ -764,7 +771,7 @@ export class Player implements PlayerAPI {
     this.loadSeq++
     this.cur = null
     this.clearPreload()
-    this.safe(() => this.engine.stop())
+    this.safe(() => this.engineStop())
     if (this.s.queueIndex >= this.s.queue.length) this.s.queueIndex = this.s.queue.length - 1
     this.s.positionMs = 0
     this.setStatus('idle')
@@ -777,7 +784,7 @@ export class Player implements PlayerAPI {
 
   private clearPreload(): void {
     this.preSeq++
-    if (this.pre?.armed) this.safe(() => this.engine.setNext(null))
+    if (this.pre?.armed) this.safe(() => this.engineSetNext(null))
     this.pre = null
   }
 
@@ -795,14 +802,14 @@ export class Player implements PlayerAPI {
     if (!item) {
       if (this.pre || force) {
         this.clearPreload()
-        this.safe(() => this.engine.setNext(null))
+        this.safe(() => this.engineSetNext(null))
       }
       return
     }
     if (this.pre && this.pre.id === item.uid) {
       if (force && this.pre.armed) {
         const src = this.pre.sources[this.pre.srcIdx]
-        if (src) this.safe(() => this.engine.setNext(this.engineTrack(item.uid, item.track, src)))
+        if (src) this.safe(() => this.engineSetNext(this.engineTrack(item.uid, item.track, src)))
       }
       return
     }
@@ -826,7 +833,7 @@ export class Player implements PlayerAPI {
     }
     this.pre = pre
     // Never leave a stale `next` armed while the new one resolves.
-    this.safe(() => this.engine.setNext(null))
+    this.safe(() => this.engineSetNext(null))
     void this.track(this.armPreload(pre, pre.sources.length === 0))
   }
 
@@ -847,7 +854,7 @@ export class Player implements PlayerAPI {
     // No source: leave `next` empty; 'ended' will load it normally and handle the failure.
     if (!src) return
     try {
-      this.engine.setNext(this.engineTrack(pre.id, pre.track, src))
+      this.engineSetNext(this.engineTrack(pre.id, pre.track, src))
       pre.armed = true
       this.uidTrack.set(pre.id, pre.trackId)
     } catch (e) {
@@ -942,7 +949,26 @@ export class Player implements PlayerAPI {
     this.changed()
   }
 
+  // Engine transport commands go through these so we always know which item (if any) the engine
+  // may advance into. An `advanced` event for anything else was overtaken by a later load or stop
+  // (the engine emitted it just before our command arrived) and must not override that load.
+  private armedNext: string | null = null
+  private engineSetNext(t: EngineTrack | null): void {
+    this.engine.setNext(t)
+    this.armedNext = t?.id ?? null
+  }
+  private engineSetCurrent(t: EngineTrack, startMs: number, autoplay: boolean): void {
+    this.armedNext = null
+    this.engine.setCurrent(t, startMs, autoplay)
+  }
+  private engineStop(): void {
+    this.armedNext = null
+    this.engine.stop()
+  }
+
   private onAdvanced(id: string): void {
+    if (id !== this.armedNext) return // superseded by a newer setCurrent / setNext / stop
+    this.armedNext = null
     const idx = this.s.queue.findIndex((q) => q.uid === id)
     if (idx < 0) {
       // The engine moved into something that's no longer queued; get back in sync.
@@ -1015,7 +1041,7 @@ export class Player implements PlayerAPI {
       // The preloaded next failed while buffering: re-arm it with its next source.
       this.markFailed(pre, message)
       pre.armed = false
-      this.safe(() => this.engine.setNext(null))
+      this.safe(() => this.engineSetNext(null))
       void this.track(this.armPreload(pre, false))
       return
     }
@@ -1514,7 +1540,7 @@ export class Player implements PlayerAPI {
       this.loadSeq++
       this.cur = null
       this.clearPreload()
-      this.safe(() => this.engine.stop())
+      this.safe(() => this.engineStop())
       this.s.queueIndex = -1
       this.s.currentAnalysis = null
       this.s.voices = null
@@ -1543,7 +1569,7 @@ export class Player implements PlayerAPI {
     this.loadSeq++
     this.cur = null
     this.clearPreload()
-    this.safe(() => this.engine.stop())
+    this.safe(() => this.engineStop())
     this.s.queueIndex = survivorsBefore
     this.setCurrentItem(queue[survivorsBefore])
     this.s.positionMs = 0

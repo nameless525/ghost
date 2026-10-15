@@ -159,6 +159,8 @@ function DeviceRow(m: RowMeta) {
       .player.devices()
       .then(setDevices)
       .catch(() => setDevices([]))
+    // the engine pushes changes (headphones plugged in, a new system default)
+    return ghost().on('player:devices', setDevices)
   }, [open])
   const sysDefault = devices?.find((d) => d.isDefault && d.id !== 'default')
   const options: SelectOption<string>[] = [

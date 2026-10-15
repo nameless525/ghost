@@ -140,9 +140,9 @@ export interface Provider {
    */
   findTrackMode?: 'always' | 'fallback'
   /**
-   * resolveStream costs one polite page request (KHInsider's track page): worth doing ahead of a
-   * likely play, at a lower priority. Unset for providers whose streams are free (known at album
-   * time) or expensive (a yt-dlp run).
+   * resolveStream costs one polite request (KHInsider's track page, YouTube's yt-dlp extraction of
+   * an imported video): worth doing ahead of a likely play, at a lower priority. Unset for providers
+   * whose streams are free (known at album time) or too expensive (SoundCloud downloads the track).
    */
   prefetchStreams?: boolean
   /** Album-like results for "import from YouTube / Internet Archive / Bandcamp". */

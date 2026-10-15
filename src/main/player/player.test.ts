@@ -184,6 +184,21 @@ describe('queue', () => {
     expect((t.engine.lastCall('setCurrent')![0] as EngineTrack).id).toBe(t.uidAt(2))
   })
 
+  it("a late 'advanced' for the old preload doesn't override a newer jump", async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2', 't3'])
+    await t.settle()
+    const oldNext = t.uidAt(1)
+    expect(t.engine.nextId).toBe(oldNext)
+    await t.player.jumpTo(2)
+    await t.settle()
+    // the engine had already moved into the armed next and reports it after our jump arrived
+    t.engine.emit({ type: 'advanced', id: oldNext })
+    await t.settle()
+    expect(t.st().current?.id).toBe('t3')
+    expect(t.st().queueIndex).toBe(2)
+  })
+
   it('prev restarts past 3 s, otherwise goes to the previous track', async () => {
     const t = setup()
     await t.player.playTracks(['t1', 't2', 't3'], 1)

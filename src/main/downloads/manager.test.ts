@@ -106,9 +106,9 @@ describe('DownloadManager', () => {
     await t.dm.enqueue({ trackIds: ['t1'] })
     await t.settle()
     const { id } = t.downloadCall(0)
-    t.engine.emit({ type: 'download', downloadId: id, status: 'error', bytes: 0, totalBytes: null, error: 'HTTP 403' })
+    t.engine.emit({ type: 'download', downloadId: id, status: 'error', bytes: 0, totalBytes: null, error: 'HTTP 404' })
     await t.settle()
-    expect(t.catalog.failedMarks).toEqual([{ trackId: 't1', cacheKey: 't1#a', reason: 'HTTP 403' }])
+    expect(t.catalog.failedMarks).toEqual([{ trackId: 't1', cacheKey: 't1#a', reason: 'HTTP 404' }])
     expect(t.downloadCall(1).source).toEqual(httpSource('t1', 'b').source)
     expect(t.downloadCall(1).id).toBe(id)
     expect((await t.byTrack('t1')).status).toBe('downloading')
@@ -116,6 +116,25 @@ describe('DownloadManager', () => {
     await t.settle()
     expect(await t.byTrack('t1')).toMatchObject({ status: 'error', error: 'disk full' })
     expect(t.bc.of('notify').some((n) => n.kind === 'error' && n.title.includes('Song 1'))).toBe(true)
+  })
+
+  it('a 403 (stale URL) re-resolves once and retries the top source before falling back', async () => {
+    const t = setup()
+    await t.dm.enqueue({ trackIds: ['t1'] })
+    await t.settle()
+    const { id } = t.downloadCall(0)
+    const resolves = t.catalog.resolveCalls.filter((c) => c.trackId === 't1').length
+    // the catalog now hands out a refreshed URL for the same source
+    t.catalog.sources.set('t1', [httpSource('t1', 'a', { source: { kind: 'http', url: 'https://cdn.example/t1/fresh.mp3', cacheKey: 't1#a' } }), httpSource('t1', 'b')])
+    t.engine.emit({ type: 'download', downloadId: id, status: 'error', bytes: 0, totalBytes: null, error: 'stream failed: HTTP 403' })
+    await t.settle()
+    expect(t.catalog.resolveCalls.filter((c) => c.trackId === 't1').length).toBe(resolves + 1)
+    expect(t.downloadCall(1).source).toMatchObject({ url: 'https://cdn.example/t1/fresh.mp3' })
+    // a second 403 is a real failure: on to the next source, no more re-resolving
+    t.engine.emit({ type: 'download', downloadId: id, status: 'error', bytes: 0, totalBytes: null, error: 'stream failed: HTTP 403' })
+    await t.settle()
+    expect(t.downloadCall(2).source).toEqual(httpSource('t1', 'b').source)
+    expect(t.catalog.resolveCalls.filter((c) => c.trackId === 't1').length).toBe(resolves + 1)
   })
 
   it('fails cleanly when no source resolves', async () => {

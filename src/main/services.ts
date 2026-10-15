@@ -220,6 +220,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
 
   engine.onEvent((e) => {
     if (e.type === 'download') downloads.handleEngineEvent(e)
+    else if (e.type === 'devices') broadcast('player:devices', e.devices)
     else player.handleEngineEvent(e)
   })
 

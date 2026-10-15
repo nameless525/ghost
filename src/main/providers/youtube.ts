@@ -482,6 +482,11 @@ export class YouTubeProvider implements Provider {
   readonly name = 'YouTube'
   /** Searching costs a yt-dlp run: only when the album's own sources failed. */
   readonly findTrackMode = 'fallback' as const
+  /**
+   * A yt-dlp run (~3–5 s), but only reached for imported YouTube albums someone rests on or queues:
+   * worth it, since a first play otherwise waits that long, and one run covers every chapter.
+   */
+  readonly prefetchStreams = true
 
   private readonly now: () => number
   private readonly log: (msg: string) => void
