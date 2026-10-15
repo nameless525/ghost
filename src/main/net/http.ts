@@ -155,6 +155,22 @@ interface CacheMeta {
   fetchedAt: number
 }
 
+/**
+ * A page request shared by every concurrent caller for the same URL. It runs with its own abort
+ * signal, aborted only once every caller that could abort has (one caller giving up, e.g. a
+ * superseded search, must not fail the others), and it is promoted to the most urgent priority
+ * among its callers while still queued (opening an album the crawl has queued in the background).
+ */
+interface SharedPage {
+  promise: Promise<PageResult>
+  ctl: AbortController
+  priority: { value: Priority; promote: ((p: Priority) => void) | null }
+  /** Callers still waiting that can abort. */
+  abortable: number
+  /** A caller without a signal joined: never abort. */
+  pinned: boolean
+}
+
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const fetchImpl = options.fetch ?? electronFetch
   const ua = options.userAgent ?? GHOST_USER_AGENT
@@ -165,7 +181,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   const log = options.log ?? (() => {})
   const limiters = new Map<string, HostLimiter>()
   const blocked = new Map<string, number>()
-  const inflight = new Map<string, Promise<PageResult>>()
+  const inflight = new Map<string, SharedPage>()
 
   const limiter = (host: string): HostLimiter => {
     let l = limiters.get(host)
@@ -182,8 +198,13 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return { dir, body: join(dir, `${h}.html`), meta: join(dir, `${h}.json`) }
   }
 
+  /** Cache writes still in progress (pageFetch doesn't wait for them; a read of the same URL does). */
+  const pendingWrites = new Map<string, Promise<void>>()
+
   async function readCache(url: string): Promise<{ meta: CacheMeta; html: string } | null> {
     if (!options.cacheDir) return null
+    const pending = pendingWrites.get(url)
+    if (pending) await pending
     const p = cachePaths(url)
     try {
       const [m, html] = await Promise.all([readFile(p.meta, 'utf8'), readFile(p.body, 'utf8')])
@@ -200,10 +221,12 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     const p = cachePaths(url)
     try {
       await mkdir(p.dir, { recursive: true })
-      const tmp = `${p.body}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
-      await writeFile(tmp, html)
-      await rename(tmp, p.body)
-      await writeFile(p.meta, JSON.stringify({ url, status, fetchedAt } satisfies CacheMeta))
+      const tag = `${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+      await writeFile(`${p.body}.${tag}`, html)
+      await rename(`${p.body}.${tag}`, p.body)
+      // Atomic too: a concurrent reader never sees half a meta file.
+      await writeFile(`${p.meta}.${tag}`, JSON.stringify({ url, status, fetchedAt } satisfies CacheMeta))
+      await rename(`${p.meta}.${tag}`, p.meta)
     } catch (e) {
       log(`html cache write failed: ${(e as Error).message}`)
     }
@@ -232,12 +255,13 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return res
   }
 
-  async function withRetry<T>(url: string, opts: PageFetchOptions, fn: () => Promise<T>): Promise<T> {
+  async function withRetry<T>(url: string, opts: PageFetchOptions, fn: () => Promise<T>, prio?: SharedPage['priority']): Promise<T> {
     const host = new URL(url).host
     const retries = opts.retries ?? 3
     for (let attempt = 0; ; attempt++) {
       try {
-        return await limiter(host).schedule(fn, opts.priority ?? 1, opts.signal)
+        const p = prio ? prio.value : (opts.priority ?? 1)
+        return await limiter(host).schedule(fn, p, opts.signal, prio ? (promote) => (prio.promote = promote) : undefined)
       } catch (e) {
         const ne = e instanceof NetError ? e : null
         if (!ne || !ne.retryable || attempt >= retries) throw e
@@ -248,9 +272,10 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     }
   }
 
-  async function fetchPage(url: string, opts: PageFetchOptions): Promise<PageResult> {
+  async function fetchPage(url: string, opts: PageFetchOptions, prio?: SharedPage['priority']): Promise<PageResult> {
     const host = new URL(url).host
     return withRetry(url, opts, async () => {
+      if (prio) prio.promote = null // started: nothing left to promote
       if ((blocked.get(host) ?? 0) > now()) throw new NetError('blocked', blockedMessage(host), { url })
       const res = await once(url, opts, 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8')
       const html = await res.text()
@@ -262,6 +287,46 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       if (res.status === 429) throw new NetError('http', `rate limited by ${host}`, { status: 429, url, retryable: true })
       if (!res.ok) throw new NetError('http', `HTTP ${res.status} from ${url}`, { status: res.status, url })
       return { url: res.url || url, status: res.status, html, fromCache: false, stale: false, fetchedAt: now() }
+    }, prio)
+  }
+
+  /** Wait for a shared page request as one of its callers (with this caller's own abort / priority). */
+  function joinShared(url: string, shared: SharedPage, opts: PageFetchOptions): Promise<PageResult> {
+    const p = opts.priority ?? 1
+    if (p < shared.priority.value) {
+      shared.priority.value = p
+      shared.priority.promote?.(p)
+    }
+    const signal = opts.signal
+    if (!signal) return ((shared.pinned = true), shared.promise)
+    if (signal.aborted) return Promise.reject(new NetError('aborted', 'request aborted', { url }))
+    shared.abortable++
+    return new Promise<PageResult>((resolve, reject) => {
+      let done = false
+      const leave = () => {
+        done = true
+        signal.removeEventListener('abort', onAbort)
+        shared.abortable--
+      }
+      const onAbort = () => {
+        if (done) return
+        leave()
+        reject(new NetError('aborted', 'request aborted', { url }))
+        if (shared.abortable === 0 && !shared.pinned) shared.ctl.abort()
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      shared.promise.then(
+        (r) => {
+          if (done) return
+          leave()
+          resolve(r)
+        },
+        (e) => {
+          if (done) return
+          leave()
+          reject(e)
+        }
+      )
     })
   }
 
@@ -274,6 +339,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
 
     async invalidate(url) {
       if (!options.cacheDir) return
+      await pendingWrites.get(url) // or the write in flight would bring it back
       const p = cachePaths(url)
       await Promise.all([rm(p.body, { force: true }), rm(p.meta, { force: true })])
     },
@@ -287,10 +353,19 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         return { url, status: cached.meta.status, html: cached.html, fromCache: true, stale: false, fetchedAt: cached.meta.fetchedAt }
       }
       const existing = inflight.get(url)
-      if (existing) return existing
-      const p = fetchPage(url, opts)
-        .then(async (r) => {
-          if (useCache) await writeCache(url, r.status, r.html, r.fetchedAt)
+      if (existing) return joinShared(url, existing, opts)
+      const ctl = new AbortController()
+      const priority: SharedPage['priority'] = { value: opts.priority ?? 1, promote: null }
+      const p = fetchPage(url, { ...opts, signal: ctl.signal }, priority)
+        .then((r) => {
+          // Written in the background: the caller has the page now (2–5 ms of disk work saved per
+          // album open / listing). Reads of this URL wait for the write (see readCache).
+          if (useCache) {
+            const w: Promise<void> = writeCache(url, r.status, r.html, r.fetchedAt).finally(() => {
+              if (pendingWrites.get(url) === w) pendingWrites.delete(url)
+            })
+            pendingWrites.set(url, w)
+          }
           return r
         })
         .catch((e: unknown) => {
@@ -301,9 +376,14 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
           }
           throw e
         })
-        .finally(() => inflight.delete(url))
-      inflight.set(url, p)
-      return p
+        .finally(() => {
+          if (inflight.get(url)?.promise === p) inflight.delete(url)
+        })
+      const shared: SharedPage = { promise: p, ctl, priority, abortable: 0, pinned: false }
+      // Nobody may be listening by the time it fails (every caller aborted): that's fine.
+      p.catch(() => {})
+      inflight.set(url, shared)
+      return joinShared(url, shared, opts)
     },
 
     async fetchBytes(url, opts = {}) {

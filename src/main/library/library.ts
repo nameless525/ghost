@@ -80,10 +80,10 @@ export class Library {
     if (ids.length === 0) return []
     const unique = [...new Set(ids)]
     const map = new Map<ID, TrackView>()
-    for (let i = 0; i < unique.length; i += 500) {
-      const chunk = await this.catalog.tracks(unique.slice(i, i + 500))
-      for (const t of chunk) map.set(t.id, t)
-    }
+    // Chunks in flight together: the worker answers one while this thread takes in the previous.
+    const chunks: Promise<TrackView[]>[] = []
+    for (let i = 0; i < unique.length; i += 500) chunks.push(this.catalog.tracks(unique.slice(i, i + 500)))
+    for (const chunk of await Promise.all(chunks)) for (const t of chunk) map.set(t.id, t)
     const out: TrackView[] = []
     for (const id of ids) {
       const t = map.get(id)

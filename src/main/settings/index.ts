@@ -15,7 +15,8 @@ export interface SettingsServiceDeps {
 }
 
 export function createSettingsService({ store, broadcast, pickFolder }: SettingsServiceDeps): SettingsAPI {
-  store.onChange((next) => broadcast('settings:changed', structuredClone(next)))
+  // `next` is the store's own (never mutated, replaced on every set) object; send() serialises it.
+  store.onChange((next) => broadcast('settings:changed', next))
   return {
     async get(): Promise<Settings> {
       return store.get()

@@ -34,8 +34,9 @@ export const usePlayer = create<PlayerState>(() => initial)
 /**
  * performance.now() stops while the machine sleeps (macOS/Linux), so timeOrigin + now() falls
  * behind the wall clock by every sleep, while main stamps positions with Date.now(). Re-anchored
- * on every state push (≥ 1 Hz while playing); without it the live position sat seconds-to-hours
- * in the past after a lid close (seek bars at 0, no beat pulses) until a reload.
+ * on every state push (main pushes on any change, on > 25 ms drift, after a wall-clock jump such as
+ * waking from sleep, and at least every 15 s while playing); without it the live position sat
+ * seconds-to-hours in the past after a lid close (seek bars at 0, no beat pulses) until a reload.
  */
 let clockSkew = 0
 function resyncClock(): void {

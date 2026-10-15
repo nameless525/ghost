@@ -103,21 +103,23 @@ export class DownloadManager implements DownloadsAPI {
   /** Re-queue work interrupted by a quit/crash and start processing. */
   resume(): void {
     const interrupted = this.repo.unfinished()
-    for (const rec of interrupted) {
-      const mem = this.items.get(rec.id) ?? rec
-      if (mem.status !== 'queued') {
-        mem.status = 'queued'
-        mem.bytes = 0
-        mem.progress = 0
-        this.repo.save(mem)
+    this.repo.batch(() => {
+      for (const rec of interrupted) {
+        const mem = this.items.get(rec.id) ?? rec
+        if (mem.status !== 'queued') {
+          mem.status = 'queued'
+          mem.bytes = 0
+          mem.progress = 0
+          this.repo.save(mem)
+        }
+        this.remember(mem)
+        if (mem.batch) {
+          const b = this.batches.get(mem.batch) ?? { label: mem.albumTitle || 'downloads', total: 0, done: 0, failed: 0, canceled: 0, cover: mem.cover }
+          b.total++
+          this.batches.set(mem.batch, b)
+        }
       }
-      this.remember(mem)
-      if (mem.batch) {
-        const b = this.batches.get(mem.batch) ?? { label: mem.albumTitle || 'downloads', total: 0, done: 0, failed: 0, canceled: 0, cover: mem.cover }
-        b.total++
-        this.batches.set(mem.batch, b)
-      }
-    }
+    })
     if (interrupted.length) this.emitChanged()
     this.pump()
   }
@@ -214,6 +216,7 @@ export class DownloadManager implements DownloadsAPI {
     }
     const batch = fresh.length > 1 ? randomUUID() : null
     const now = this.now()
+    const records: DownloadRecord[] = []
     for (const t of fresh) {
       const rec: DownloadRecord = {
         id: randomUUID(),
@@ -233,9 +236,13 @@ export class DownloadManager implements DownloadsAPI {
         batch,
         finishedAt: null
       }
-      this.repo.insert(rec)
-      this.remember(rec)
+      records.push(rec)
     }
+    // One transaction for the lot (an album or playlist can be hundreds of rows).
+    this.repo.batch(() => {
+      for (const rec of records) this.repo.insert(rec)
+    })
+    for (const rec of records) this.remember(rec)
     if (batch) {
       const b: Batch = { label: label ?? `${fresh.length} tracks`, total: fresh.length, done: 0, failed: 0, canceled: 0, cover: fresh[0].cover }
       this.batches.set(batch, b)

@@ -23,6 +23,7 @@ import { delimiter, join } from 'node:path'
 import { NetError } from '../net/errors'
 import { GHOST_USER_AGENT } from '../net/http'
 import { HostLimiter, type Priority } from '../net/limiter'
+import { trackChild, untrackChild } from './children'
 
 export const YTDLP_RELEASE_BASE = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download'
 export const UPDATE_INTERVAL_MS = 7 * 24 * 3600_000
@@ -321,10 +322,18 @@ export class YtDlp {
     const dirs = searchDirs(process.env, this.platform)
     const env = { ...process.env, PATH: dirs.join(this.platform === 'win32' ? ';' : delimiter), PYTHONIOENCODING: 'utf-8', ...extraEnv }
     return new Promise((resolve, reject) => {
-      execFile(
+      const child = execFile(
         file,
         args,
-        { timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: 256 * 1024 * 1024, env, signal: opts.signal, windowsHide: true, encoding: 'utf8' },
+        {
+          timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
+          maxBuffer: 256 * 1024 * 1024,
+          env,
+          signal: opts.signal,
+          windowsHide: true,
+          encoding: 'utf8'
+        },
         (err, stdout, stderr) => {
           if (!err) return resolve({ stdout, stderr, code: 0 })
           const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string; code?: unknown }
@@ -335,6 +344,12 @@ export class YtDlp {
           reject(classifyYtDlpError(String(stderr ?? ''), e.message))
         }
       )
+      // Ended by the main thread when the app quits (see ./children.ts), whichever thread runs this.
+      const pid = child.pid
+      trackChild(pid)
+      child.once('exit', () => untrackChild(pid))
+      // A spawn failure (ENOENT…) never gets an 'exit'.
+      child.once('error', () => untrackChild(pid))
     })
   }
 

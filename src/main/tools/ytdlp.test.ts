@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { isNetError } from '../net/errors'
+import { killTrackedChildren, trackedChildren } from './children'
 import { classifyYtDlpError, parseSha256Sums, releaseAssetName, searchDirs, UPDATE_INTERVAL_MS, versionDate, YTDLP_RELEASE_BASE, YtDlp } from './ytdlp'
 
 const dirs: string[] = []
@@ -22,7 +23,7 @@ if [ "$1" = "--version" ]; then echo ${version}; exit 0; fi
 if [ "$1" = "-U" ]; then echo "Updated yt-dlp to stable@2026.09.01"; touch "$(dirname "$0")/updated"; exit 0; fi
 for a in "$@"; do
   if [ "$a" = "--sleep" ]; then sleep 0.3; fi
-  if [ "$a" = "--hang" ]; then sleep 5; fi
+  if [ "$a" = "--hang" ]; then exec sleep 5; fi
   if [ "$a" = "--fail" ]; then echo "ERROR: [youtube] abcdefghijk: Video unavailable. This video is private" >&2; exit 1; fi
 done
 for a in "$@"; do printf '%s\\n' "$a"; done
@@ -161,6 +162,22 @@ describe.runIf(unix)('yt-dlp: locate / download / update / run', () => {
     const tolerated = await y.run(['--fail'], { allowFailure: true })
     expect(tolerated.code).toBe(1)
     expect(tolerated.stderr).toMatch(/Video unavailable/)
+  })
+
+  it('registers each run so quitting can end it, and forgets it once it exits', async () => {
+    const sys = tmp()
+    writeFileSync(join(sys, 'yt-dlp'), fakeBinary('2026.09.30'))
+    chmodSync(join(sys, 'yt-dlp'), 0o755)
+    const y = new YtDlp({ binDir: join(tmp(), 'bin'), systemDirs: [sys], jsRuntime: null, now: () => NOW, autoUpdate: false })
+    await y.ensure()
+    const before = trackedChildren().length
+    const run = y.run(['--hang'], { timeoutMs: 10_000 }).catch((e) => e)
+    for (let i = 0; i < 100 && trackedChildren().length === before; i++) await new Promise((r) => setTimeout(r, 10))
+    expect(trackedChildren().length).toBe(before + 1)
+    killTrackedChildren() // what the main thread does on quit
+    expect(isNetError(await run)).toBe(true) // the run fails instead of hanging on
+    for (let i = 0; i < 50 && trackedChildren().length > before; i++) await new Promise((r) => setTimeout(r, 10))
+    expect(trackedChildren().length).toBe(before)
   })
 
   it('a missing binary dir is created on download', async () => {

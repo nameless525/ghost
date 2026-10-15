@@ -28,7 +28,8 @@ import { ACCESS_DENIED } from '../net/errors'
 import type { SessionData, SessionStore } from './session'
 import { fisherYates, smartShuffle, type Rng } from './shuffle'
 
-export type PlayerCatalog = Pick<CatalogService, 'album' | 'resolveSources' | 'getAnalysis' | 'peekAnalysis' | 'recordAnalysis' | 'markSourceFailed'>
+export type PlayerCatalog = Pick<CatalogService, 'album' | 'resolveSources' | 'getAnalysis' | 'peekAnalysis' | 'recordAnalysis' | 'markSourceFailed'> &
+  Partial<Pick<CatalogService, 'warmSources'>>
 
 export interface PlayerLibrary {
   decorateOne(t: TrackView): TrackView
@@ -53,7 +54,15 @@ export interface PlayerDeps {
   random?: Rng
   /** Heartbeat period while playing; 0 disables the timer (tests call tick()). */
   heartbeatMs?: number
+  /**
+   * Volume / mute / seek echoes are coalesced to at most one 'player:state' per this many ms (a
+   * dragged volume slider sends ~120 calls a second). Status and track changes are never delayed.
+   * Default 0 (no coalescing).
+   */
+  echoIntervalMs?: number
   sessionDebounceMs?: number
+  /** Latency milestones (click → first sound), e.g. perf.ts `perfMark`. */
+  mark?: (name: string) => void
 }
 
 /** Restart instead of going back when prev() is pressed past this point. */
@@ -62,6 +71,14 @@ export const PREV_RESTART_MS = 3000
 export const HISTORY_MIN_MS = 30000
 /** Stop auto-skipping after this many tracks in a row failed to play. */
 export const MAX_FAIL_STREAK = 8
+/** When a queue starts, the catalog pre-resolves this many tracks after the first (see warmUpcoming). */
+export const WARM_AHEAD = 2
+/**
+ * The heartbeat re-sends the position only when the renderer's extrapolation (positionMs +
+ * elapsed since positionAt) is off by more than this, or when nothing was sent for HEARTBEAT_KEEPALIVE_MS.
+ */
+export const HEARTBEAT_DRIFT_MS = 25
+export const HEARTBEAT_KEEPALIVE_MS = 15_000
 
 interface Attempt {
   /** Engine id: the queue item uid (or a preview id). */
@@ -122,6 +139,9 @@ export function localSource(path: string): ResolvedSource {
 }
 
 const summaryOf = (s: ResolvedSource): SourceSummary => ({ provider: s.provider, format: s.format, lossless: s.lossless, bitrateKbps: s.bitrateKbps, confidence: s.confidence })
+const sameSummary = (a: SourceSummary | null, s: ResolvedSource): boolean =>
+  !!a && a.provider === s.provider && a.format === s.format && a.lossless === s.lossless && a.bitrateKbps === s.bitrateKbps && a.confidence === s.confidence
+const sameAnalysis = (a: TrackAnalysisSummary | null, b: TrackAnalysisSummary): boolean => !!a && a.bpm === b.bpm && a.intensity === b.intensity && a.lufs === b.lufs
 
 export function analysisFromResult(r: OfflineAnalysisResult): TrackAnalysis {
   return {
@@ -200,12 +220,21 @@ export class Player implements PlayerAPI {
   private lastNotice = new Map<string, number>()
 
   private emitQueued = false
+  /** Pending coalesced (non-urgent) broadcast. */
+  private emitTimer: ReturnType<typeof setTimeout> | null = null
+  /** performance.now() of the last 'player:state' broadcast (echo coalescing). */
+  private lastEmitMono = -Infinity
+  /** What the renderer extrapolates from: the position fields of the last broadcast. */
+  private lastSent: { status: PlayStatus; positionMs: number; positionAt: number; at: number } | null = null
+  private readonly heartbeatMs: number
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private lastSaveAt = 0
   private mutations = 0
   private pending = new Set<Promise<unknown>>()
   private disposed = false
+  /** Load seq whose first 'playing' was already marked (latency tracing). */
+  private audibleMarked = -1
 
   constructor(deps: PlayerDeps) {
     this.deps = deps
@@ -232,11 +261,8 @@ export class Player implements PlayerAPI {
       error: null,
       voices: null
     }
-    const hb = deps.heartbeatMs ?? 1000
-    if (hb > 0) {
-      this.heartbeat = setInterval(() => this.tick(), hb)
-      this.heartbeat.unref?.()
-    }
+    // The heartbeat only runs while something plays (see syncHeartbeat): no wakeups when idle.
+    this.heartbeatMs = deps.heartbeatMs ?? 1000
   }
 
   // ===========================================================================
@@ -309,18 +335,69 @@ export class Player implements PlayerAPI {
     const ev: PlayerStateEvent = this.lightSnapshot()
     if (this.s.queue !== this.sentQueue) {
       this.sentQueue = this.s.queue
-      ev.queue = [...this.s.queue]
+      // Not copied: the queue array is replaced, never mutated, and send() serialises it right away.
+      ev.queue = this.s.queue
     }
     return ev
   }
 
-  private changed(): void {
-    if (this.emitQueued || this.disposed) return
+  /**
+   * Schedule a 'player:state' broadcast (coalesced per microtask). `urgent = false` (volume, mute,
+   * seek echoes) additionally limits those to one per `echoIntervalMs`.
+   */
+  private changed(urgent = true): void {
+    if (this.disposed || this.emitQueued) return
+    const gap = this.deps.echoIntervalMs ?? 0
+    if (!urgent && gap > 0) {
+      if (this.emitTimer) return
+      const wait = this.lastEmitMono + gap - performance.now()
+      if (wait > 0) {
+        this.emitTimer = setTimeout(() => this.emit(), wait)
+        return
+      }
+    }
     this.emitQueued = true
-    queueMicrotask(() => {
-      this.emitQueued = false
-      if (!this.disposed) this.deps.broadcast('player:state', this.stateEvent())
-    })
+    queueMicrotask(() => this.emit())
+  }
+
+  private emit(): void {
+    this.emitQueued = false
+    if (this.emitTimer) {
+      clearTimeout(this.emitTimer)
+      this.emitTimer = null
+    }
+    if (this.disposed) return
+    const ev = this.stateEvent()
+    this.lastEmitMono = performance.now()
+    this.lastSent = { status: ev.status, positionMs: ev.positionMs, positionAt: ev.positionAt, at: this.now() }
+    this.deps.broadcast('player:state', ev)
+  }
+
+  /** Run the heartbeat only while something is (about to be) audible. */
+  private syncHeartbeat(): void {
+    const active = this.s.status === 'playing' || this.s.status === 'buffering' || this.s.status === 'loading'
+    if (active && !this.heartbeat && this.heartbeatMs > 0 && !this.disposed) {
+      this.heartbeat = setInterval(() => this.tick(), this.heartbeatMs)
+      this.heartbeat.unref?.()
+    } else if (!active && this.heartbeat) {
+      clearInterval(this.heartbeat)
+      this.heartbeat = null
+    }
+  }
+
+  /**
+   * Whether the renderer's copy of the state needs refreshing on a heartbeat: the status changed
+   * since the last broadcast, its position extrapolation (positionMs + time since positionAt) is off
+   * by more than HEARTBEAT_DRIFT_MS (a loop point, a stall, clock drift), or the keepalive is due.
+   */
+  private rendererStale(): boolean {
+    const last = this.lastSent
+    const now = this.now()
+    if (!last || last.status !== this.s.status || now - last.at >= HEARTBEAT_KEEPALIVE_MS) return true
+    this.refreshPosition()
+    const predicted = last.positionMs + (last.status === 'playing' ? now - last.positionAt : 0)
+    const actual = this.s.positionMs + (this.s.status === 'playing' ? now - this.s.positionAt : 0)
+    return Math.abs(actual - predicted) > HEARTBEAT_DRIFT_MS
   }
 
   private setStatus(st: PlayStatus): void {
@@ -335,6 +412,7 @@ export class Player implements PlayerAPI {
       }
     }
     this.s.status = st
+    this.syncHeartbeat()
     this.checkPlay()
   }
 
@@ -483,6 +561,10 @@ export class Player implements PlayerAPI {
     }
   }
 
+  private mark(name: string): void {
+    this.deps.mark?.(name)
+  }
+
   private markFailed(a: Attempt, message: string): void {
     const src = a.sources[a.srcIdx]
     a.lastError = message
@@ -511,6 +593,9 @@ export class Player implements PlayerAPI {
     const i = this.s.queue.findIndex((q) => q.uid === uid)
     if (i < 0) return
     const q = this.s.queue[i]
+    // Unchanged (a replay, a fallback to an equivalent source): keep the queue's identity, so the
+    // (possibly long) queue isn't re-sent to the renderer.
+    if (sameSummary(q.track.source, src)) return
     this.s.queue = this.s.queue.slice()
     this.s.queue[i] = { ...q, track: { ...q.track, source: summaryOf(src) } }
   }
@@ -584,6 +669,7 @@ export class Player implements PlayerAPI {
       startMs: Math.max(0, startMs)
     }
     this.cur = cur
+    this.mark('play:load')
     this.changed()
     this.scheduleSave()
     if (!reuse) {
@@ -598,6 +684,7 @@ export class Player implements PlayerAPI {
         cur.remoteResolved = true
       }
       if (seq !== this.loadSeq) return
+      this.mark('play:resolved')
     }
     await this.startSource(cur)
   }
@@ -615,6 +702,7 @@ export class Player implements PlayerAPI {
         continue
       }
       cur.loaded = true
+      this.mark('play:engine-set')
       this.seekHold = null
       this.engineState = 'loading'
       this.uidTrack.set(cur.id, cur.trackId)
@@ -806,6 +894,10 @@ export class Player implements PlayerAPI {
       case 'playing':
         this.failStreak.clear()
         this.setStatus('playing')
+        if (this.audibleMarked !== cur.seq) {
+          this.audibleMarked = cur.seq
+          this.mark('play:playing')
+        }
         break
       case 'paused':
         this.setStatus('paused')
@@ -973,16 +1065,22 @@ export class Player implements PlayerAPI {
     full ??= analysisFromResult(result)
     const summary: TrackAnalysisSummary = { bpm: full.bpm, intensity: full.intensity, lufs: full.lufs }
     let touched = false
-    this.s.queue = this.s.queue.map((q) => {
-      if (q.track.id !== trackId) return q
-      touched = true
+    let queueTouched = false
+    const queue = this.s.queue.map((q) => {
+      if (q.track.id !== trackId || sameAnalysis(q.track.analysis, summary)) return q
+      queueTouched = true
       return { ...q, track: { ...q.track, analysis: summary } }
     })
+    // Only a real change replaces the queue (and so re-sends it).
+    if (queueTouched) {
+      this.s.queue = queue
+      touched = true
+    }
     if (this.item()?.track.id === trackId) {
       this.s.currentAnalysis = full
       touched = true
     }
-    if (this.s.preview && this.s.preview.track.id === trackId) {
+    if (this.s.preview && this.s.preview.track.id === trackId && !sameAnalysis(this.s.preview.track.analysis, summary)) {
       this.s.preview = { ...this.s.preview, track: { ...this.s.preview.track, analysis: summary } }
       touched = true
     }
@@ -1007,7 +1105,8 @@ export class Player implements PlayerAPI {
     }
     this.checkPlay()
     if (this.s.status === 'playing' || this.s.status === 'buffering') {
-      this.changed()
+      // The renderer extrapolates the position itself: only correct it when it's off.
+      if (this.rendererStale()) this.changed()
       if (this.now() - this.lastSaveAt > 5000) this.scheduleSave()
     }
   }
@@ -1158,7 +1257,30 @@ export class Player implements PlayerAPI {
     this.s.queue = items
     this.s.context = context
     this.failStreak.clear()
-    return this.loadIndex(startIdx, true, 0)
+    const loading = this.loadIndex(startIdx, true, 0)
+    // After the first track's own resolve went out (it stays ahead: the warm-up is background priority).
+    this.warmUpcoming(startIdx)
+    return loading
+  }
+
+  /**
+   * Ask the catalog to resolve the next WARM_AHEAD tracks' sources now (fire-and-forget, background
+   * priority): the preload only reaches for the next track once the first has started, so a quick
+   * skip, or two, would otherwise wait on a page request for each. Downloaded tracks need nothing.
+   */
+  private warmUpcoming(from: number): void {
+    if (!this.catalog.warmSources) return
+    const ids: ID[] = []
+    for (let i = from + 1; i < this.s.queue.length && ids.length < WARM_AHEAD; i++) {
+      const t = this.s.queue[i].track
+      if (!t.downloaded && !ids.includes(t.id)) ids.push(t.id)
+    }
+    if (!ids.length) return
+    try {
+      this.catalog.warmSources(ids)
+    } catch (e) {
+      console.error('[player] warmSources failed:', e)
+    }
   }
 
   // ===========================================================================
@@ -1169,6 +1291,7 @@ export class Player implements PlayerAPI {
   }
 
   async playTracks(trackIds: ID[], startIndex = 0, context?: PlayContext): Promise<void> {
+    this.mark('play:request')
     const ids = (trackIds ?? []).filter((x) => typeof x === 'string')
     const tracks = await this.library.fetchTracks(ids)
     const found = new Set(tracks.map((t) => t.id))
@@ -1177,12 +1300,14 @@ export class Player implements PlayerAPI {
   }
 
   async playAlbum(albumId: ID, startIndex = 0): Promise<void> {
+    this.mark('play:request')
     const detail = await this.catalog.album(albumId)
     const tracks = detail.tracks.map((t) => this.library.decorateOne(t))
     void this.setQueue(tracks, startIndex, { kind: 'album', id: albumId, title: detail.album.title })
   }
 
   async playPlaylist(playlistId: ID, startIndex = 0): Promise<void> {
+    this.mark('play:request')
     const detail = await this.deps.playlists.get(playlistId)
     void this.setQueue(
       detail.items.map((i) => i.track),
@@ -1270,7 +1395,7 @@ export class Player implements PlayerAPI {
     } else if (this.cur) this.cur.startMs = to
     this.s.positionMs = to
     this.s.positionAt = this.now()
-    this.changed()
+    this.changed(false)
     this.scheduleSave()
   }
 
@@ -1278,14 +1403,14 @@ export class Player implements PlayerAPI {
     const v = Math.max(0, Math.min(1, Number(volume) || 0))
     this.s.volume = v
     this.safe(() => this.engine.setVolumeDb(sliderToDb(v)))
-    this.changed()
+    this.changed(false)
     this.scheduleSave()
   }
 
   async setMuted(muted: boolean): Promise<void> {
     this.s.muted = !!muted
     this.safe(() => this.engine.setMuted(this.s.muted))
-    this.changed()
+    this.changed(false)
     this.scheduleSave()
   }
 
@@ -1503,14 +1628,15 @@ export class Player implements PlayerAPI {
       pv.remoteResolved = true
     }
     if (point) pv.startMs = await point
-    if (pv !== this.pv) return
+    if (pv !== this.pv || pv.seq !== this.pvSeq) return
     await this.startPreviewSource(pv)
   }
 
   private async startPreviewSource(pv: Preview): Promise<void> {
     for (;;) {
       const src = await this.nextSource(pv)
-      if (pv !== this.pv) return
+      // A newer preview() call (still fetching its track, so not yet in this.pv) supersedes this one.
+      if (pv !== this.pv || pv.seq !== this.pvSeq) return
       if (!src) {
         this.clearPreviewState()
         return
@@ -1592,5 +1718,7 @@ export class Player implements PlayerAPI {
     this.disposed = true
     if (this.heartbeat) clearInterval(this.heartbeat)
     this.heartbeat = null
+    if (this.emitTimer) clearTimeout(this.emitTimer)
+    this.emitTimer = null
   }
 }

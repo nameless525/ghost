@@ -54,6 +54,8 @@ export class FakeEngine implements EngineBridge {
   posMs = 0
   /** When set, setCurrent / download throw this error. */
   throwOnSetCurrent: string | null = null
+  /** Clock for position().at (default: the real Date.now). */
+  clock: () => number = Date.now
   devices = [
     { id: 'default', name: 'System default', isDefault: true },
     { id: 'dac', name: 'USB DAC', isDefault: false }
@@ -135,7 +137,7 @@ export class FakeEngine implements EngineBridge {
     this.previewing = null
   }
   position(): EnginePosition {
-    return { id: this.current?.id ?? null, positionMs: this.posMs, durationMs: this.current?.expectedDurationMs ?? null, playing: this.playing, at: Date.now() }
+    return { id: this.current?.id ?? null, positionMs: this.posMs, durationMs: this.current?.expectedDurationMs ?? null, playing: this.playing, at: this.clock() }
   }
   listDevices() {
     return this.devices
@@ -257,7 +259,7 @@ export function httpSource(trackId: ID, tag: string, over: Partial<ResolvedSourc
 }
 
 /** The catalog methods the services actually use (so additions to CatalogService don't break the fake). */
-export type UsedCatalog = Pick<CatalogService, 'tracks' | 'album' | 'albumOf' | 'queryTrackIds' | 'resolveSources' | 'getAnalysis' | 'peekAnalysis' | 'recordAnalysis' | 'markSourceFailed'>
+export type UsedCatalog = Pick<CatalogService, 'tracks' | 'album' | 'albumOf' | 'queryTrackIds' | 'resolveSources' | 'getAnalysis' | 'peekAnalysis' | 'recordAnalysis' | 'markSourceFailed' | 'warmSources'>
 
 export class FakeCatalog implements UsedCatalog {
   tracksById = new Map<ID, TrackView>()
@@ -274,6 +276,8 @@ export class FakeCatalog implements UsedCatalog {
   smart: (query: string) => ID[] = () => []
   /** Optional gate: resolution waits for this promise. */
   gate: Promise<void> | null = null
+  /** Optional gate: tracks() waits for this promise. */
+  tracksGate: Promise<void> | null = null
 
   addTracks(...tracks: TrackView[]): this {
     for (const t of tracks) {
@@ -305,6 +309,7 @@ export class FakeCatalog implements UsedCatalog {
     return this.games.get(id) ?? null
   }
   async tracks(ids: ID[]) {
+    if (this.tracksGate) await this.tracksGate
     return ids.map((id) => this.tracksById.get(id)).filter((t): t is TrackView => !!t).map((t) => ({ ...t }))
   }
   async searchTracks() {
@@ -344,6 +349,10 @@ export class FakeCatalog implements UsedCatalog {
   }
   markSourceFailed(trackId: ID, cacheKey: string, reason: string) {
     this.failedMarks.push({ trackId, cacheKey, reason })
+  }
+  warmed: ID[][] = []
+  warmSources(trackIds: ID[]) {
+    this.warmed.push([...trackIds])
   }
   async albumOf(trackId: ID) {
     const t = this.tracksById.get(trackId)

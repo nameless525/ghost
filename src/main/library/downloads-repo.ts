@@ -1,7 +1,7 @@
 // Persistence for the `downloads` table: the download queue (survives restarts) and the
 // record of finished downloads (drives TrackView.downloaded and local-file playback).
 import type { DownloadItem, DownloadStatus, ID } from '../../shared/types'
-import type { DB } from '../db'
+import { tx, type DB } from '../db'
 
 export interface DownloadRecord extends DownloadItem {
   format: string | null
@@ -56,6 +56,14 @@ function fromRow(r: Row): DownloadRecord {
 export class DownloadsRepo {
   constructor(private readonly db: DB) {}
 
+  /**
+   * Run several writes as one transaction: one commit (and one wait for the write lock the catalog
+   * worker shares) instead of one per row, e.g. queueing a 500-track album. Re-entrant.
+   */
+  batch<T>(fn: () => T): T {
+    return this.db.isTransaction ? fn() : tx(this.db, fn)
+  }
+
   insert(rec: DownloadRecord): void {
     this.db
       .prepare(
@@ -69,9 +77,9 @@ export class DownloadsRepo {
   save(rec: DownloadRecord): void {
     this.db
       .prepare(
-        `UPDATE downloads SET path = ?, format = ?, status = ?, bytes = ?, total_bytes = ?, error = ?, title = ?, game_name = ?, album_title = ?, cover = ?, updated_at = ?, finished_at = ? WHERE id = ?`
+        `UPDATE downloads SET path = ?, format = ?, status = ?, bytes = ?, total_bytes = ?, error = ?, title = ?, game_name = ?, album_title = ?, cover = ?, batch = ?, updated_at = ?, finished_at = ? WHERE id = ?`
       )
-      .run(rec.path, rec.format, rec.status, Math.round(rec.bytes), rec.totalBytes, rec.error, rec.title, rec.gameName, rec.albumTitle, rec.cover, Date.now(), rec.finishedAt, rec.id)
+      .run(rec.path, rec.format, rec.status, Math.round(rec.bytes), rec.totalBytes, rec.error, rec.title, rec.gameName, rec.albumTitle, rec.cover, rec.batch, Date.now(), rec.finishedAt, rec.id)
   }
 
   get(id: ID): DownloadRecord | null {

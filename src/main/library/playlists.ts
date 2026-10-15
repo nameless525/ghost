@@ -111,7 +111,9 @@ export class Playlists implements PlaylistsAPI {
   async list(): Promise<Playlist[]> {
     const rows = this.db.prepare('SELECT * FROM playlists ORDER BY updated_at DESC, created_at DESC').all() as unknown as PlaylistRow[]
     const idsByPl = new Map<ID, ID[]>()
-    for (const r of rows) idsByPl.set(r.id, r.kind === 'smart' ? await this.smartIds(r.query) : [])
+    // Smart playlists' queries go to the catalog worker together, not one round-trip after another.
+    const smart = await Promise.all(rows.map((r) => (r.kind === 'smart' ? this.smartIds(r.query) : Promise.resolve([] as ID[]))))
+    rows.forEach((r, i) => idsByPl.set(r.id, smart[i]))
     const items = this.db.prepare('SELECT playlist_id, track_id FROM playlist_items ORDER BY playlist_id, position ASC, rowid ASC').all() as { playlist_id: string; track_id: string }[]
     for (const it of items) idsByPl.get(it.playlist_id)?.push(it.track_id)
     const all = [...new Set([...idsByPl.values()].flat())]

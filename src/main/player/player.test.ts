@@ -3,7 +3,7 @@ import type { Settings } from '../../shared/types'
 import type { EngineTrack } from '../engine/types'
 import { sliderToDb } from '../engine/types'
 import { createLibrary } from '../library'
-import { HISTORY_MIN_MS, MAX_FAIL_STREAK, Player } from './player'
+import { HEARTBEAT_KEEPALIVE_MS, HISTORY_MIN_MS, MAX_FAIL_STREAK, Player } from './player'
 import { MemorySessionStore } from './session'
 import { FakeCatalog, FakeEngine, fakeBroadcast, flush, httpSource, makeTrack, memoryDb, testSettings } from './testing'
 
@@ -23,7 +23,7 @@ afterEach(() => {
   for (const p of players.splice(0)) p.dispose()
 })
 
-function setup(opts: { seed?: number; session?: MemorySessionStore; tracks?: number; files?: Set<string> } = {}) {
+function setup(opts: { seed?: number; session?: MemorySessionStore; tracks?: number; files?: Set<string>; echoIntervalMs?: number; heartbeatMs?: number } = {}) {
   const engine = new FakeEngine()
   const catalog = new FakeCatalog()
   const n = opts.tracks ?? 5
@@ -48,7 +48,8 @@ function setup(opts: { seed?: number; session?: MemorySessionStore; tracks?: num
     session,
     now: () => clock.t,
     random: mulberry32(opts.seed ?? 42),
-    heartbeatMs: 0,
+    heartbeatMs: opts.heartbeatMs ?? 0,
+    echoIntervalMs: opts.echoIntervalMs,
     sessionDebounceMs: 0
   })
   players.push(player)
@@ -621,6 +622,132 @@ describe('engine events', () => {
     expect(full.queueRev).toBe(changed[0].queueRev)
   })
 
+  it('heartbeat re-sends the position only when the renderer extrapolation drifts (or the keepalive is due)', async () => {
+    const t = setup()
+    t.engine.clock = () => t.clock.t
+    await t.player.playTracks(['t1'])
+    await t.settle()
+    t.started()
+    await flush()
+    t.bc.clear()
+    // steady playback: the renderer's positionMs + elapsed is right, nothing to send
+    for (let i = 0; i < 5; i++) {
+      t.clock.t += 1000
+      t.engine.posMs += 1000
+      t.player.tick()
+      await flush()
+    }
+    expect(t.bc.of('player:state')).toHaveLength(0)
+    // a jump (loop point, stall): sent
+    t.clock.t += 1000
+    t.engine.posMs = 2_000
+    t.player.tick()
+    await flush()
+    expect(t.bc.of('player:state').map((s) => s.positionMs)).toEqual([2_000])
+    // keepalive
+    t.bc.clear()
+    for (let i = 0; i < HEARTBEAT_KEEPALIVE_MS / 1000; i++) {
+      t.clock.t += 1000
+      t.engine.posMs += 1000
+      t.player.tick()
+      await flush()
+    }
+    expect(t.bc.of('player:state')).toHaveLength(1)
+  })
+
+  it('heartbeat sends a status the engine fixed up (missed state event)', async () => {
+    const t = setup()
+    t.engine.clock = () => t.clock.t
+    await t.player.playTracks(['t1'])
+    await t.settle()
+    expect(t.st().status).toBe('loading')
+    t.bc.clear()
+    t.engine.playing = true // the 'playing' state event never arrived
+    t.player.tick()
+    await flush()
+    expect(t.bc.last('player:state')?.status).toBe('playing')
+  })
+
+  it('runs the heartbeat timer only while something plays', async () => {
+    const t = setup({ heartbeatMs: 60_000 })
+    const timer = () => (t.player as unknown as { heartbeat: unknown }).heartbeat
+    expect(timer()).toBeNull()
+    await t.player.playTracks(['t1'])
+    expect(timer()).not.toBeNull() // loading
+    await t.settle()
+    t.started()
+    expect(timer()).not.toBeNull()
+    await t.player.pause()
+    expect(timer()).toBeNull()
+    await t.player.play()
+    expect(timer()).not.toBeNull()
+    t.player.dispose()
+    expect(timer()).toBeNull()
+  })
+
+  it('coalesces rapid volume echoes but never delays a status change', async () => {
+    const t = setup({ echoIntervalMs: 250 })
+    await t.player.playTracks(['t1'])
+    await t.settle()
+    t.started()
+    await flush()
+    await new Promise((r) => setTimeout(r, 260)) // past the interval since the last broadcast
+    t.bc.clear()
+    for (let i = 1; i <= 10; i++) await t.player.setVolume(i / 20)
+    await flush()
+    // the first echo goes out at once, the rest wait for the interval
+    expect(t.bc.of('player:state').map((s) => s.volume)).toEqual([0.05])
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    expect(t.bc.of('player:state').map((s) => s.volume)).toEqual([0.05, 0.5])
+    // the engine got every step
+    expect(t.engine.callsOf('setVolumeDb')).toHaveLength(10)
+    // a status change while an echo is pending goes out immediately (and carries the latest volume)
+    t.bc.clear()
+    await t.player.setVolume(0.6)
+    await t.player.setVolume(0.7)
+    await t.player.pause()
+    await flush()
+    const sent = t.bc.of('player:state')
+    expect(sent.at(-1)).toMatchObject({ status: 'paused', volume: 0.7 })
+    await new Promise((r) => setTimeout(r, 300))
+    await flush()
+    expect(t.bc.of('player:state').length).toBe(sent.length)
+  })
+
+  it('does not re-send the queue when a replayed track keeps its source', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    t.started()
+    await flush()
+    expect(t.st().queue[0].track.source?.provider).toBe('khinsider')
+    t.bc.clear()
+    await t.player.jumpTo(0)
+    await t.settle()
+    t.started()
+    await flush()
+    expect(t.bc.of('player:state').length).toBeGreaterThan(0)
+    expect(t.bc.of('player:state').some((s) => s.queue)).toBe(false)
+  })
+
+  it('asks the catalog to pre-resolve the next two (not downloaded) tracks when a queue starts', async () => {
+    const t = setup({ tracks: 5 })
+    await t.player.playTracks(['t1', 't2', 't3', 't4', 't5'], 1)
+    expect(t.catalog.warmed).toEqual([['t3', 't4']])
+    // the start track's own resolve went out first
+    expect(t.catalog.resolveCalls[0].trackId).toBe('t2')
+    await t.settle()
+    // a downloaded track needs no warming; the end of the queue is the end
+    t.catalog.warmed.length = 0
+    t.files.add('/dl/t5.mp3')
+    t.library.noteDownloaded('t5', '/dl/t5.mp3')
+    await t.player.playTracks(['t3', 't4', 't5'], 1)
+    expect(t.catalog.warmed).toEqual([])
+    await t.player.playTracks(['t1', 't5', 't2'], 0)
+    expect(t.catalog.warmed).toEqual([['t2']])
+  })
+
   it('does not let a stale engine position undo a seek', async () => {
     const t = setup()
     await t.player.playTracks(['t1'])
@@ -816,6 +943,29 @@ describe('volume, loop mode, previews, devices', () => {
     await Promise.all([p1, p2])
     await t.settle()
     expect(t.engine.callsOf('preview')).toHaveLength(1)
+    expect(t.st().preview?.track.id).toBe('t2')
+  })
+
+  it('an older preview resolving while a newer one still fetches its track never plays', async () => {
+    const t = setup()
+    let resolveA!: () => void
+    t.catalog.gate = new Promise((r) => (resolveA = r))
+    const p1 = t.player.preview('t1', 1000)
+    await flush() // t1 is resolving (gated)
+    let tracksB!: () => void
+    t.catalog.tracksGate = new Promise((r) => (tracksB = r))
+    const p2 = t.player.preview('t2', 2000) // fetching its track (gated)
+    await flush()
+    t.catalog.gate = null
+    resolveA() // t1's sources land: it has been superseded
+    await flush()
+    expect(t.engine.callsOf('preview')).toHaveLength(0)
+    t.catalog.tracksGate = null
+    tracksB()
+    await Promise.all([p1, p2])
+    await t.settle()
+    const calls = t.engine.callsOf('preview') as [EngineTrack, number][]
+    expect(calls.map(([track, start]) => [track.id.split(':').pop(), start])).toEqual([['t2', 2000]])
     expect(t.st().preview?.track.id).toBe('t2')
   })
 

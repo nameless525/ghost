@@ -16,6 +16,7 @@ import type { ArchiveListing, EngineBridge, EngineSource } from './engine/types'
 import type { Broadcast } from './ipc'
 import { createLibrary } from './library'
 import { dataDir, paths } from './paths'
+import { perfMark } from './perf'
 import { FileSessionStore, Player } from './player'
 import { applyEngineSettings, createSettingsService, SettingsStore } from './settings'
 
@@ -93,6 +94,7 @@ function unavailableCatalog(reason: string): CatalogService {
     recordAnalysis: () => {},
     resolveSources: async () => [],
     markSourceFailed: () => {},
+    warmSources: () => {},
     albumOf: async () => null,
     queryTrackIds: async () => []
   }
@@ -126,6 +128,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   db.exec('PRAGMA busy_timeout = 3000; PRAGMA wal_autocheckpoint = 0;')
   const settingsStore = new SettingsStore(join(dataDir(), 'settings.json'), defaultSettings(paths.defaultDownloads()))
   const getSettings = () => settingsStore.peek()
+  perfMark('services:db+settings')
 
   // --- catalog ---------------------------------------------------------------
   // Runs in a worker thread (catalog/worker.ts): its SQLite queries, crawling and HTML parsing would
@@ -160,6 +163,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   }
   // Background work (crawl, art prefetch) starts once the worker is up.
   catalog.start()
+  perfMark('services:catalog-host')
 
   // --- audio engine ----------------------------------------------------------
   let engine: EngineBridge
@@ -183,9 +187,11 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   }
   engineRef = engine
   applyEngineSettings(engine, settingsStore.peek(), null)
+  perfMark('services:engine')
 
   // --- library, player, downloads --------------------------------------------
   const { library, playlists, api: libraryApi } = createLibrary({ db, catalog, broadcast, getSettings })
+  perfMark('services:library')
 
   const sessionStore = new FileSessionStore(join(dataDir(), 'session.json'))
   const player = new Player({
@@ -196,7 +202,10 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
     getSettings,
     setLoopMode: (mode) => void settingsStore.set({ audio: { loopMode: mode } }),
     broadcast,
-    session: sessionStore
+    session: sessionStore,
+    mark: perfMark,
+    // A dragged volume slider calls setVolume ~120×/s: echo it at most ~30×/s (status changes are immediate).
+    echoIntervalMs: 33
   })
 
   const downloads = new DownloadManager({
@@ -226,10 +235,15 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   // --- restore ---------------------------------------------------------------
   // Not awaited: the window shouldn't wait on the catalog worker (restore fetches the queue's
   // tracks through it); the restored state is broadcast when it lands.
-  void player.restore(sessionStore.load()).catch((e) => console.error('[services] session restore failed:', e))
+  void player
+    .restore(sessionStore.load())
+    .then(() => perfMark('session:restored'))
+    .catch((e) => console.error('[services] session restore failed:', e))
   downloads.resume()
   // Startup writes on this connection are done: let the catalog worker open the DB now.
   catalogHost?.spawn()
+  perfMark('services:done')
+  if (process.env.GHOST_PERF_LOG) void catalog.status().then(() => perfMark('catalog:first-answer'), () => {})
 
   // --- the API ---------------------------------------------------------------
   const services: GhostServices = {

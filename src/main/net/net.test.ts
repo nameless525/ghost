@@ -37,6 +37,19 @@ describe('HostLimiter', () => {
     expect(order).toEqual(['interactive', 'background'])
   })
 
+  it('promotes a queued job', async () => {
+    const l = new HostLimiter({ concurrency: 1, spacingMs: 0 })
+    const order: string[] = []
+    let promote!: (p: 0 | 1 | 2) => void
+    const blocker = l.schedule(() => sleep(20))
+    const a = l.schedule(async () => void order.push('a'), 2)
+    const b = l.schedule(async () => void order.push('b'), 2, undefined, (p) => (promote = p))
+    const c = l.schedule(async () => void order.push('c'), 1)
+    promote(0)
+    await Promise.all([blocker, a, b, c])
+    expect(order).toEqual(['b', 'c', 'a'])
+  })
+
   it('aborting a queued job rejects it without running', async () => {
     const l = new HostLimiter({ concurrency: 1, spacingMs: 0 })
     const ac = new AbortController()
@@ -125,6 +138,57 @@ describe('http client', () => {
     const [a, b] = await Promise.all([c.pageFetch('https://example.test/d'), c.pageFetch('https://example.test/d')])
     expect(a.html).toBe('once')
     expect(b.html).toBe('once')
+    expect(f.calls.length).toBe(1)
+  })
+
+  it('one caller aborting a shared request does not fail the others', async () => {
+    const f = fake([async () => (await sleep(40), new Response('shared', { status: 200 }))])
+    const c = createHttpClient({ cacheDir: null, fetch: f.fetch })
+    const search = new AbortController()
+    const superseded = c.pageFetch('https://example.test/album', { signal: search.signal, priority: 0 })
+    const opened = c.pageFetch('https://example.test/album', { priority: 0 })
+    await sleep(5)
+    search.abort() // e.g. a newer search query
+    await expect(superseded).rejects.toSatisfy((e: unknown) => isNetError(e, 'aborted'))
+    expect((await opened).html).toBe('shared')
+    expect(f.calls.length).toBe(1)
+    // …but when every caller gave up, the request itself is aborted
+    const f2 = fake([async () => (await sleep(40), new Response('x', { status: 200 }))])
+    const c2 = createHttpClient({ cacheDir: null, fetch: f2.fetch })
+    const a1 = new AbortController()
+    const a2 = new AbortController()
+    const p1 = c2.pageFetch('https://example.test/y', { signal: a1.signal })
+    const p2 = c2.pageFetch('https://example.test/y', { signal: a2.signal })
+    await sleep(5)
+    a1.abort()
+    a2.abort()
+    await expect(Promise.all([p1, p2])).rejects.toSatisfy((e: unknown) => isNetError(e, 'aborted'))
+    expect((f2.calls[0].init?.signal as AbortSignal).aborted).toBe(true)
+  })
+
+  it('an interactive caller promotes a queued background request for the same page', async () => {
+    const order: string[] = []
+    const fetch = async (url: string) => {
+      order.push(new URL(url).pathname)
+      await sleep(10)
+      return new Response('ok', { status: 200 })
+    }
+    const c = createHttpClient({ cacheDir: null, fetch, policies: { 'q.test': { concurrency: 1, spacingMs: 0 } } })
+    const busy = c.pageFetch('https://q.test/busy', { priority: 2 })
+    const crawl = ['a', 'b', 'c'].map((n) => c.pageFetch(`https://q.test/${n}`, { priority: 2 }))
+    const album = c.pageFetch('https://q.test/c', { priority: 2 })
+    await sleep(1)
+    const open = c.pageFetch('https://q.test/c', { priority: 0 }) // the user opens the album the crawl queued
+    await Promise.all([busy, ...crawl, album, open])
+    expect(order).toEqual(['/busy', '/c', '/a', '/b'])
+  })
+
+  it('returns before the cache write lands, and a re-read still finds the page', async () => {
+    const f = fake([() => new Response('<html>p</html>', { status: 200 })])
+    const c = createHttpClient({ cacheDir: dir, fetch: f.fetch })
+    await c.pageFetch('https://example.test/fast', { ttlMs: 60_000 })
+    const again = await c.pageFetch('https://example.test/fast', { ttlMs: 60_000 })
+    expect(again).toMatchObject({ html: '<html>p</html>', fromCache: true })
     expect(f.calls.length).toBe(1)
   })
 

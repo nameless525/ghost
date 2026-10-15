@@ -65,9 +65,26 @@ export function registerArtScheme(): void {
   ])
 }
 
+// Debug counters (system perf stats): requests served, how, and how long they took.
+const stats = { requests: 0, errors: 0, memHits: 0, diskHits: 0, fetched: 0, processed: 0, bytes: 0, totalMs: 0, maxMs: 0, urls: new Set<string>() }
+
+/** Art protocol counters since the last reset (debugging). */
+export function artStats(reset = false) {
+  const { urls, ...rest } = stats
+  const out = { ...rest, distinct: urls.size, avgMs: stats.requests ? Math.round((stats.totalMs / stats.requests) * 100) / 100 : 0, totalMs: Math.round(stats.totalMs), maxMs: Math.round(stats.maxMs * 10) / 10 }
+  if (reset) {
+    Object.assign(stats, { requests: 0, errors: 0, memHits: 0, diskHits: 0, fetched: 0, processed: 0, bytes: 0, totalMs: 0, maxMs: 0 })
+    urls.clear()
+  }
+  return out
+}
+
 /** Call after app 'ready'. */
 export function handleArtProtocol(): void {
   protocol.handle(ART_SCHEME, async (req) => {
+    const t0 = performance.now()
+    stats.requests++
+    if (stats.urls.size < 50_000) stats.urls.add(req.url)
     let target: string | null = null
     let w: number | undefined
     try {
@@ -81,11 +98,16 @@ export function handleArtProtocol(): void {
     if (!target || !/^https?:\/\//i.test(target)) return new Response('bad art url', { status: 400, headers: { ...CORS, 'cache-control': 'no-store' } })
     try {
       const art = await getArt(target, w)
+      const ms = performance.now() - t0
+      stats.totalMs += ms
+      if (ms > stats.maxMs) stats.maxMs = ms
+      stats.bytes += art.bytes.length
       return new Response(new Uint8Array(art.bytes), {
         status: 200,
         headers: { ...CORS, 'content-type': art.type, 'content-length': String(art.bytes.length), 'cache-control': 'public, max-age=31536000, immutable' }
       })
     } catch (e) {
+      stats.errors++
       const status = isNetError(e, 'not_found') ? 404 : 502
       return new Response(null, { status, headers: { ...CORS, 'cache-control': 'no-store' } })
     }
@@ -174,7 +196,9 @@ async function readMeta(path: string, url: string): Promise<ArtMeta | null> {
 async function readCached(url: string, w?: number): Promise<CachedArt | null> {
   const p = cachePaths(url, w)
   const [meta, bytes] = await Promise.all([readMeta(p.meta, url), readFile(p.data).catch(() => null)])
-  return meta && bytes ? { bytes, type: meta.type, meta } : null
+  if (!meta || !bytes) return null
+  stats.diskHits++
+  return { bytes, type: meta.type, meta }
 }
 
 /** Cached image bytes (`w` = exact variant bucket), or null. */
@@ -340,6 +364,7 @@ async function loadBase(url: string): Promise<CachedArt> {
   // An older entry of unknown / oversized dimensions (e.g. an untouched GIF): re-process once.
   if (cached) return storeBase(url, cached.bytes, cached.type, false)
   const res = await fetchArt(url)
+  stats.fetched++
   const type = sniffType(res.bytes, res.contentType)
   if (!type) throw new NetError('parse', `not an image: ${url}`, { url })
   return storeBase(url, res.bytes, type, true)

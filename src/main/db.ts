@@ -13,6 +13,20 @@ export function openDb(file: string): DatabaseSync {
   return db
 }
 
+/**
+ * Close the main connection at quit (last thing): the last connection to close checkpoints the WAL
+ * and removes it, so the next start opens a clean file instead of replaying a large log.
+ */
+export function closeDb(): void {
+  if (!db) return
+  try {
+    db.close()
+  } catch (e) {
+    console.error('[db] close failed:', e)
+  }
+  db = null
+}
+
 export function getDb(): DatabaseSync {
   if (!db) throw new Error('DB not opened')
   return db

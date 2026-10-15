@@ -47,13 +47,18 @@ export class HostLimiter {
     this.pump()
   }
 
-  schedule<T>(run: () => Promise<T>, priority: Priority = 1, signal?: AbortSignal): Promise<T> {
+  /**
+   * Queue `run`. `onQueued` receives a `promote(priority)` function that moves the job to a more
+   * urgent queue while it is still waiting (e.g. an interactive request joined a background one).
+   */
+  schedule<T>(run: () => Promise<T>, priority: Priority = 1, signal?: AbortSignal, onQueued?: (promote: (p: Priority) => void) => void): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       if (signal?.aborted) return reject(new NetError('aborted', 'request aborted'))
       const job: Job = { run, resolve: resolve as (v: unknown) => void, reject, signal }
+      let at = priority
       if (signal) {
         job.onAbort = () => {
-          const q = this.queues[priority]
+          const q = this.queues[at]
           const i = q.indexOf(job)
           if (i >= 0) {
             q.splice(i, 1)
@@ -63,6 +68,14 @@ export class HostLimiter {
         signal.addEventListener('abort', job.onAbort, { once: true })
       }
       this.queues[priority].push(job)
+      onQueued?.((p) => {
+        if (p >= at) return
+        const i = this.queues[at].indexOf(job)
+        if (i < 0) return // already started
+        this.queues[at].splice(i, 1)
+        this.queues[p].push(job)
+        at = p
+      })
       this.pump()
     })
   }

@@ -237,6 +237,40 @@ describe('DownloadManager', () => {
     expect(statuses(await b.items())).toEqual({ t1: 'downloading', t2: 'downloading', t3: 'downloading', t4: 'queued' })
   })
 
+  it('queues an album in one transaction, and resumes after a restart in one', async () => {
+    const db = memoryDb()
+    const begins: string[] = []
+    const exec = db.exec.bind(db)
+    db.exec = (sql: string) => {
+      if (/^BEGIN/i.test(sql)) begins.push(sql)
+      return exec(sql)
+    }
+    const a = setup({ db })
+    await a.dm.enqueue({ albumId: 'al1' })
+    expect(begins).toHaveLength(1)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM downloads').get() as { n: number }).n).toBe(6)
+    await a.settle()
+    a.dm.dispose()
+    begins.length = 0
+    const b = setup({ db })
+    b.dm.resume() // 3 were mid-download: reset to queued together
+    expect(begins).toHaveLength(1)
+    await b.settle()
+  })
+
+  it('a retried item leaves its old batch (persisted, so a restart agrees)', async () => {
+    const db = memoryDb()
+    const a = setup({ db })
+    await a.dm.enqueue({ trackIds: ['t1', 't2'] })
+    await a.settle()
+    const t1 = await a.byTrack('t1')
+    await a.dm.cancel(t1.id)
+    await a.dm.retry(t1.id)
+    expect((db.prepare('SELECT batch FROM downloads WHERE id = ?').get(t1.id) as { batch: string | null }).batch).toBeNull()
+    const t2 = await a.byTrack('t2')
+    expect((db.prepare('SELECT batch FROM downloads WHERE id = ?').get(t2.id) as { batch: string | null }).batch).not.toBeNull()
+  })
+
   it('throttles downloads:changed to at most 4 per second', async () => {
     vi.useFakeTimers()
     const t = setup({ throttleMs: 250 })
