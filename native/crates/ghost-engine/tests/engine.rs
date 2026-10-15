@@ -348,7 +348,9 @@ fn skipping_to_preloaded_next_reuses_its_voice() {
     let dir = tmp_dir("promote");
     let rate = 48_000;
     let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
-    let sa = tone(rate, rate as usize * 3, 300.0, 0.3);
+    // A is long enough that the skip lands before the (faster than real time) render reaches its
+    // end, even on a heavily loaded machine.
+    let sa = tone(rate, rate as usize * 30, 300.0, 0.3);
     let sb = sweep(rate, rate as usize, 200.0, 3000.0, 0.4);
     wav::write_f32(&a, rate, 2, &sa).unwrap();
     wav::write_f32(&b, rate, 2, &sb).unwrap();
@@ -620,6 +622,30 @@ fn load_progress_follows_an_http_start_and_a_paused_file() {
     assert!(p.connected && p.bytes == size && p.total_bytes == Some(size) && !p.started && p.stalled_ms == 0, "{p:?}");
     engine.play();
     poll_load(&engine, Duration::from_secs(10), |p| p.started);
+}
+
+/// Stopping a track whose stream is still arriving leaves it fading out as a tail with a starved
+/// ring and a cancelled worker. The offline sink must not wait for frames that will never come:
+/// the next track still starts.
+#[test]
+fn offline_render_continues_after_stopping_a_starved_stream() {
+    let dir = tmp_dir("stop-starved");
+    let rate = 44_100;
+    let a = dir.join("a.wav");
+    wav::write_f32(&a, rate, 2, &sweep(rate, rate as usize * 4, 200.0, 4000.0, 0.5)).unwrap();
+    // 16 KB per 150 ms (~110 KB/s, a third of real time): the decoder mostly waits on the network,
+    // and the render drains whatever arrives at once.
+    let srv = serve(std::fs::read(&a).unwrap(), "a.wav", Duration::from_millis(150), false);
+    let (engine, _sink) = offline(&dir, 48_000);
+    for round in 0..3 {
+        engine.set_current(track(&format!("h{round}"), SourceSpec::http(srv.url.clone(), format!("stop-starved-{round}"))), 0, true);
+        poll_load(&engine, Duration::from_secs(20), |p| p.started);
+        std::thread::sleep(Duration::from_millis(60));
+        engine.stop();
+        engine.set_current(track(&format!("f{round}"), file(&a)), 0, true);
+        poll_load(&engine, Duration::from_secs(5), |p| p.id == format!("f{round}") && p.started);
+        engine.stop();
+    }
 }
 
 /// Before the server answers, `load_progress` says so and runs the stall clock toward the

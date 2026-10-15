@@ -7,6 +7,10 @@
 - The Windows and Linux builds are new and haven't had much real-world testing yet. If something doesn't work, please [open an issue](https://github.com/nameless525/ghost/issues).
 - The requests GHOST sends to music sites now name the project page, so site owners can see what it is.
 
+### Fixes
+- The engine builds on Windows: its build script no longer trips over Windows paths and line endings.
+- The engine's offline renderer (used by `ghost-cli render` and the tests) could stall for good after a stream was stopped mid-download, and could drop the error of a track that failed just as it ended. Playback in the app wasn't affected.
+
 ### Catalog refreshes while GHOST stays open
 - Sources are checked for a due refresh every 24 hours while GHOST is open, as well as at launch. The check follows the clock on the wall, so a Mac that sleeps overnight doesn't push it back.
 - Turning a source on in Settings starts adding it straight away instead of at the next launch. Turning one off stops its indexing, which picks up where it left off when you turn it back on.

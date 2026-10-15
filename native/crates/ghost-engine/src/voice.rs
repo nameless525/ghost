@@ -198,6 +198,13 @@ impl Voice {
         self.shared.failed.load(Ordering::Acquire)
     }
 
+    /// The engine let go of this voice (stopped or replaced). Its worker stops, possibly without
+    /// marking the end (cancelled mid-read), so frames that haven't arrived never will.
+    #[inline]
+    pub fn cancelled(&self) -> bool {
+        self.shared.cancel.load(Ordering::Acquire)
+    }
+
     /// No more frames will ever arrive and the ring is drained.
     #[inline]
     pub fn finished(&self, offline: bool) -> bool {

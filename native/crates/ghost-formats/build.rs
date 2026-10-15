@@ -133,7 +133,8 @@ const GME_PATCHES: &[(&str, &[(&str, &str)])] = &[
 fn patched(out: &Path, src: &Path, patches: &[(&str, &[(&str, &str)])]) -> PathBuf {
     let name = src.file_name().unwrap().to_string_lossy().into_owned();
     let Some((_, fixes)) = patches.iter().find(|(f, _)| *f == name) else { return src.to_path_buf() };
-    let mut text = std::fs::read_to_string(src).unwrap_or_else(|e| panic!("read {}: {e}", src.display()));
+    // Patches are written with \n line ends; a Windows checkout may have converted them to \r\n.
+    let mut text = std::fs::read_to_string(src).unwrap_or_else(|e| panic!("read {}: {e}", src.display())).replace("\r\n", "\n");
     for (find, replace) in fixes.iter() {
         assert_eq!(text.matches(find).count(), 1, "patch for {name} no longer applies: {find:?}");
         text = text.replacen(find, replace, 1);

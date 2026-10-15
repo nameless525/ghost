@@ -260,6 +260,10 @@ pub struct Controller {
     next: Option<Track>,
     preview: Option<Track>,
     prev_album_key: Option<String>,
+    /// Tracks that just ended on their own (key, id), newest last. A decoder's error can arrive
+    /// after the mixer ended its track (offline sinks end a failed voice at once): it's still
+    /// reported against the right id.
+    ended: VecDeque<(u64, String)>,
     playing: bool,
     state: (PlaybackState, Option<String>),
 
@@ -336,6 +340,7 @@ impl Controller {
             next: None,
             preview: None,
             prev_album_key: None,
+            ended: VecDeque::new(),
             playing: false,
             state: (PlaybackState::Idle, None),
             volume_db: 0.0,
@@ -1081,6 +1086,7 @@ impl Controller {
                     let nx = self.next.take().unwrap();
                     if let Some(old) = self.current.take() {
                         self.prev_album_key = old.load.album_key.clone();
+                        self.remember_ended(&old);
                     }
                     let id = nx.load.id.clone();
                     self.current = Some(nx);
@@ -1108,6 +1114,7 @@ impl Controller {
                 if self.current.as_ref().is_some_and(|c| c.key == key) {
                     let c = self.current.take().unwrap();
                     self.prev_album_key = c.load.album_key.clone();
+                    self.remember_ended(&c);
                     self.emit(EngineEvent::Ended { id: c.load.id.clone() });
                     self.update_state();
                 }
@@ -1125,6 +1132,13 @@ impl Controller {
             }
             MixerEvent::Paused => {}
         }
+    }
+
+    fn remember_ended(&mut self, t: &Track) {
+        if self.ended.len() == 8 {
+            self.ended.pop_front();
+        }
+        self.ended.push_back((t.key, t.load.id.clone()));
     }
 
     fn track_by_key(&mut self, key: u64) -> Option<(u8, &mut Track)> {
@@ -1183,6 +1197,10 @@ impl Controller {
                     if slot == 0 {
                         self.set_buffering(true);
                     }
+                } else if let Some((_, id)) = self.ended.iter().rev().find(|(k, _)| *k == key) {
+                    // Its track already ended (the error raced the mixer's end event).
+                    let id = id.clone();
+                    self.emit(EngineEvent::Error { id: Some(id), message, recoverable: true });
                 }
             }
             WorkerEvent::Eof { key } => {

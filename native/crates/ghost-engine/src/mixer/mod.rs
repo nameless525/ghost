@@ -443,7 +443,9 @@ impl Mixer {
 
     /// Offline sinks: would rendering `frames` now be free of buffer underruns?
     pub fn offline_ready(&self, frames: usize) -> bool {
-        let done = |v: &Voice| v.eof() || v.failed();
+        // A cancelled voice (a stopped track fading out as a tail) gets no more frames: waiting
+        // for them would stall the render for good.
+        let done = |v: &Voice| v.eof() || v.failed() || v.cancelled();
         let ready_running = |v: &Voice| v.available() >= frames || done(v);
         let ready_start = |v: &Voice| v.available() >= self.prefill.max(frames) || done(v);
         let check = |v: &Voice| if v.started { ready_running(v) } else { ready_start(v) };

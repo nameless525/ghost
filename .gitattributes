@@ -1,0 +1,3 @@
+# Vendored C/C++ libraries stay byte-for-byte as released (the native build patches some
+# of them by exact text), so Git never converts their line endings.
+native/vendor/** -text

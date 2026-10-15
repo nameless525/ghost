@@ -358,6 +358,13 @@ pub(crate) struct KaServer {
 }
 
 pub(crate) fn serve_keepalive(data: Arc<Vec<u8>>, per_16k: Duration, deny: impl Fn(u64) -> Option<u16> + Send + Sync + 'static) -> KaServer {
+    serve_keepalive_until(data, per_16k, deny, None)
+}
+
+/// [`serve_keepalive`], never sending bytes at or past `until`: a range that starts before it is
+/// cut short there (the client asks again for the rest), like a URL that stops working mid-file
+/// however large the client's requests are.
+pub(crate) fn serve_keepalive_until(data: Arc<Vec<u8>>, per_16k: Duration, deny: impl Fn(u64) -> Option<u16> + Send + Sync + 'static, until: Option<u64>) -> KaServer {
     use std::io::{BufRead, BufReader, Write};
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
@@ -398,7 +405,10 @@ pub(crate) fn serve_keepalive(data: Arc<Vec<u8>>, per_16k: Duration, deny: impl 
                     let spec = range.strip_prefix("bytes=").unwrap_or("0-");
                     let (a, b) = spec.split_once('-').unwrap();
                     let a: u64 = a.parse().unwrap_or(0);
-                    let b: u64 = b.parse().unwrap_or(len - 1).min(len - 1);
+                    let mut b: u64 = b.parse().unwrap_or(len - 1).min(len - 1);
+                    if let Some(u) = until.filter(|&u| a < u) {
+                        b = b.min(u - 1);
+                    }
                     if let Some(status) = deny(a) {
                         let _ = write!(w, "HTTP/1.1 {status} No\r\nContent-Length: 0\r\n\r\n");
                         continue;
@@ -463,9 +473,10 @@ fn ranges_are_bounded_and_connections_reused() {
 
 #[test]
 fn dead_url_mid_stream_fails_fast_and_a_fresh_url_resumes() {
-    // The URL works for the first MB, then answers 403 (an expiring YouTube URL).
+    // The URL works for the first MB, then answers 403 (an expiring YouTube URL). It never serves
+    // past 1 MB, even when the fetcher (sizing requests by latency) asks for the whole file at once.
     let data = test_data(4 * 1024 * 1024, 22);
-    let dead = serve_keepalive(data.clone(), Duration::ZERO, |a| (a >= 1024 * 1024).then_some(403));
+    let dead = serve_keepalive_until(data.clone(), Duration::ZERO, |a| (a >= 1024 * 1024).then_some(403), Some(1024 * 1024));
     let fresh = serve_keepalive(data.clone(), Duration::ZERO, |_| None);
     let mgr = CacheManager::new_for_test(tmp_dir("dead"), 1 << 30, Duration::from_secs(8));
     let mut r = mgr.open_reader(&spec(&dead.url, "yt"), None).unwrap();
