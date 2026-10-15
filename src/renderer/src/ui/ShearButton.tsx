@@ -1,5 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { sfx, type SfxName } from '../sound'
+import { Tooltip } from './Tooltip'
 import { cx, hueStyle, type Hue } from './util'
 
 export interface ShearButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
@@ -17,6 +18,10 @@ export interface ShearButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonEl
   /** Render as disabled-looking but still focusable/hoverable (e.g. "soon"). */
   soft?: boolean
   sound?: SfxName | false
+  /** Tooltip (kit bubble). Defaults to the label when `shortcut` is set. */
+  tooltip?: ReactNode
+  /** Keyboard shortcut shown in the tooltip, e.g. 'Mod+D'. */
+  shortcut?: string
   children?: ReactNode
 }
 
@@ -26,10 +31,10 @@ export interface ShearButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonEl
  * hue; press squishes.
  */
 export const ShearButton = forwardRef<HTMLButtonElement, ShearButtonProps>(function ShearButton(
-  { label, hint, icon, hue, active, size = 'md', soft, sound = 'select', className, style, children, onClick, onPointerEnter, disabled, type = 'button', ...rest },
+  { label, hint, icon, hue, active, size = 'md', soft, sound = 'select', tooltip, shortcut, className, style, children, onClick, onPointerEnter, disabled, type = 'button', ...rest },
   ref
 ) {
-  return (
+  const btn = (
     <button
       ref={ref}
       type={type}
@@ -63,5 +68,11 @@ export const ShearButton = forwardRef<HTMLButtonElement, ShearButtonProps>(funct
         )}
       </span>
     </button>
+  )
+  if (tooltip == null && !shortcut) return btn
+  return (
+    <Tooltip content={tooltip ?? label ?? children} shortcut={shortcut}>
+      {btn}
+    </Tooltip>
   )
 })

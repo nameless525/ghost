@@ -1,5 +1,5 @@
 // Liked, History and Downloaded tabs.
-import { ClockFading, Compass, Download, FolderOpen, FolderSearch, HardDriveDownload, Heart, HeartOff, Play, Shuffle, Undo2 } from 'lucide-react'
+import { ClockFading, Compass, FolderOpen, FolderSearch, HardDriveDownload, Heart, HeartOff, Play, Shuffle, Undo2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DownloadItem, HistoryEntry, PlayContext, TrackView } from '@shared/types'
 import { ghost } from '../../ghost'
@@ -299,9 +299,6 @@ export function DownloadedTab({ live, active }: { live: Live<TrackView[]>; activ
             actions={
               <>
                 <BrowseButton />
-                <Button variant="ghost" icon={<Download />} onClick={() => useUI.getState().toggleOverlay('downloads', true)}>
-                  Open Downloads
-                </Button>
                 <Button variant="ghost" icon={<FolderOpen />} onClick={() => void ghost().downloads.openFolder()}>
                   Open folder
                 </Button>

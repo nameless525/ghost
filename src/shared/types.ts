@@ -112,7 +112,7 @@ export interface TrackView extends Track {
   analysis: TrackAnalysisSummary | null
 }
 
-/** Sources that can be searched on demand and imported ("Search elsewhere"). */
+/** Sources that can be searched on demand and imported ("Search online" in Browse). */
 export type ExternalProviderId = 'youtube' | 'archive' | 'bandcamp' | 'soundcloud'
 
 /** An album-like result from an external source (YouTube playlist / full-OST video, Internet Archive item, Bandcamp album, SoundCloud set). */
@@ -490,4 +490,7 @@ export interface GhostNotification {
   progress?: number
   /** Optional icon/cover URL. */
   image?: string | null
+  /** A confirmation of something the user just did ("Added to queue"): toasted, but kept out of
+   *  the notification centre and its unread count, which are for things they might have missed. */
+  ephemeral?: boolean
 }

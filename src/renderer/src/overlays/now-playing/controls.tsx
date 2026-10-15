@@ -209,7 +209,7 @@ export function LikeButton({ track, size }: { track: TrackView | null; size?: Si
   return (
     <IconButton
       size={size}
-      label={liked ? 'Unlike' : 'Like'}
+      label={liked ? 'Liked' : 'Like'}
       shortcut="L"
       active={liked}
       disabled={!track}
@@ -230,8 +230,8 @@ export function LikeButton({ track, size }: { track: TrackView | null; size?: Si
 /** The "Add to playlist" menu for `track`, at `anchor` (the button; Mod+S passes it too). */
 export function openPlaylistMenu(track: TrackView | null, anchor: Element | null | undefined): void {
   if (!track) return
-  const r = anchor?.getBoundingClientRect()
-  openContextMenu(r ? { x: r.left, y: r.top - 6 } : { x: window.innerWidth / 2, y: window.innerHeight / 2 }, [{ heading: 'Add to playlist' }, ...playlistSubmenu([track.id])])
+  // anchored to the button: below it, or above it near the bottom of the screen, never over it
+  openContextMenu(anchor ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 }, [{ heading: 'Add to playlist' }, ...playlistSubmenu([track.id])])
 }
 
 export function AddToPlaylistButton({ track, size }: { track: TrackView | null; size?: Size }) {

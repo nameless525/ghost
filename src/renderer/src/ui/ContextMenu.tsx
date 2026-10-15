@@ -9,7 +9,9 @@
 //     <TrackRow … />
 //   </ContextMenu>
 //
-// Or imperatively: openContextMenu({ x: e.clientX, y: e.clientY }, items)
+// Or imperatively: openContextMenu({ x: e.clientX, y: e.clientY }, items) at the pointer, or
+// openContextMenu(buttonEl, items) for a menu that belongs to a control: it opens below the control,
+// or above it when there's no room below (footer / HUD buttons), and never covers it.
 import { ChevronRight } from 'lucide-react'
 import {
   Children,
@@ -39,7 +41,7 @@ export type MenuItem =
       onSelect?: () => void
       disabled?: boolean
       danger?: boolean
-      /** Shows a check mark (toggle items). */
+      /** Toggle item: true shows a check mark (false: a toggle that is off). */
       checked?: boolean
       submenu?: MenuItem[]
       separator?: never
@@ -51,19 +53,23 @@ export type MenuItem =
 type ActionItem = Extract<MenuItem, { label: ReactNode }>
 const isAction = (i: MenuItem): i is ActionItem => 'label' in i
 
+type Point = { x: number; y: number }
+
 interface MenuState {
-  x: number
-  y: number
+  /** A pointer position, or the rect of the control the menu belongs to. */
+  at: Point | DOMRect
   items: MenuItem[]
+  seq: number
 }
 
 let setGlobal: ((s: MenuState | null) => void) | null = null
+let menuSeq = 0
 
-/** Open a context menu at viewport coordinates. */
-export function openContextMenu(at: { x: number; y: number }, items: MenuItem[]): void {
+/** Open a context menu at viewport coordinates, or anchored to an element (see the header). */
+export function openContextMenu(at: Point | Element, items: MenuItem[]): void {
   if (!items.length) return
   sfx.play('select', { volume: 0.5 })
-  setGlobal?.({ x: at.x, y: at.y, items })
+  setGlobal?.({ at: at instanceof Element ? at.getBoundingClientRect() : { x: at.x, y: at.y }, items, seq: ++menuSeq })
 }
 
 export function closeContextMenu(): void {
@@ -93,8 +99,7 @@ export function ContextMenu({ items, disabled, children }: ContextMenuProps) {
       if (disabled || e.defaultPrevented) return
       if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
         e.preventDefault()
-        const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-        openContextMenu({ x: r.left + 12, y: r.bottom - 4 }, typeof items === 'function' ? items() : items)
+        openContextMenu(e.currentTarget as HTMLElement, typeof items === 'function' ? items() : items)
       }
     }
   })
@@ -102,7 +107,8 @@ export function ContextMenu({ items, disabled, children }: ContextMenuProps) {
 
 interface ListProps {
   items: MenuItem[]
-  anchor: { x: number; y: number } | DOMRect
+  /** A point, the owning control's rect (root menu), or the parent item's rect (submenu). */
+  anchor: Point | DOMRect
   depth: number
   onClose: (all: boolean) => void
   autoFocus: boolean
@@ -120,13 +126,15 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
   useLayoutEffect(() => {
     const node = el.current
     if (!node) return
-    const p =
-      'width' in anchor
+    const rect = 'width' in anchor
+    const p = !rect
+      ? placeAtPoint(anchor.x, anchor.y, node.offsetWidth, node.offsetHeight)
+      : depth > 0
         ? place(anchor, node.offsetWidth, node.offsetHeight, { side: 'right', align: 'start', offset: 2 })
-        : placeAtPoint(anchor.x, anchor.y, node.offsetWidth, node.offsetHeight)
+        : place(anchor, node.offsetWidth, node.offsetHeight, { side: 'bottom', align: 'start', offset: 6 })
     node.style.left = `${p.x}px`
-    node.style.top = `${p.y - ('width' in anchor ? 5 : 0)}px`
-    node.style.transformOrigin = p.origin
+    node.style.top = `${p.y - (rect && depth > 0 ? 5 : 0)}px`
+    node.style.transformOrigin = rect && depth === 0 ? (p.side === 'top' ? 'bottom left' : 'top left') : p.origin
     if (autoFocus) node.focus({ preventScroll: true })
   }, [anchor, autoFocus])
 
@@ -193,7 +201,8 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
               key={i}
               id={`${itemId}-${i}`}
               type="button"
-              role="menuitem"
+              role={it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+              aria-checked={it.checked}
               data-index={i}
               tabIndex={-1}
               aria-disabled={it.disabled || undefined}
@@ -276,9 +285,9 @@ export function ContextMenuHost() {
   if (!menu) return null
   return createPortal(
     <MenuList
-      key={`${menu.x},${menu.y}`}
+      key={menu.seq}
       items={menu.items}
-      anchor={{ x: menu.x, y: menu.y }}
+      anchor={menu.at}
       depth={0}
       autoFocus
       onClose={() => {

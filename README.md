@@ -9,7 +9,7 @@ A private desktop app for streaming (and downloading) the soundtrack of any vide
   - The Internet Archive's curated game-soundtrack collections.
   - vgmrips chiptune packs. joshw.info rip sets are opt-in, because its robots.txt asks crawlers to stay out.
   - Your own music folders.
-- **Last resorts:** searched on demand with "Search elsewhere" and imported into the catalog:
+- **Last resorts:** searched on demand with "Search online" and imported into the catalog:
   - YouTube and SoundCloud (through yt-dlp, fetched automatically from the official release).
   - Internet Archive.
   - Bandcamp.

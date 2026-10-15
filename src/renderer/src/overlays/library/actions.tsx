@@ -24,15 +24,16 @@ export const playlistActions = {
     await ghost().player.setShuffle('on')
     await ghost().player.playPlaylist(p.id, Math.floor(Math.random() * Math.max(1, p.trackCount)))
   },
-  async playNext(p: Pick<Playlist, 'id'>) {
-    await trackActions.playNext(await playlistTrackIds(p.id))
+  async playNext(p: Pick<Playlist, 'id' | 'name'>) {
+    await trackActions.playNext(await playlistTrackIds(p.id), p.name)
   },
-  async addToQueue(p: Pick<Playlist, 'id'>) {
-    await trackActions.addToQueue(await playlistTrackIds(p.id))
+  async addToQueue(p: Pick<Playlist, 'id' | 'name'>) {
+    await trackActions.addToQueue(await playlistTrackIds(p.id), p.name)
   },
-  async download(p: Pick<Playlist, 'id' | 'name' | 'trackCount'>) {
-    await trackActions.download({ playlistId: p.id })
-    notify({ kind: 'info', title: `Downloading ${p.name}`, body: plural(p.trackCount, 'track') })
+  /** The downloads service shows the batch's progress card (or "Nothing new to download"): a
+   *  second "Downloading …" notice from here used to stack on top of it. */
+  async download(p: Pick<Playlist, 'id'>) {
+    await trackActions.downloadWithNotice({ playlistId: p.id })
   },
   async exportM3U(p: Pick<Playlist, 'id' | 'name'>) {
     try {
@@ -50,7 +51,7 @@ export const playlistActions = {
   },
   async duplicate(p: Pick<Playlist, 'id' | 'name'>): Promise<Playlist> {
     const copy = await ghost().library.playlists.duplicate(p.id)
-    notify({ kind: 'success', title: 'Playlist duplicated', body: copy.name })
+    notify({ kind: 'success', title: 'Playlist duplicated', body: copy.name, ephemeral: true })
     return copy
   },
   async rename(p: Pick<Playlist, 'id' | 'name'>): Promise<void> {
@@ -76,27 +77,28 @@ export const playlistActions = {
     })
     if (!ok) return false
     await ghost().library.playlists.delete(p.id)
-    notify({ kind: 'info', title: 'Playlist deleted', body: p.name })
+    notify({ kind: 'info', title: 'Playlist deleted', body: p.name, ephemeral: true })
     return true
   }
 }
 
-/** Right-click menu for a playlist card / header. */
+/** Right-click menu for a playlist card / header: the track menu's order (play, queue, download),
+ *  then managing the playlist itself. */
 export function playlistMenuItems(p: Playlist, opts: { onOpen?: () => void; onDeleted?: () => void; onDuplicated?: (copy: Playlist) => void } = {}): MenuItem[] {
   const empty = p.trackCount === 0
   return [
     { heading: p.name },
+    ...(opts.onOpen ? [{ label: 'Open', icon: ic(ListMusic), shortcut: 'Enter', onSelect: opts.onOpen } as MenuItem] : []),
     { label: 'Play', icon: ic(Play), disabled: empty, onSelect: () => void playlistActions.play(p) },
     { label: 'Shuffle', icon: ic(Shuffle), disabled: empty, onSelect: () => void playlistActions.shuffle(p) },
     { label: 'Play next', icon: ic(ListStart), disabled: empty, onSelect: () => void playlistActions.playNext(p) },
     { label: 'Add to queue', icon: ic(ListEnd), disabled: empty, onSelect: () => void playlistActions.addToQueue(p) },
     { separator: true },
-    ...(opts.onOpen ? [{ label: 'Open', icon: ic(ListMusic), shortcut: 'Enter', onSelect: opts.onOpen } as MenuItem] : []),
+    { label: 'Download', icon: ic(Download), disabled: empty, onSelect: () => void playlistActions.download(p) },
+    { label: 'Export as M3U', icon: ic(FileOutput), onSelect: () => void playlistActions.exportM3U(p) },
+    { separator: true },
     { label: 'Rename…', icon: ic(Pencil), onSelect: () => void playlistActions.rename(p) },
     { label: 'Duplicate', icon: ic(Copy), onSelect: () => void playlistActions.duplicate(p).then((c) => opts.onDuplicated?.(c)) },
-    { label: 'Download all', icon: ic(Download), disabled: empty, onSelect: () => void playlistActions.download(p) },
-    { label: 'Export M3U', icon: ic(FileOutput), onSelect: () => void playlistActions.exportM3U(p) },
-    { separator: true },
     { label: 'Delete…', icon: ic(Trash), danger: true, onSelect: () => void playlistActions.remove(p).then((ok) => ok && opts.onDeleted?.()) }
   ]
 }

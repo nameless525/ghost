@@ -67,7 +67,7 @@ export function SegmentedControl<T extends string>({ value, options, onChange, s
       if (!o.disabled) {
         sfx.play('select', { volume: 0.6 })
         onChange(o.value)
-        root.current?.querySelector<HTMLElement>(`[data-value="${CSS.escape(o.value)}"]`)?.focus()
+        root.current?.querySelector<HTMLElement>(`[data-value="${CSS.escape(o.value)}"]`)?.focus({ preventScroll: true })
         break
       }
     }

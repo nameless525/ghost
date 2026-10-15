@@ -195,8 +195,8 @@ export function PlaylistDetailView({ initial, from, active, onBack, onOpenPlayli
               Shuffle
             </Button>
             <div className="lib-detail__sep" />
-            <IconButton icon={<Download />} label="Download all" disabled={!n} onClick={() => void playlistActions.download({ ...p, trackCount: n })} />
-            <IconButton icon={<FileOutput />} label="Export M3U" onClick={() => void playlistActions.exportM3U(p)} />
+            <IconButton icon={<Download />} label="Download" disabled={!n} onClick={() => void playlistActions.download(p)} />
+            <IconButton icon={<FileOutput />} label="Export as M3U" onClick={() => void playlistActions.exportM3U(p)} />
             <IconButton icon={<Copy />} label="Duplicate" onClick={() => void playlistActions.duplicate(p).then(onOpenPlaylist)} />
             <IconButton icon={<Trash />} label="Delete playlist" className="lib-danger" onClick={() => void playlistActions.remove({ ...p, trackCount: n }).then((ok) => ok && onBack(null))} />
           </div>

@@ -10,6 +10,7 @@ import {
   FolderSearch,
   Image as ImageGlyph,
   Info,
+  Keyboard,
   KeyRound,
   LockKeyhole,
   Monitor,
@@ -26,6 +27,7 @@ import type { AudioDevice, CatalogStatus, DeepPartial, Settings } from '@shared/
 import { ghost } from '../../ghost'
 import { animateValue } from '../../motion/tween'
 import { notify } from '../../shell/notifications'
+import { openShortcuts } from '../../shell/shortcuts'
 import { sfx } from '../../sound'
 import { useTask } from '../../state/progress'
 import { useSettings } from '../../state/settings'
@@ -37,9 +39,10 @@ import { ProgressBar } from '../../ui/ProgressBar'
 import { SegmentedControl } from '../../ui/SegmentedControl'
 import { Select, type SelectOption } from '../../ui/Select'
 import { Toggle } from '../../ui/Toggle'
+import { confirmDialog } from '../../ui/Dialog'
 import { cx } from '../../ui/util'
 import { leavingStyle, relativeTime, useAnimatedList, useNow } from '../library/common'
-import { Highlight, patchSettings, Row, SearchContext, SecretField, SettingSlider } from './controls'
+import { Highlight, patchSettings, Row, SecretField, SettingSlider } from './controls'
 import { ActivityNote, SourceActivityList } from '../../screens/browse/CatalogActivity'
 import { useRestartKey, useRunKey } from '../../screens/browse/waits'
 import { ProviderList } from './ProviderList'
@@ -179,9 +182,9 @@ function DeviceRow(m: RowMeta) {
 }
 
 const LOOP_DESC: Record<Settings['audio']['loopMode'], string> = {
-  album: 'Like the album version: plays the loop twice, then fades out.',
+  album: 'Like the soundtrack album: the loop plays twice, then fades out.',
   endless: 'Loops forever, the way the game does, until you skip.',
-  custom: 'Use your own loop count and fade length below.'
+  custom: 'Your own number of loops and fade length, below.'
 }
 
 const notCustom = (s: Settings) => s.audio.loopMode !== 'custom'
@@ -201,7 +204,7 @@ function FoldersRow(m: RowMeta) {
     const p = await ghost().settings.pickFolder()
     if (!p) return
     if (folders.includes(p)) {
-      notify({ kind: 'info', title: 'Already added', body: p })
+      notify({ kind: 'info', title: 'Already added', body: p, ephemeral: true })
       return
     }
     sfx.play('confirm', { volume: 0.6 })
@@ -596,11 +599,17 @@ function CatalogPanel() {
   const indexing = !!st?.indexing
   const runKey = useRestartKey(indexing, st?.progress)
   const reindex = async () => {
+    const ok = await confirmDialog({
+      title: 'Re-index the catalog?',
+      body: 'GHOST reads every source’s full list again. It runs in the background and can take a while; Browse and playback keep working. Sources already refresh themselves every few days, so this is only needed when something looks out of date.',
+      confirmLabel: 'Re-index'
+    })
+    if (!ok) return
     setBusy(true)
     sfx.play('confirm', { volume: 0.7 })
     try {
       await ghost().catalog.reindex()
-      notify({ kind: 'info', title: 'Re-indexing the catalog', body: 'This runs in the background. Browse stays usable.' })
+      notify({ kind: 'info', title: 'Re-indexing the catalog', body: 'This runs in the background. Browse stays usable.', ephemeral: true })
     } catch (err) {
       notify({ kind: 'error', title: 'Could not start indexing', body: String((err as Error)?.message ?? err) })
     } finally {
@@ -610,11 +619,12 @@ function CatalogPanel() {
   return (
     <div className="set-cat">
       <div className="set-cat__tiles">
+        {/* no track count: track lists load as albums are opened, so it read "0 tracks" in a
+            catalog of thousands of albums */}
         {(
           [
             ['Games', st?.games],
-            ['Albums', st?.albums],
-            ['Tracks', st?.tracks]
+            ['Albums', st?.albums]
           ] as const
         ).map(([label, n]) => (
           <div key={label} className="set-cat__tile">
@@ -645,7 +655,17 @@ function CatalogPanel() {
       <div className="set-cat__foot">
         <div className="set-cat__meta">
           <span>
-            Last indexed <b>{st?.lastIndexedAt ? relativeTime(st.lastIndexedAt, now) : 'never'}</b>
+            {st?.lastIndexedAt ? (
+              <>
+                Last indexed <b>{relativeTime(st.lastIndexedAt, now)}</b>
+              </>
+            ) : indexing ? (
+              'First index in progress'
+            ) : (
+              <>
+                Last indexed <b>never</b>
+              </>
+            )}
           </span>
           <span className="set-cat__enrich">
             <span className={cx('set-dotchip', st?.enrichment.igdb && 'set-dotchip--on')}>IGDB</span>
@@ -663,31 +683,10 @@ function CatalogPanel() {
 // ---------------------------------------------------------------------------
 // About
 
-const SHORTCUTS: { keys: string[]; label: string; text?: string }[] = [
-  { keys: ['ArrowUp', 'ArrowDown'], label: 'Move through the carousel' },
-  { keys: ['ArrowLeft', 'ArrowRight'], label: 'Collapse / expand levels' },
-  { keys: ['Enter'], label: 'Open the Play screen / expand' },
-  { keys: ['Escape'], label: 'Back' },
-  { keys: [], text: 'Just type', label: 'Search, anywhere in Browse' },
-  { keys: ['Space'], label: 'Play / pause' },
-  { keys: ['Mod+ArrowLeft', 'Mod+ArrowRight'], label: 'Previous / next track' },
-  { keys: ['F2', 'Shift+F2'], label: 'Random / rewind random' },
-  { keys: ['P'], label: 'Preview selection' },
-  { keys: ['Q', 'Shift+Q'], label: 'Add to queue / play next' },
-  { keys: ['Mod+S'], label: 'Add to playlist' },
-  { keys: ['Mod+D'], label: 'Download' },
-  { keys: ['Mod+L'], label: 'Library' },
-  { keys: ['Mod+O'], label: 'Settings' },
-  { keys: ['F6'], label: 'Music controller' },
-  { keys: ['Alt+J'], label: 'Original / romanized titles' },
-  { keys: ['1', 'Alt+1', '0'], label: 'Chiptunes on Play: mute / solo a channel (1–9), all on' },
-  { keys: ['Mod+Shift+F'], label: 'FPS meter' }
-]
 
 function AboutPanel() {
   const open = useContext(OpenContext)
   const [info, setInfo] = useState<{ platform: string; version: string; dataDir: string; mock: boolean } | null>(null)
-  const q = useContext(SearchContext)
   useEffect(() => {
     if (open && !info)
       void ghost()
@@ -695,12 +694,10 @@ function AboutPanel() {
         .then(setInfo)
         .catch(() => {})
   }, [open, info])
-  const shortcuts = q ? SHORTCUTS.filter((s) => `${s.label} ${s.keys.join(' ')} ${s.text ?? ''}`.toLowerCase().includes(q)) : SHORTCUTS
   const platformName = info ? ({ darwin: 'macOS', win32: 'Windows', linux: 'Linux', web: 'Browser preview' } as Record<string, string>)[info.platform] ?? info.platform : ''
   return (
     <div className="set-about">
-      {!q && (
-        <div className="set-about__brand">
+      <div className="set-about__brand">
           <div className="set-about__mark">
             <GhostMark size={58} />
           </div>
@@ -708,46 +705,37 @@ function AboutPanel() {
             <div className="set-about__word">GHOST</div>
             <div className="set-about__sub">Game Haven OST</div>
           </div>
-          <div className="set-about__ver">
-            <span className="set-about__chip tnum">v{info?.version ?? '…'}</span>
-            {platformName && <span className="set-about__plat">{platformName}</span>}
-          </div>
+        <div className="set-about__ver">
+          <span className="set-about__chip tnum">v{info?.version ?? '…'}</span>
+          {platformName && <span className="set-about__plat">{platformName}</span>}
         </div>
-      )}
-      {!q && (
-        <div className="set-dir set-dir--about">
-          <span className="set-about__k">Data folder</span>
-          <span className="set-path lx-mono" title={info?.dataDir}>
-            <span>{info?.dataDir ?? '…'}</span>
-          </span>
-          <IconButton size="sm" icon={<FolderSearch />} label="Show data folder" disabled={!info || info.mock} onClick={() => info && void ghost().system.reveal(info.dataDir)} />
-        </div>
-      )}
-      {shortcuts.length > 0 && (
-        <div className="set-keys">
-          <div className="set-group__title">Keyboard shortcuts</div>
-          <dl className="set-keys__list">
-            {shortcuts.map((s) => (
-              <div key={s.label} className="set-keys__row">
-                <dt>
-                  <Highlight text={s.label} />
-                </dt>
-                <dd>
-                  {s.text && <span className="set-keys__text">{s.text}</span>}
-                  {s.keys.map((k, i) => (
-                    <span key={k} className="set-keys__combo">
-                      {i > 0 && <span className="set-keys__or">/</span>}
-                      <Kbd combo={k} size="sm" />
-                    </span>
-                  ))}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      )}
-      {!q && <div className="set-about__credits">Audio by GHOST engine (Rust). Made for listening, not for sharing: everything stays on this computer.</div>}
+      </div>
+      <div className="set-dir set-dir--about">
+        <span className="set-about__k">Data folder</span>
+        <span className="set-path lx-mono" title={info?.dataDir}>
+          <span>{info?.dataDir ?? '…'}</span>
+        </span>
+        <IconButton size="sm" icon={<FolderSearch />} label="Show data folder" disabled={!info || info.mock} onClick={() => info && void ghost().system.reveal(info.dataDir)} />
+      </div>
+      <div className="set-about__credits">Audio by GHOST engine (Rust). Made for listening, not for sharing: everything stays on this computer.</div>
     </div>
+  )
+}
+
+function ShortcutsRow(m: RowMeta) {
+  return (
+    <Row
+      {...m}
+      description={
+        <>
+          <Highlight text={m.description ?? ''} /> <Kbd combo="?" size="sm" />
+        </>
+      }
+    >
+      <Button size="sm" variant="soft" icon={<Keyboard />} onClick={openShortcuts}>
+        Show
+      </Button>
+    </Row>
   )
 }
 
@@ -761,7 +749,7 @@ export const SECTIONS: SectionDef[] = [
     id: 'audio',
     title: 'Audio',
     icon: <AudioLines />,
-    blurb: 'Output, loudness, gapless and crossfade, chiptune loops, interface sounds.',
+    blurb: 'Where sound plays, how loud tracks are, how one track leads into the next.',
     groups: [
       { title: 'Output', rows: [row('device', 'Output device', DeviceRow, 'Follows the system default (e.g. when headphones connect) without stopping playback.', 'speaker headphones airpods dac sound card')] },
       {
@@ -774,8 +762,8 @@ export const SECTIONS: SectionDef[] = [
               (s) => s.audio.normalization.enabled,
               (v) => ({ audio: { normalization: { enabled: v } } })
             ),
-            'Evens out volume between tracks (EBU R128) with a true-peak safety limiter.',
-            'volume replaygain r128 lufs level'
+            'Plays every track at about the same volume, so a quiet one and a loud one don’t send you to the volume knob.',
+            'volume replaygain r128 lufs level ebu limiter'
           ),
           row(
             'lufs',
@@ -785,24 +773,24 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ audio: { normalization: { targetLufs: v } } }),
               { min: -23, max: -9, step: 1, format: (v) => `${v < 0 ? '−' : ''}${Math.abs(v)} LUFS`, disabled: (s) => !s.audio.normalization.enabled }
             ),
-            'Lower is quieter with more headroom. −14 matches streaming services, −23 is broadcast.',
+            'How loud tracks play after evening them out, in LUFS. −14 is what most streaming services use; lower is quieter.',
             'lufs normalization level volume'
           ),
           row(
             'normmode',
-            'Gain mode',
+            'Even out by',
             segRow(
               (s) => s.audio.normalization.mode,
               (v) => ({ audio: { normalization: { mode: v } } }),
               [
-                { value: 'auto', label: 'Auto', description: 'Album gain when playing an album in order, track gain otherwise.' },
+                { value: 'auto', label: 'Auto', description: 'By album when you play an album in order, by track otherwise.' },
                 { value: 'track', label: 'Track', description: 'Every track at the same loudness.' },
-                { value: 'album', label: 'Album', description: 'Keeps the quiet and loud moments of an album as mastered.' }
+                { value: 'album', label: 'Album', description: 'Whole albums at the same loudness, keeping their quiet and loud moments as mastered.' }
               ],
               { disabled: (s) => !s.audio.normalization.enabled }
             ),
-            'Track or album gain.',
-            'replaygain album track normalization'
+            'Track or album.',
+            'replaygain album track normalization gain mode'
           )
         ]
       },
@@ -816,8 +804,8 @@ export const SECTIONS: SectionDef[] = [
               (s) => s.audio.gapless,
               (v) => ({ audio: { gapless: v } })
             ),
-            'Sample-accurate transitions, with encoder delay and padding trimmed.',
-            'gap silence seamless'
+            'No silence between tracks, so albums that flow from one track into the next play without a break.',
+            'gap silence seamless gapless'
           ),
           row(
             'xfade',
@@ -827,17 +815,17 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ audio: { crossfadeSec: v } }),
               { min: 0, max: 12, step: 0.5, format: (v) => (v === 0 ? 'Off' : `${v} s`) }
             ),
-            'Equal-power fade between tracks. Turns itself off between tracks of the same album.',
+            'Fades each track out as the next fades in. Skipped between tracks of the same album, which are meant to flow.',
             'fade transition blend mix'
           )
         ]
       },
       {
-        title: 'Chiptunes & loops',
+        title: 'Looping game music',
         rows: [
           row(
             'loopmode',
-            'Loop mode',
+            'How looping tracks end',
             segRow(
               (s) => s.audio.loopMode,
               (v) => ({ audio: { loopMode: v } }),
@@ -847,8 +835,8 @@ export const SECTIONS: SectionDef[] = [
                 { value: 'custom', label: 'Custom', description: LOOP_DESC.custom }
               ]
             ),
-            'How looping formats (NSF, SPC, VGM, BRSTM…) end: 2 loops + fade, endless, or custom.',
-            'chiptune loop nsf spc vgm fade endless repeat'
+            'Original game music files loop forever, as they do in the game.',
+            'chiptune loop mode nsf spc vgm brstm fade endless repeat'
           ),
           row(
             'loopcount',
@@ -858,7 +846,7 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ audio: { loopCount: v } }),
               { min: 1, max: 8, step: 1, format: (v) => `${v}×`, disabled: notCustom }
             ),
-            'Times the looping section plays before the fade (Custom mode).',
+            'How many times the loop plays before the fade (Custom).',
             'chiptune repeat loops'
           ),
           row(
@@ -869,7 +857,7 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ audio: { fadeSec: v } }),
               { min: 0, max: 30, step: 1, format: (v) => (v === 0 ? 'Cut' : `${v} s`), disabled: notCustom }
             ),
-            'Length of the fade after the last loop (Custom mode).',
+            'How long the fade after the last loop takes (Custom).',
             'chiptune fade seconds'
           )
         ]
@@ -884,7 +872,7 @@ export const SECTIONS: SectionDef[] = [
               (s) => s.audio.previewOnSelect,
               (v) => ({ audio: { previewOnSelect: v } })
             ),
-            'Resting on a game in Browse plays its signature track from its preview point.',
+            'Resting on a game in Browse plays a short preview of its best-known track.',
             'preview browse sample autoplay'
           )
         ]
@@ -900,7 +888,7 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ audio: { uiSounds: v } }),
               { after: (v) => v && window.setTimeout(() => sfx.play('confirm'), 60) }
             ),
-            'Soft synthesized cues for hover, select and back, tuned so they never clash.',
+            'Soft clicks and chimes when you hover, select and go back.',
             'sfx clicks effects feedback'
           ),
           row(
@@ -911,7 +899,7 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ audio: { uiSoundVolume: v } }),
               { min: 0, max: 1, step: 0.05, format: pct, disabled: (s) => !s.audio.uiSounds, after: () => window.setTimeout(() => sfx.play('confirm'), 30) }
             ),
-            'Played on a separate bus that is never normalized.',
+            'Separate from the music volume.',
             'sfx loudness'
           )
         ]
@@ -925,12 +913,12 @@ export const SECTIONS: SectionDef[] = [
     blurb: 'Where music comes from, in what order, and at what quality.',
     groups: [
       {
-        title: 'Providers',
+        title: 'Priority',
         rows: [
           {
             id: 'providers',
             label: 'Source priority',
-            description: 'GHOST tries sources from top to bottom and falls back automatically when one fails. Drag to reorder.',
+            description: 'GHOST plays a track from the first source on this list that has it, and moves down the list when one fails. Drag to reorder; switch a source off to stop using it.',
             keywords: 'provider order local chiptune chip bandcamp khinsider zophar modland internet archive soundcloud youtube yt-dlp enable disable',
             C: (m) => (
               <Row {...m} wide>
@@ -950,17 +938,17 @@ export const SECTIONS: SectionDef[] = [
               (s) => s.sources.quality,
               (v) => ({ sources: { quality: v } }),
               [
-                { value: 'lossless', label: 'Lossless', description: 'Prefer FLAC and original chip files whenever a source has them.' },
-                { value: 'high', label: 'High', description: 'Prefer high-bitrate lossy (320 kbps / Opus) for faster starts.' },
-                { value: 'saver', label: 'Data saver', description: 'Smallest streams that still sound good. Good for metered connections.' }
+                { value: 'lossless', label: 'Lossless', description: 'The best quality: CD-quality FLAC and original game files whenever a source has them. Bigger downloads.' },
+                { value: 'high', label: 'High', description: 'High-quality MP3 or Opus (about 320 kbps). Sounds great and starts faster.' },
+                { value: 'saver', label: 'Data saver', description: 'The smallest files that still sound good. For slow or metered connections.' }
               ]
             ),
-            'Lossless, high or data saver.',
+            'Which version to pick when a source offers several.',
             'bitrate flac mp3 bandwidth data saver'
           )
         ]
       },
-      { title: 'Local music', rows: [row('folders', 'Local music folders', FoldersRow, 'Folders scanned by the Local files source.', 'local files folder directory rips scan')] },
+      { title: 'Local music', rows: [row('folders', 'Local music folders', FoldersRow, 'Soundtracks you already have. GHOST matches them to games in the catalog and plays them first.', 'local files folder directory rips scan')] },
       {
         title: 'Chiptune rips',
         rows: [
@@ -980,14 +968,14 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     id: 'library',
-    title: 'Library',
+    title: 'Downloads',
     icon: <FolderOpen />,
-    blurb: 'Where downloads go, how they are named, and how much to cache.',
+    blurb: 'Where downloads are saved, how the files are named, and how much music to keep cached.',
     groups: [
       {
-        title: 'Downloads',
+        title: 'Files',
         rows: [
-          row('dldir', 'Download folder', DownloadDirRow, 'Downloads are saved as-is (never re-encoded) and fully tagged.', 'path directory save location'),
+          row('dldir', 'Download folder', DownloadDirRow, 'Files are saved exactly as the source has them (never re-encoded), with titles, album and cover art filled in.', 'path directory save location'),
           row('naming', 'File naming', NamingRow, 'Use / for folders. Click a token to insert it.', 'template naming pattern filename tokens rename')
         ]
       },
@@ -1002,7 +990,7 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ library: { cacheMaxGb: v } }),
               { min: 1, max: 50, step: 1, format: (v) => `${v} GB` }
             ),
-            'Streamed audio stays on disk so replays start instantly and downloading a cached track is just a copy.',
+            'Music you stream is kept on disk up to this size, so playing it again starts instantly and downloading it is just a copy.',
             'disk storage space gb'
           )
         ]
@@ -1013,7 +1001,7 @@ export const SECTIONS: SectionDef[] = [
     id: 'interface',
     title: 'Interface',
     icon: <Monitor />,
-    blurb: 'Scale, motion, blur, titles and the visualizer.',
+    blurb: 'Size, motion, titles, the visualizer and keyboard shortcuts.',
     groups: [
       {
         title: 'Display',
@@ -1026,7 +1014,7 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ interface: { uiScale: Math.round(v * 100) / 100 } }),
               { min: 0.8, max: 1.5, step: 0.05, format: pct }
             ),
-            'Applied when you let go of the slider.',
+            'Makes everything bigger or smaller. Applies when you let go.',
             'zoom size bigger smaller text'
           ),
           row(
@@ -1040,7 +1028,7 @@ export const SECTIONS: SectionDef[] = [
                 { value: 'high', label: 'High', description: 'Soft, wide blur behind panels and background art.' }
               ]
             ),
-            'Background and panel blur.',
+            'How soft the blur behind panels and art is.',
             'performance gpu backdrop'
           ),
           row(
@@ -1051,7 +1039,7 @@ export const SECTIONS: SectionDef[] = [
               (v) => ({ interface: { backgroundDim: v } }),
               { min: 0, max: 0.9, step: 0.05, format: pct }
             ),
-            'How much the game art behind Browse is darkened.',
+            'How dark the game art behind Browse is.',
             'brightness darken art background'
           ),
           row(
@@ -1066,7 +1054,7 @@ export const SECTIONS: SectionDef[] = [
                 { value: 'scope', label: 'Scope', description: 'An oscilloscope trace of the waveform.' }
               ]
             ),
-            'Style on the Play screen.',
+            'What moves to the music on the Play screen.',
             'spectrum oscilloscope radial skyline scope play screen'
           )
         ]
@@ -1120,6 +1108,18 @@ export const SECTIONS: SectionDef[] = [
         ]
       },
       {
+        title: 'Keyboard',
+        rows: [
+          row(
+            'shortcuts',
+            'Keyboard shortcuts',
+            ShortcutsRow,
+            'Every key GHOST understands, on one page. Open it from anywhere with',
+            'keys hotkeys keybindings shortcuts help'
+          )
+        ]
+      },
+      {
         title: 'Debug',
         rows: [
           row(
@@ -1164,22 +1164,22 @@ export const SECTIONS: SectionDef[] = [
     title: 'Catalog',
     icon: <Database />,
     blurb: 'The index of every game, album and track GHOST knows about.',
-    groups: [{ title: 'Index', rows: [{ id: 'catalog', label: 'Catalog index', description: 'Games, albums and tracks indexed.', keywords: 'reindex re-index refresh update crawl games albums tracks', C: CatalogPanel }] }]
+    groups: [{ title: 'Index', rows: [{ id: 'catalog', label: 'Catalog index', description: 'Games and albums indexed.', keywords: 'reindex re-index refresh update crawl games albums tracks', C: CatalogPanel }] }]
   },
   {
     id: 'about',
     title: 'About',
     icon: <Info />,
-    blurb: 'Version, data folder and keyboard shortcuts.',
+    blurb: 'Version and where GHOST keeps its data.',
     groups: [
       {
-        title: 'GHOST',
+        title: 'About',
         rows: [
           {
             id: 'about',
             label: 'About GHOST',
-            description: 'Version, data folder, keyboard shortcuts, credits.',
-            keywords: `version data folder credits keyboard shortcuts keys hotkeys ${SHORTCUTS.map((s) => s.label).join(' ')}`,
+            description: 'Version, data folder and credits.',
+            keywords: 'version data folder credits',
             C: AboutPanel
           }
         ]

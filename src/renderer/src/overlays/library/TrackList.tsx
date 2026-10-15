@@ -29,6 +29,7 @@ import { IntensityBadge } from '../../ui/Badges'
 import { openContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import { CoverArt } from '../../ui/CoverArt'
 import { formatTime } from '../../ui/format'
+import { Tooltip } from '../../ui/Tooltip'
 import { cx, useEvent } from '../../ui/util'
 
 export const ROW_H = 54
@@ -246,6 +247,8 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
         anchor.current = item.key
       }
       cursor.current = item.key
+      // the list takes focus, so the keys the menu shows act on this row afterwards
+      listRef.current?.focus({ preventScroll: true })
       const many = items.filter((i) => selection.has(i.key))
       const extra: MenuItem[] = []
       if (onRemove)
@@ -261,9 +264,9 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
         many.length > 1
           ? tracksMenuItems(
               many.map((i) => i.track),
-              { extra }
+              { extra, keys: true }
             )
-          : trackMenuItems(withLike(item.track), { playList: { ids: items.map((i) => i.track.id), index, context }, extra })
+          : trackMenuItems(withLike(item.track), { playList: { ids: items.map((i) => i.track.id), index, context }, extra, keys: true })
       openContextMenu({ x: e.clientX, y: e.clientY }, menu)
     } else if (action === 'like') {
       toggleLike(item.track)
@@ -345,13 +348,18 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
       sfx.play('select', { volume: 0.6 })
     } else if (k === 'Escape' && sel.size) setSel(new Set())
     else if (k.toLowerCase() === 'q' && !isMod(e) && sel.size) {
-      const ids = selectedItems().map((i) => i.track.id)
-      void (e.shiftKey ? trackActions.playNext(ids) : trackActions.addToQueue(ids))
+      const picked = selectedItems()
+      const ids = picked.map((i) => i.track.id)
+      const label = picked.length === 1 ? picked[0].track.title : undefined
+      void (e.shiftKey ? trackActions.playNext(ids, label) : trackActions.addToQueue(ids, label))
     } else if (k.toLowerCase() === 'l' && !isMod(e) && !e.shiftKey && sel.size === 1) {
       const it = selectedItems()[0]
       if (it) toggleLike(it.track)
     } else if (k.toLowerCase() === 'd' && isMod(e) && sel.size) {
-      void trackActions.download({ trackIds: selectedItems().map((i) => i.track.id) })
+      const picked = selectedItems()
+      // (an already downloaded track gets "Already downloaded" from the downloads service)
+      const one = picked.length === 1 && !picked[0].track.downloaded ? picked[0].track : null
+      void trackActions.downloadWithNotice({ trackIds: picked.map((i) => i.track.id) }, one ? { title: one.title, cover: one.cover } : undefined)
     } else return
     e.preventDefault()
     e.stopPropagation()
@@ -374,18 +382,18 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
         <span className="tl-c tl-c--cover" />
         <span className="tl-c tl-c--title">Title</span>
         <span className="tl-c tl-c--album">Album</span>
-        <span className="tl-c tl-c--int" title="Intensity">
+        <HeadIcon className="tl-c--int" tip="Intensity: how energetic a track is, from calm (0) to frantic (10)">
           <Star />
-        </span>
-        <span className="tl-c tl-c--len" title="Length">
+        </HeadIcon>
+        <HeadIcon className="tl-c--len" tip="Length">
           <Clock />
-        </span>
-        <span className="tl-c tl-c--like" title="Liked">
+        </HeadIcon>
+        <HeadIcon className="tl-c--like" tip="Liked">
           <Heart />
-        </span>
-        <span className="tl-c tl-c--dl" title="Downloaded">
+        </HeadIcon>
+        <HeadIcon className="tl-c--dl" tip="Downloaded">
           <Download />
-        </span>
+        </HeadIcon>
         {rowExtra && <span className="tl-c tl-c--extra" />}
       </div>
       <DndContext
@@ -433,6 +441,17 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
         </SortableContext>
       </DndContext>
     </div>
+  )
+}
+
+/** A column header shown as an icon, named by a tooltip. */
+function HeadIcon({ className, tip, children }: { className: string; tip: string; children: ReactNode }) {
+  return (
+    <Tooltip content={tip}>
+      <span className={cx('tl-c', className)} aria-label={tip}>
+        {children}
+      </span>
+    </Tooltip>
   )
 }
 
@@ -522,7 +541,7 @@ const Row = memo(function Row({ optId, item, index, track, selected, sortable, e
             <button
               type="button"
               className={cx('tl-like', track.liked && 'tl-like--on')}
-              aria-label={track.liked ? 'Unlike' : 'Like'}
+              aria-label="Like"
               aria-pressed={track.liked}
               tabIndex={-1}
               onPointerDown={(e) => e.stopPropagation()}

@@ -16,9 +16,11 @@ const OFFSCREEN = 400
 
 function lifetime(t: Toast): number {
   if (t.kind === 'progress' && (t.progress ?? 0) < 1) return Infinity
-  if (t.kind === 'error') return 9000
   if (t.kind === 'progress') return 3500
-  return 5200
+  // long messages stay up long enough to read (about 15 characters a second); hovering pauses
+  const read = ((t.title.length + (t.body?.length ?? 0)) / 15) * 1000
+  if (t.kind === 'error') return Math.min(16000, Math.max(9000, 2000 + read))
+  return Math.min(14000, Math.max(t.ephemeral ? 3500 : 5200, 1500 + read))
 }
 
 interface Item {

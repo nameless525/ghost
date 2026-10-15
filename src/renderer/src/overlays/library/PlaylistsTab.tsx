@@ -133,10 +133,10 @@ export function PlaylistsTab({ active, enterSeq }: PlaylistsTabProps) {
     <div className="lib-pl">
       <div className={cx('lib-pl__grid-view', detail && 'lib-pl__grid-view--hidden')} aria-hidden={!!detail || undefined} inert={!!detail || undefined}>
         <div className="lib-toolbar" hidden={loaded && !playlists.length}>
-          <Button variant="primary" hue="library" icon={<ListPlus />} onClick={() => setNewKind('manual')}>
+          <Button variant="primary" hue="library" icon={<ListPlus />} shortcut="Mod+N" onClick={() => setNewKind('manual')}>
             New playlist
           </Button>
-          <Button variant="soft" hue="settings" icon={<Sparkles />} title="New smart playlist (a saved search)" onClick={() => setNewKind('smart')}>
+          <Button variant="soft" hue="settings" icon={<Sparkles />} aria-label="New smart playlist" tooltip="Smart playlist: a saved search that fills itself and stays up to date" onClick={() => setNewKind('smart')}>
             <span className="lib-narrow-hide">Smart playlist</span>
           </Button>
           <div className="lib-toolbar__spacer" />

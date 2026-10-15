@@ -60,6 +60,8 @@ export class BrowseModel {
   revision: number | null = null
   /** Set once anything has been fetched (so re-entering Browse restores instantly). */
   started = false
+  /** The current query's first page failed (the catalog couldn't be read): why. */
+  pageError: string | null = null
 
   private pages = new Map<number, BrowseGroup[]>()
   private pagePending = new Map<number, number>()
@@ -106,6 +108,7 @@ export class BrowseModel {
     this.gen++
     this.total = null
     this.loading = true
+    this.pageError = null
     this.pages.clear()
     this.pagePending.clear()
     this.stalePages.clear()
@@ -163,6 +166,7 @@ export class BrowseModel {
       const totalChanged = this.total !== res.total
       this.total = res.total
       this.loading = false
+      this.pageError = null
       if (totalChanged) this.emit({ type: 'total', total: res.total })
       this.emit({ type: 'page', page: p })
     } catch (err) {
@@ -170,6 +174,7 @@ export class BrowseModel {
       this.pagePending.delete(p)
       this.loading = false
       if (this.total === null) {
+        this.pageError = err instanceof Error ? err.message : String(err)
         this.total = 0
         this.emit({ type: 'total', total: 0 })
       }
@@ -330,6 +335,14 @@ export class BrowseModel {
       })
     this.detailsPending.set(albumId, p)
     this.detailStarted.set(albumId, Date.now())
+    return p
+  }
+
+  /** Try a track list that failed again now (rows waiting on it show the wait instead of the failure). */
+  retryDetail(albumId: string): Promise<AlbumDetail | null> {
+    this.detailErrors.delete(albumId)
+    const p = this.loadDetail(albumId)
+    this.emit({ type: 'detail', albumId })
     return p
   }
 

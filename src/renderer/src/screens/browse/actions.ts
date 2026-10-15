@@ -8,7 +8,7 @@ import { notify } from '../../shell/notifications'
 import { sfx } from '../../sound'
 import { usePlayer } from '../../state/player'
 import { useTasks } from '../../state/progress'
-import { useSettings } from '../../state/settings'
+import { updateSettings, useSettings } from '../../state/settings'
 import { openContextMenu } from '../../ui/ContextMenu'
 import { browseModel } from './model'
 import type { SelInfo } from './store'
@@ -205,10 +205,17 @@ export async function queueSelection(sel: SelInfo | null, mode: 'next' | 'end'):
   if (!sel) return
   const w = sel.track ? 0 : actionWait(mode, sel)
   await guarded('Couldn’t queue that', async () => {
-    const ids = sel.track ? [sel.track.id] : ((await albumOf(sel, (id) => setActionAlbum(w, id)))?.tracks.map((t) => t.id) ?? [])
+    // the notice names what was queued: the track, else the album the selection stands for
+    let label = sel.track?.title
+    let ids = sel.track ? [sel.track.id] : []
+    if (!sel.track) {
+      const d = await albumOf(sel, (id) => setActionAlbum(w, id))
+      ids = d?.tracks.map((t) => t.id) ?? []
+      label = d?.album.title
+    }
     if (!ids.length) return
-    if (mode === 'next') await trackActions.playNext(ids)
-    else await trackActions.addToQueue(ids)
+    if (mode === 'next') await trackActions.playNext(ids, label)
+    else await trackActions.addToQueue(ids, label)
   })
   endAction(w)
 }
@@ -298,8 +305,15 @@ export async function likeSelection(sel: SelInfo | null): Promise<void> {
   }
 }
 
-/** Mod+S / footer: a playlist picker anchored at a point. */
-export async function addSelectionToPlaylist(sel: SelInfo | null, at: { x: number; y: number }): Promise<void> {
+/** Alt+J (or clicking the wedge's second title): original ⇄ romanized titles first. */
+export function toggleTitles(): void {
+  const on = !useSettings.getState().interface.preferOriginalTitles
+  sfx.play(on ? 'toggleOn' : 'toggleOff', { volume: 0.55 })
+  void updateSettings({ interface: { preferOriginalTitles: on } })
+}
+
+/** Mod+S / footer: a playlist picker at a point, or anchored to a control (the footer button). */
+export async function addSelectionToPlaylist(sel: SelInfo | null, at: { x: number; y: number } | Element): Promise<void> {
   if (!sel) return
   const ids = await trackIdsOf(sel)
   if (!ids.length) return

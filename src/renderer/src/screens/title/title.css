@@ -209,10 +209,6 @@
   width: 100%;
   justify-content: flex-start;
 }
-.tl-menu__btn--soon .g-shear-btn__hint {
-  color: var(--hue-radio);
-  opacity: 0.85;
-}
 
 /* ---- footer ---- */
 .tl-footer {

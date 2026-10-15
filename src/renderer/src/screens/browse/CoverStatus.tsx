@@ -1,15 +1,17 @@
 // Over the wedge's cover: what the selection is waiting on (Enter / Q / Mod+D fetching its album
 // first, a preview getting its track list and stream, an import being revealed), else the
-// "Preview" badge while its preview is audible. Waits shorter than ~250 ms never show (the strip
-// fades in after a delay, so fast paths unmount it first).
-import { AudioLines, Download, ListEnd, ListStart, Play, Telescope, type LucideIcon } from 'lucide-react'
+// "Preview" badge while its preview is audible (click: stop), else a "Preview" button that shows on
+// hover (P without the keyboard). Waits shorter than ~250 ms never show (the strip fades in after a
+// delay, so fast paths unmount it first).
+import { AudioLines, Download, Globe, ListEnd, ListStart, Play, Square, type LucideIcon } from 'lucide-react'
 import { useRef } from 'react'
 import type { Progress } from '@shared/types'
 import { usePlayer } from '../../state/player'
 import { useTask } from '../../state/progress'
 import { ProgressBar } from '../../ui/ProgressBar'
 import { progressPercent } from '../../ui/progress'
-import { previewAlbumId } from './actions'
+import { Tooltip } from '../../ui/Tooltip'
+import { previewAlbumId, togglePreview } from './actions'
 import { albumFallback, nestSpan } from './progress'
 import type { SelInfo } from './store'
 import { useBrowseWaits, type ActionKind, type PreviewWait } from './waits'
@@ -65,7 +67,7 @@ export function CoverStatus({ sel }: { sel: SelInfo | null }) {
 
   let shown: Shown | null = null
   if (reveal) {
-    shown = { kicker: 'Opening in Browse', icon: Telescope, progress: { label: `Finding “${reveal.title}”`, fraction: null, expectMs: REVEAL_EXPECT_MS, since: reveal.since }, waitKey: `reveal${reveal.since}`, pct: false }
+    shown = { kicker: 'Opening in Browse', icon: Globe, progress: { label: `Finding “${reveal.title}”`, fraction: null, expectMs: REVEAL_EXPECT_MS, since: reveal.since }, waitKey: `reveal${reveal.since}`, pct: false }
   } else if (action) {
     // (a finished fetch reports fraction 1 for a moment: no "100%" flash)
     shown = { ...ACTION[action.kind], progress: task ?? albumFallback(action.since), waitKey: `action${action.seq}`, pct: !task?.done }
@@ -104,11 +106,24 @@ export function CoverStatus({ sel }: { sel: SelInfo | null }) {
 
   // audible: the "Preview" badge (a preview still reporting its loading isn't audible yet)
   const previewing = !!(preview && sel && !(pl && pl.trackId === preview.track.id) && (sel.track ? preview.track.id === sel.track.id : preview.track.albumId === previewAlbumId(sel)))
-  if (!previewing) return null
+  if (previewing) {
+    return (
+      <Tooltip content={`Previewing “${preview!.track.title}”. Click to stop.`} shortcut="P" side="top">
+        <button type="button" className="bw__previewing" aria-label="Stop the preview" onClick={() => void togglePreview(sel)}>
+          <AudioLines className="bw__previewing-on" />
+          <Square className="bw__previewing-stop" />
+          Preview
+        </button>
+      </Tooltip>
+    )
+  }
+  if (!sel?.group) return null
   return (
-    <div className="bw__previewing" title={`Previewing ${preview!.track.title}`}>
-      <AudioLines />
-      Preview
-    </div>
+    <Tooltip content={sel.track ? 'Hear a preview of this track' : 'Hear a preview of this soundtrack'} shortcut="P" side="top">
+      <button type="button" className="bw__preview-btn" onClick={() => void togglePreview(sel)}>
+        <Play />
+        Preview
+      </button>
+    </Tooltip>
   )
 }

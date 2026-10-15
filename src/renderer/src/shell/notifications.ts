@@ -5,7 +5,8 @@
 // progress, kind, image) and resets its auto-dismiss timer, so progress/streak cards never
 // duplicate. A dismissed card comes back when it gets updated, except for in-between progress
 // updates (a dismissed download batch stays away until it finishes or fails). While the
-// notification centre is open, nothing new is toasted: the centre lists it.
+// notification centre is open, nothing new is toasted: the centre lists it. `ephemeral` ones
+// (confirmations like "Added to queue") toast but stay out of the centre and its unread count.
 import { create } from 'zustand'
 import type { GhostNotification } from '@shared/types'
 import { ghost } from '../ghost'
@@ -77,11 +78,14 @@ function receive(n: GhostNotification): void {
       : centreOpen || (interim && dismissed.has(n.id))
         ? s.toasts
         : [merged, ...s.toasts].slice(0, MAX_TOASTS)
-    const history = existingHist ? s.history.map((t) => (t.id === n.id ? merged : t)) : [merged, ...s.history].slice(0, MAX_HISTORY)
-    return { toasts, history, unread: base || centreOpen ? s.unread : s.unread + 1 }
+    // Confirmations of the user's own actions only toast: the centre (and the bell's count) is for
+    // things they might have missed. Queueing a few tracks used to light the bell up with "5".
+    const history = existingHist ? s.history.map((t) => (t.id === n.id ? merged : t)) : n.ephemeral ? s.history : [merged, ...s.history].slice(0, MAX_HISTORY)
+    return { toasts, history, unread: base || centreOpen || n.ephemeral ? s.unread : s.unread + 1 }
   })
   if (useNotifications.getState().toasts.some((t) => t.id === n.id)) dismissed.delete(n.id)
-  const isNew = !useNotifications.getState().history.find((t) => t.id === n.id && t.rev > 0)
+  const st = useNotifications.getState()
+  const isNew = !(st.history.find((t) => t.id === n.id && t.rev > 0) ?? st.toasts.find((t) => t.id === n.id && t.rev > 0))
   if (isNew) sfx.play(n.kind === 'error' ? 'error' : 'notify')
   else if (n.kind === 'success') sfx.play('notify', { volume: 0.6 })
   else if (n.kind === 'error') sfx.play('error')

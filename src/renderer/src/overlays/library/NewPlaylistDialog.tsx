@@ -77,7 +77,7 @@ export function NewPlaylistDialog({ open, kind: initialKind, onClose, onCreated 
         query: kind === 'smart' ? query.trim() : undefined
       })
       sfx.play('confirm')
-      notify({ kind: 'success', title: kind === 'smart' ? 'Smart playlist created' : 'Playlist created', body: p.name })
+      notify({ kind: 'success', title: kind === 'smart' ? 'Smart playlist created' : 'Playlist created', body: p.name, ephemeral: true })
       onCreated(p)
     } catch (err) {
       notify({ kind: 'error', title: 'Could not create playlist', body: String((err as Error)?.message ?? err) })

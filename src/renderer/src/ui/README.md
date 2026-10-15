@@ -145,17 +145,17 @@ usePulse(glowRef, { mode: 'var' })             // writes --pulse (0..1.6) for CS
 
 | Component | Notes |
 |---|---|
-| `Button` | `variant` primary · secondary · soft · ghost · danger; `size` sm · md · lg; `icon`, `iconRight`, `loading`, `block`, `hue`, `sound` |
-| `ShearButton` | lazer footer button: `label`, `hint`, `icon`, `hue`, `active`, `size` (lg for menus), `soft` (looks disabled, still hoverable) |
+| `Button` | `variant` primary · secondary · soft · ghost · danger; `size` sm · md · lg; `icon`, `iconRight`, `loading`, `block`, `hue`, `sound`; `tooltip` / `shortcut` (kit tooltip with keycaps; `shortcut` alone uses the text) |
+| `ShearButton` | lazer footer button: `label`, `hint`, `icon`, `hue`, `active`, `size` (lg for menus), `soft` (looks disabled, still hoverable), `tooltip` / `shortcut` |
 | `IconButton` | `icon`, `label` (aria + tooltip), `shortcut`, `active`, `variant` plain · solid · subtle, `size` sm…xl, `round` |
 | `Panel` / `Wedge` | glass surface; `sheared`, `interactive` (hover 1.02), `selected` (accent edge glow), `glow`; `Wedge side="left"` bleeds off the screen edge |
 | `Slider` | `value`/`onChange`/`onCommit`, `min`/`max`/`step`, `variant` default · seek · volume, `format` (hover tooltip), `buffered`, `background` (e.g. energy curve). **`live={() => livePositionMs()}`** updates at 120 fps without re-renders. Drag, wheel, arrows/PageUp/Home/End |
 | `Toggle` | `checked`/`onChange`; with `label`/`description` it renders a settings row |
 | `Select` | `value`, `options [{ value, label, icon?, hint? }]`, `onChange`, `prefix` ("sort:") — keyboard + type-ahead |
 | `SegmentedControl` | sliding indicator; `options`, `value`, `onChange`, `sheared`, `block` |
-| `SearchInput` | `value`/`onChange`/`onSubmit`/`onEscape`, `highlight={(text) => <spans/>}` render-prop (must reproduce the text exactly), `loading`, `right`, `size="lg"`; ref → `{ focus, blur, select, input }`. Esc clears, then blurs |
+| `SearchInput` | `value`/`onChange`/`onSubmit`/`onEscape`, `highlight={(text) => <spans/>}` render-prop (must reproduce the text exactly), `loading`, `right`, `size="lg"`, `autoFocus`; ref → `{ focus, blur, select, input }` (focus never scrolls an ancestor). Esc clears, then blurs |
 | `Tooltip` | `<Tooltip content="…" shortcut="Mod+L" side="top"><button/></Tooltip>` (child must take a ref) |
-| `ContextMenu` | `<ContextMenu items={() => MenuItem[]}>child</ContextMenu>`, or `openContextMenu({ x, y }, items)`. Items: `{ label, icon, shortcut, onSelect, danger, checked, disabled, submenu }`, `{ separator: true }`, `{ heading }` |
+| `ContextMenu` | `<ContextMenu items={() => MenuItem[]}>child</ContextMenu>`, or `openContextMenu({ x, y }, items)`. Items: `{ label, icon, shortcut, onSelect, danger, checked, disabled, submenu }`, `{ separator: true }`, `{ heading }`. `checked: true/false` makes a toggle item (✓ when on). For a control's menu pass the element, `openContextMenu(buttonEl, items)`: it opens below the control, or above it near the bottom of the screen, never over it. Track, album and playlist menus come ready-made from `lib/track-actions` (`trackMenuItems`, `tracksMenuItems`, `albumMenuItems`, `likeItem`, `downloadItem`): use them so wording and order match everywhere; pass `keys: true` only where Enter / Q / Shift+Q / L / Mod+D really act on that item |
 | `Dialog` | `<Dialog open onClose title icon footer hue width bare>`; imperative `await confirmDialog({ title, body, confirmLabel, danger })` → boolean, `await promptDialog({ title, label, defaultValue, validate })` → string \| null |
 | `LoadingRing` | `size`, `box` (osu! dark tile), `label`, `center` (fills positioned parent, fades in) |
 | `ProgressRing` | `value` 0..1 or `null` (indeterminate), `size`, `thickness`, children in the middle |
@@ -211,10 +211,20 @@ Precedence: modal dialog > overlay (top-most only) > screen (active, no modal ov
 global; then `priority`, then most recent. Typing in inputs never triggers plain-letter
 bindings. If your component consumes a key itself, `e.preventDefault()` it. Global keys:
 Space play/pause · Mod+←/→ prev/next · Mod+L library · Mod+O settings · F6 now playing ·
-Esc close overlay / back · Mod+Shift+F FPS meter.
+Esc close overlay / back · ? keyboard shortcuts · Mod+Shift+F FPS meter.
 
-**Notifications:** `notify({ kind: 'success' | 'info' | 'error' | 'progress', title, body?, progress?, image?, id? })`.
-Re-sending the same `id` updates that card in place and restarts its timer.
+**Notifications:** `notify({ kind: 'success' | 'info' | 'error' | 'progress', title, body?, progress?, image?, id?, ephemeral? })`.
+Re-sending the same `id` updates that card in place and restarts its timer. Cards stay up long enough to
+read their text (hover pauses them). `ephemeral: true` is for confirmations of what the user just did
+("Added to queue"): it toasts but stays out of the notification centre and the bell's unread count.
+
+**Vocabulary** (menus, tooltips, buttons): Play · Play next · Add to queue · Add to playlist · Like / Liked ·
+Download / Downloaded · Preview · Queue · Search online. Tooltips name the action and show its key
+(`shortcut` on `Tooltip`, `IconButton`, `Button`, `ShearButton`).
+
+**Keyboard shortcuts sheet:** `?` anywhere, or `openShortcuts()`. Its content is `shell/shortcuts.ts`
+(`SHORTCUT_GROUPS`): add a row there when you add a binding users should know about.
+**Settings:** `openSettings('library')` opens Settings scrolled to a section (ids in `overlays/settings/sections.tsx`).
 
 ---
 

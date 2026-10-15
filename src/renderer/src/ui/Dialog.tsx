@@ -204,7 +204,7 @@ function PromptBody({ o, onDone }: { o: PromptOptions; onDone: (v: string | null
   const error = o.validate?.(value) ?? null
   useEffect(() => {
     const t = window.setTimeout(() => {
-      input.current?.focus()
+      input.current?.focus({ preventScroll: true })
       input.current?.select()
     }, 40)
     return () => window.clearTimeout(t)

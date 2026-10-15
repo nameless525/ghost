@@ -1,9 +1,9 @@
 // Title ("Press Start"): GHOST's main menu, the osu! main-menu analogue.
 //  · big disc logo with a mirrored radial spectrum ring, pulsing on beats, label text spinning while playing
 //  · hover: lift + glow; click / any key: the logo slides left and sheared buttons fan out on an arc
-//  · attract mode after 20 s idle: buttons retract, the logo drifts
+//  · attract mode after 30 s idle (DESIGN §7.3): buttons retract, the logo drifts
 //  · background follows the current track's hero art; a now-playing line sits at the bottom
-import { Compass, CornerDownLeft, LibraryBig, Radio, Settings } from 'lucide-react'
+import { Compass, CornerDownLeft, LibraryBig, Settings } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useIdle, useNowPlayingBackground } from '../../hooks'
 import { beat } from '../../motion/beat'
@@ -13,7 +13,7 @@ import { useAudioLevels, usePulse } from '../../motion/hooks'
 import { motionPrefs } from '../../motion/prefs'
 import { ticker, TickPriority } from '../../motion/ticker'
 import { stagger, tween } from '../../motion/tween'
-import { useKeybinding } from '../../shell/keys'
+import { isModalScopeActive, useKeybinding } from '../../shell/keys'
 import { navigate } from '../../shell/navigation'
 import { preloadScreen, useScreenTransitions } from '../../shell/ScreenStack'
 import type { ScreenProps } from '../../shell/types'
@@ -23,18 +23,17 @@ import { useUI } from '../../state/ui'
 import { accentNow } from '../../theme/accent'
 import { Kbd } from '../../ui/Kbd'
 import { ShearButton } from '../../ui/ShearButton'
-import { Tooltip } from '../../ui/Tooltip'
 import { cx } from '../../ui/util'
 import { GhostLogo } from './GhostLogo'
 import { RingVisualiser } from './RingVisualiser'
 import './title.css'
 
-type MenuId = 'browse' | 'library' | 'radio' | 'settings'
+type MenuId = 'browse' | 'library' | 'settings'
 
-const MENU: { id: MenuId; label: string; hint: string; icon: typeof Compass; hue: 'browse' | 'library' | 'radio' | 'settings'; soon?: boolean }[] = [
+// Only what works today: a disabled "Radio · Coming soon" entry was a dead end on the first screen.
+const MENU: { id: MenuId; label: string; hint: string; icon: typeof Compass; hue: MenuId }[] = [
   { id: 'browse', label: 'Browse', hint: 'Find any soundtrack', icon: Compass, hue: 'browse' },
   { id: 'library', label: 'Library', hint: 'Playlists, likes & history', icon: LibraryBig, hue: 'library' },
-  { id: 'radio', label: 'Radio', hint: 'Endless mixes', icon: Radio, hue: 'radio', soon: true },
   { id: 'settings', label: 'Settings', hint: 'Audio, sources & look', icon: Settings, hue: 'settings' }
 ]
 
@@ -42,7 +41,7 @@ const EXPANDED_SCALE = 0.62
 const BTN_W = 300
 const BTN_GAP = 30
 const SPACING = 78
-const IDLE_MS = 20000
+const IDLE_MS = 30000
 
 const logoSize = () => Math.round(Math.max(280, Math.min(window.innerHeight * 0.56, window.innerWidth * 0.4, 560)))
 
@@ -200,15 +199,9 @@ export default function TitleScreen(props: ScreenProps) {
     setExpanded(false)
   }
 
-  const activate = (id: MenuId, i: number) => {
+  const activate = (id: MenuId) => {
     if (id === 'browse') navigate('browse')
-    else if (id === 'library') useUI.getState().toggleOverlay('library', true)
-    else if (id === 'settings') useUI.getState().toggleOverlay('settings', true)
-    else if (id === 'radio') {
-      const b = slots.current[i]
-      const L = layout[i]
-      if (b) void tween(b).clear().moveToX(L.x + 9, 50).then().moveToX(L.x - 7, 70).then().moveToX(L.x, 500, 'outElastic')
-    }
+    else useUI.getState().toggleOverlay(id, true)
   }
 
   // any key on the collapsed title opens the menu (bindings that handle keys run first)
@@ -217,7 +210,7 @@ export default function TitleScreen(props: ScreenProps) {
       if (e.defaultPrevented || lifecycle.current !== 'active' || expandedRef.current) return
       if (e.metaKey || e.ctrlKey || e.altKey || ['Escape', 'Tab', 'Shift', 'Meta', 'Control', 'Alt', 'CapsLock'].includes(e.key) || /^F\d/.test(e.key)) return
       const st = useUI.getState()
-      if (Object.values(st.overlays).some(Boolean)) return
+      if (Object.values(st.overlays).some(Boolean) || isModalScopeActive()) return
       const el = document.activeElement
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
       e.preventDefault()
@@ -297,25 +290,6 @@ export default function TitleScreen(props: ScreenProps) {
           <div className={cx('tl-menu', expanded && 'tl-menu--open')} role="menu" aria-hidden={!expanded}>
             {MENU.map((m, i) => {
               const Icon = m.icon
-              const btn = (
-                <ShearButton
-                  ref={(el) => {
-                    buttons.current[i] = el
-                  }}
-                  role="menuitem"
-                  size="lg"
-                  hue={m.hue}
-                  icon={<Icon />}
-                  label={m.label}
-                  hint={m.soon ? 'Coming soon' : m.hint}
-                  soft={m.soon}
-                  tabIndex={expanded ? 0 : -1}
-                  className={cx('tl-menu__btn', m.soon && 'tl-menu__btn--soon')}
-                  sound={m.id === 'browse' ? 'confirm' : 'select'}
-                  onPointerEnter={() => m.id === 'browse' && preloadScreen('browse')}
-                  onClick={() => activate(m.id, i)}
-                />
-              )
               return (
                 <div
                   key={m.id}
@@ -324,13 +298,22 @@ export default function TitleScreen(props: ScreenProps) {
                   }}
                   className="tl-menu__slot"
                 >
-                  {m.soon ? (
-                    <Tooltip content="Radio is coming soon: endless, mood-matched game music." side="right">
-                      {btn}
-                    </Tooltip>
-                  ) : (
-                    btn
-                  )}
+                  <ShearButton
+                    ref={(el) => {
+                      buttons.current[i] = el
+                    }}
+                    role="menuitem"
+                    size="lg"
+                    hue={m.hue}
+                    icon={<Icon />}
+                    label={m.label}
+                    hint={m.hint}
+                    tabIndex={expanded ? 0 : -1}
+                    className="tl-menu__btn"
+                    sound={m.id === 'browse' ? 'confirm' : 'select'}
+                    onPointerEnter={() => m.id === 'browse' && preloadScreen('browse')}
+                    onClick={() => activate(m.id)}
+                  />
                 </div>
               )
             })}
@@ -362,7 +345,7 @@ export default function TitleScreen(props: ScreenProps) {
           </div>
         ) : expanded ? (
           <div className="tl-hint">
-            <Kbd combo="Enter" size="sm" /> Browse <span className="tl-hint__sep" /> <Kbd combo="Escape" size="sm" /> Back
+            <Kbd combo="Enter" size="sm" /> Browse <span className="tl-hint__sep" /> <Kbd combo="Escape" size="sm" /> Back <span className="tl-hint__sep" /> <Kbd combo="?" size="sm" /> Keyboard shortcuts
           </div>
         ) : (
           <div className="tl-press">

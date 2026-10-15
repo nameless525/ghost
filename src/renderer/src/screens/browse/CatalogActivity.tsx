@@ -2,13 +2,12 @@
 // happens once (afterwards sources refresh quietly on a schedule). The Browse status line opens
 // it; Settings → Sources shows the same rows.
 import { Check, Clock, Pause, RefreshCw } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import type { ReactNode } from 'react'
 import type { CatalogStatus, SourceIndexStatus } from '@shared/types'
-import { place } from '../../ui/floating'
 import { ProgressBar } from '../../ui/ProgressBar'
 import { cx } from '../../ui/util'
 import { DAY, formatEta, formatEvery } from './activity'
+import { AnchoredPopover } from './Popover'
 import { useRestartKey } from './waits'
 import './catalog-activity.css'
 
@@ -73,45 +72,15 @@ export function ActivityNote({ status }: { status: CatalogStatus }) {
 
 /** Popover anchored to the Browse status line. */
 export function CatalogActivityPopover({ status, anchor, onClose }: { status: CatalogStatus; anchor: HTMLElement; onClose: () => void }) {
-  const box = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    const el = box.current
-    if (!el) return
-    const p = place(anchor.getBoundingClientRect(), el.offsetWidth, el.offsetHeight, { side: 'bottom', align: 'end', offset: 10 })
-    el.style.left = `${p.x}px`
-    el.style.top = `${p.y}px`
-    el.style.transformOrigin = p.side === 'top' ? 'bottom right' : 'top right'
-  })
-  useEffect(() => {
-    const onDown = (e: PointerEvent) => {
-      if (box.current?.contains(e.target as Node) || anchor.contains(e.target as Node)) return
-      onClose()
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('resize', onClose)
-    return () => {
-      window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('resize', onClose)
-    }
-  }, [anchor, onClose])
   const sources = (status.sources ?? []).filter((s) => s.state !== 'off')
-  return createPortal(
-    <div ref={box} className="g-popover ca-pop" role="dialog" aria-label="Catalog activity">
+  return (
+    <AnchoredPopover anchor={anchor} onClose={onClose} className="ca-pop" aria-label="Catalog activity">
       <div className="ca-pop__head">
         <div className="ca-pop__title">{status.setup ? 'Setting up your catalog' : status.indexing ? 'Refreshing sources' : 'Catalog sources'}</div>
         {status.indexing && status.etaMs != null && <div className="ca-pop__eta tnum">{formatEta(status.etaMs)} left</div>}
       </div>
       <SourceActivityList sources={sources} />
       <ActivityNote status={status} />
-    </div>,
-    document.body
+    </AnchoredPopover>
   )
 }

@@ -7,7 +7,7 @@
 // colour filter tokens (`composer=`, `intensity>5`) while the caret and selection still work.
 // The mirror must produce exactly the same characters (no extra text), only wrapped in spans.
 import { Search, X } from 'lucide-react'
-import { forwardRef, useEffect, useImperativeHandle, useRef, type CSSProperties, type InputHTMLAttributes, type KeyboardEvent as RKeyboardEvent, type ReactNode } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, type CSSProperties, type InputHTMLAttributes, type KeyboardEvent as RKeyboardEvent, type ReactNode } from 'react'
 import { sfx } from '../sound'
 import { LoadingRing } from './LoadingRing'
 import { cx, hueStyle, type Hue } from './util'
@@ -47,8 +47,11 @@ export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(funct
   const input = useRef<HTMLInputElement>(null)
   const mirror = useRef<HTMLDivElement>(null)
 
+  // Every focus is preventScroll: a field inside a sliding / transformed panel otherwise scrolls an
+  // ancestor to "reveal" it (the Play screen jumped ~144 px sideways when the queue search took focus).
+  const focus = () => input.current?.focus({ preventScroll: true })
   useImperativeHandle(ref, () => ({
-    focus: () => input.current?.focus(),
+    focus,
     blur: () => input.current?.blur(),
     select: () => input.current?.select(),
     get input() {
@@ -60,6 +63,10 @@ export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(funct
     if (mirror.current && input.current) mirror.current.style.transform = `translateX(${-input.current.scrollLeft}px)`
   }
   useEffect(sync)
+  // (not the autoFocus attribute: React's mount focus can't pass preventScroll)
+  useLayoutEffect(() => {
+    if (autoFocus) focus()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onKeyDown = (e: RKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -80,7 +87,7 @@ export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(funct
   }
 
   return (
-    <div className={cx('g-search', size === 'lg' && 'g-search--lg', highlight && 'g-search--highlighted', className)} style={{ ...hueStyle(hue), ...style }} onClick={() => input.current?.focus()}>
+    <div className={cx('g-search', size === 'lg' && 'g-search--lg', highlight && 'g-search--highlighted', className)} style={{ ...hueStyle(hue), ...style }} onClick={focus}>
       <Search className="g-search__icon" />
       <div className="g-search__field">
         {highlight && (
@@ -94,7 +101,6 @@ export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(funct
           className="g-search__input"
           value={value}
           placeholder={placeholder}
-          autoFocus={autoFocus}
           spellCheck={false}
           autoComplete="off"
           onChange={(e) => onChange(e.target.value)}
@@ -116,7 +122,7 @@ export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(funct
               e.stopPropagation()
               sfx.play('back', { volume: 0.6 })
               onChange('')
-              input.current?.focus()
+              focus()
             }}
           >
             <X />

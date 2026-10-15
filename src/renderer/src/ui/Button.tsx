@@ -1,6 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { sfx, type SfxName } from '../sound'
 import { LoadingRing } from './LoadingRing'
+import { Tooltip } from './Tooltip'
 import { cx, hueStyle, type Hue } from './util'
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -21,14 +22,18 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   sound?: SfxName | false
   /** Hover tick. Default true. */
   hoverSound?: boolean
+  /** Tooltip (kit bubble, not the native `title`). Defaults to the text when `shortcut` is set. */
+  tooltip?: ReactNode
+  /** Keyboard shortcut shown in the tooltip, e.g. 'Mod+N'. */
+  shortcut?: string
 }
 
 /** The standard button. Hover lifts and sheens, press squishes, both with sound. */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'secondary', size = 'md', icon, iconRight, loading, block, hue, sound = 'select', hoverSound = true, className, children, style, onClick, onPointerEnter, disabled, type = 'button', ...rest },
+  { variant = 'secondary', size = 'md', icon, iconRight, loading, block, hue, sound = 'select', hoverSound = true, tooltip, shortcut, className, children, style, onClick, onPointerEnter, disabled, type = 'button', ...rest },
   ref
 ) {
-  return (
+  const btn = (
     <button
       ref={ref}
       type={type}
@@ -65,5 +70,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         </span>
       )}
     </button>
+  )
+  if (tooltip == null && !shortcut) return btn
+  return (
+    <Tooltip content={tooltip ?? (typeof children === 'string' ? children : rest['aria-label'])} shortcut={shortcut}>
+      {btn}
+    </Tooltip>
   )
 })

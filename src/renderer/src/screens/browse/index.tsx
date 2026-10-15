@@ -1,19 +1,18 @@
 // Browse: GHOST's song select. Info wedge (left), the Game ▸ Albums ▸ Tracks carousel (right),
 // the filter bar (top right) and the sheared footer. See carousel.ts for the virtualised engine.
-import { Download, ListEnd, ListStart, Play, Shuffle, Telescope } from 'lucide-react'
+import { Globe, RotateCcw, Settings } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AlbumDetail } from '@shared/types'
 import { ghost } from '../../ghost'
-import { albumMenuItems, trackMenuItems } from '../../lib/track-actions'
 import { tween } from '../../motion/tween'
 import { isModalScopeActive, useKeybinding } from '../../shell/keys'
 import { useScreenTransitions } from '../../shell/ScreenStack'
 import type { ScreenProps } from '../../shell/types'
 import { sfx } from '../../sound'
 import { usePlayer } from '../../state/player'
-import { updateSettings, useSettings } from '../../state/settings'
+import { useSettings } from '../../state/settings'
 import { anyModalOverlay, DEFAULT_ACCENT, useUI } from '../../state/ui'
-import { openContextMenu, type MenuItem } from '../../ui/ContextMenu'
+import { Button } from '../../ui/Button'
 import { cx } from '../../ui/util'
 import type { SearchInputHandle } from '../../ui/SearchInput'
 import {
@@ -28,15 +27,17 @@ import {
   queueSelection,
   startPreview,
   stopPreview,
-  togglePreview
+  togglePreview,
+  toggleTitles
 } from './actions'
 import { activeCarousel, Carousel } from './carousel'
 import { ExternalSearch, ExternalSearchDialog, useExternalSourceNames, type Phase } from './ExternalSearch'
 import { Footer } from './Footer'
 import { InfoWedge } from './InfoWedge'
 import { formatEta } from './activity'
+import { openSelectionMenu } from './menu'
 import { browseModel } from './model'
-import { openExternalSearch, setSearchText } from './query'
+import { openSearchOnline, setSearchText } from './query'
 import { SearchBar } from './SearchBar'
 import { naturalQuery, useBrowse, type SelInfo } from './store'
 import { beginReveal, endReveal, useBrowseWaits } from './waits'
@@ -46,7 +47,6 @@ import './browse.css'
 export type BrowseScreenProps = ScreenProps
 
 const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms))
-const ic = (I: typeof Play) => <I size={15} strokeWidth={2} />
 
 /** Background art + accent for a selection. */
 function themeOf(sel: SelInfo): { art: string | null; accent: string } {
@@ -54,33 +54,6 @@ function themeOf(sel: SelInfo): { art: string | null; accent: string } {
   const art = sel.track?.hero ?? sel.detail?.game?.hero ?? g?.hero ?? sel.track?.cover ?? sel.album?.cover ?? g?.cover ?? null
   const accent = sel.track?.accent ?? sel.detail?.game?.accent ?? g?.accent ?? DEFAULT_ACCENT
   return { art, accent }
-}
-
-function groupMenu(sel: SelInfo): MenuItem[] {
-  const g = sel.group!
-  return [
-    { heading: g.title },
-    { label: g.kind === 'game' ? 'Play soundtrack' : 'Play first album', icon: ic(Play), shortcut: 'Enter', onSelect: () => void playSelection(sel) },
-    { label: 'Play next', icon: ic(ListStart), shortcut: 'Shift+Q', onSelect: () => void queueSelection(sel, 'next') },
-    { label: 'Add to queue', icon: ic(ListEnd), shortcut: 'Q', onSelect: () => void queueSelection(sel, 'end') },
-    { separator: true },
-    { label: 'Download', icon: ic(Download), shortcut: 'Mod+D', onSelect: () => void downloadSelection(sel) },
-    { label: 'Random pick', icon: ic(Shuffle), shortcut: 'F2', onSelect: () => void activeCarousel?.random() },
-    { separator: true },
-    { label: `Search elsewhere for “${g.title}”`, icon: ic(Telescope), onSelect: () => openExternalSearch(g.title) }
-  ]
-}
-
-function openMenu(sel: SelInfo, at: { x: number; y: number }): void {
-  if (sel.track && sel.detail) {
-    const ids = sel.detail.tracks.map((t) => t.id)
-    openContextMenu(
-      at,
-      trackMenuItems(sel.track, { playList: { ids, index: Math.max(0, sel.trackIndex), context: { kind: 'album', id: sel.detail.album.id, title: sel.detail.album.title } } })
-    )
-  } else if (sel.album) {
-    openContextMenu(at, albumMenuItems(sel.album.id, sel.album.title, sel.detail?.tracks.map((t) => t.id) ?? null))
-  } else if (sel.group) openContextMenu(at, groupMenu(sel))
 }
 
 /**
@@ -121,7 +94,7 @@ function CarouselView() {
   useLayoutEffect(() => {
     const c = new Carousel(ref.current!, {
       activate: (info) => void playSelection(info),
-      menu: (info, at) => openMenu(info, at)
+      menu: (info, at) => openSelectionMenu(info, at, info.id === useBrowse.getState().sel?.id)
     })
     return () => c.destroy()
   }, [])
@@ -131,9 +104,11 @@ function CarouselView() {
 function EmptyState() {
   const total = useBrowse((s) => s.total)
   const loading = useBrowse((s) => s.loading)
+  const catalogError = useBrowse((s) => s.catalogError)
   const query = browseModel.query.text
   // only while the empty state shows: catalog:status ticks several times a second while indexing
   const status = useBrowse((s) => (s.total === 0 && !s.loading ? s.status : null))
+  const sources = useExternalSourceNames()
   const ref = useRef<HTMLDivElement>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [suggestions, setSuggestions] = useState<string[]>([])
@@ -146,7 +121,7 @@ function EmptyState() {
   }, [show, query])
   useEffect(() => {
     setSuggestions([])
-    if (!show || !query) return
+    if (!show || !query || catalogError) return
     let live = true
     ghost()
       .catalog.suggest(naturalQuery(query), 5)
@@ -155,8 +130,22 @@ function EmptyState() {
     return () => {
       live = false
     }
-  }, [show, query])
+  }, [show, query, catalogError])
   if (!show) return null
+  if (catalogError) {
+    return (
+      <div className="be" ref={ref}>
+        <div className="be__mark be__mark--error">
+          <RotateCcw />
+        </div>
+        <h2 className="be__title">Couldn’t read your catalog</h2>
+        <p className="be__sub be__sub--error">{catalogError}</p>
+        <Button variant="primary" size="lg" icon={<RotateCcw />} onClick={() => void browseModel.reload()}>
+          Try again
+        </Button>
+      </div>
+    )
+  }
   return (
     <div className={cx('be', query && phase !== 'idle' && 'be--results')} ref={ref}>
       <div className="be__mark">
@@ -188,18 +177,29 @@ function EmptyState() {
               ))}
             </div>
           ) : (
-            <p className="be__sub">Check the spelling and filters, or look further afield. Imports land straight in Browse.</p>
+            <p className="be__sub">Check the spelling, or search online on {sources}. Anything you import shows up here.</p>
           )}
           <ExternalSearch key={query} query={naturalQuery(query)} auto={autoQuery === query} onPhase={setPhase} onImported={(d) => void revealImported(d)} />
         </>
+      ) : status?.indexing ? (
+        <>
+          <h2 className="be__title">Setting up your catalog…</h2>
+          <p className="be__sub">
+            A one-time setup{status.etaMs != null ? ` (${formatEta(status.etaMs)} left)` : ''}: games appear here as they’re found. Afterwards, sources refresh quietly in the background.
+          </p>
+        </>
       ) : (
         <>
-          <h2 className="be__title">{status?.indexing ? 'Setting up your catalog…' : 'Your catalog is empty'}</h2>
-          <p className="be__sub">
-            {status?.indexing
-              ? `A one-time setup${status.etaMs != null ? ` (${formatEta(status.etaMs)} left)` : ''}: games appear here as they’re found, and afterwards sources refresh quietly in the background.`
-              : 'Re-index your sources from Settings, or search the web for a soundtrack.'}
-          </p>
+          <h2 className="be__title">Your catalog is empty</h2>
+          <p className="be__sub">Turn on or re-index sources in Settings, or search online for a soundtrack to import.</p>
+          <div className="be__actions">
+            <Button variant="secondary" size="lg" icon={<Settings />} onClick={() => useUI.getState().toggleOverlay('settings', true)}>
+              Open Settings
+            </Button>
+            <Button variant="primary" size="lg" icon={<Globe />} onClick={() => openSearchOnline()}>
+              Search online
+            </Button>
+          </div>
         </>
       )}
     </div>
@@ -213,24 +213,6 @@ function scrollEmptyResults(dir: number, page = false): boolean {
   if (!list) return false
   list.scrollBy({ top: dir * (page ? list.clientHeight * 0.85 : 84), behavior: 'smooth' })
   return true
-}
-
-/** A few results: offer the wider search under the carousel. */
-function FewResults() {
-  const total = useBrowse((s) => s.total)
-  const sources = useExternalSourceNames()
-  const query = browseModel.query.text
-  useBrowse((s) => s.loading)
-  if (!query || total == null || total === 0 || total > 3) return null
-  return (
-    <div className="bfew">
-      <span>Not what you’re after?</span>
-      <button type="button" className="bfew__btn" title={`Search ${sources}`} onClick={() => openExternalSearch(naturalQuery(query))}>
-        <Telescope />
-        <span className="g-ellipsis">Search the web for “{naturalQuery(query)}”</span>
-      </button>
-    </div>
-  )
 }
 
 export default function BrowseScreen(props: BrowseScreenProps) {
@@ -409,9 +391,7 @@ export default function BrowseScreen(props: BrowseScreenProps) {
       const fw = footerWrap.current
       if (!sw || !fw || !host) return
       const bs = sw.querySelector<HTMLElement>('.bs') ?? sw
-      // The "Search the web" offer under the panel (a few results) is part of the top: rows scroll below it.
-      const few = sw.querySelector<HTMLElement>('.bfew')
-      const top = Math.round(Math.max(topIn(bs) + bs.offsetHeight, few ? topIn(few) + few.offsetHeight : 0) + 6)
+      const top = Math.round(topIn(bs) + bs.offsetHeight + 6)
       const bottom = Math.round(host.clientHeight - topIn(fw) + 4)
       activeCarousel?.setInsets(top, bottom)
       // The empty state / external results live between the search panel and the footer too.
@@ -471,15 +451,13 @@ export default function BrowseScreen(props: BrowseScreenProps) {
   useKeybinding('L', () => void likeSelection(sel()), { repeat: false })
   useKeybinding('Mod+S', () => void addSelectionToPlaylist(sel(), activeCarousel?.selectedRect() ?? { x: 400, y: 300 }), { repeat: false })
   useKeybinding('Mod+D', () => void downloadSelection(sel()), { repeat: false })
-  useKeybinding(
-    'Alt+J',
-    () => {
-      const on = !useSettings.getState().interface.preferOriginalTitles
-      sfx.play(on ? 'toggleOn' : 'toggleOff', { volume: 0.55 })
-      void updateSettings({ interface: { preferOriginalTitles: on } })
-    },
-    { repeat: false }
-  )
+  // ⌘↵ searches online (what's typed, else an empty dialog); in the box itself SearchBar catches it
+  useKeybinding('Mod+Enter', () => openSearchOnline(), { repeat: false })
+  useKeybinding('Mod+F', () => {
+    input.current?.focus()
+    input.current?.select()
+  })
+  useKeybinding('Alt+J', toggleTitles, { repeat: false })
 
   // ---- choreography
   useScreenTransitions({
@@ -519,13 +497,12 @@ export default function BrowseScreen(props: BrowseScreenProps) {
           inputRef={input}
           onSubmit={() => {
             blurSearch()
-            // Nothing in the catalog: Enter searches the web instead.
+            // Nothing in the catalog: Enter searches online instead.
             const text = browseModel.query.text
             if (useBrowse.getState().total === 0 && text) useBrowse.setState({ externalAuto: text })
             else activeCarousel?.recenter()
           }}
         />
-        <FewResults />
       </div>
       <div ref={footerWrap} className="browse__footer">
         <Footer />

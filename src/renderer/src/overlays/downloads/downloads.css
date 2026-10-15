@@ -356,3 +356,52 @@
 .dl-item:focus-within .dl-item__actions {
   opacity: 1;
 }
+
+/* ---------------------------------------------------------------- where files go */
+.dl-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 16px 12px 24px;
+  border-top: 1px solid var(--line-1);
+  font-size: var(--fs-xs);
+  color: var(--fg-3);
+}
+.dl-foot__icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+}
+.dl-foot__label {
+  flex: none;
+}
+/* a long path keeps its end (the folder name) visible: ellipsis on the left */
+.dl-foot__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 6px;
+  margin: 0 -2px;
+  border-radius: 6px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  color: var(--fg-1);
+  transition:
+    color 200ms,
+    background-color 200ms;
+}
+.dl-foot__path > span {
+  unicode-bidi: plaintext;
+}
+.dl-foot__path:hover {
+  color: var(--fg-0);
+  background: rgb(255 255 255 / 0.06);
+  text-decoration: underline;
+  text-decoration-color: rgb(var(--accent-rgb) / 0.6);
+  text-underline-offset: 3px;
+}

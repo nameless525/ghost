@@ -1,5 +1,5 @@
 // Progress math for Browse's waits (pure, no DOM): estimates for waits main doesn't report on its
-// own, the "Search elsewhere" bar (one segment per source, each filling on its own estimate and
+// own, the "Search online" bar (one segment per source, each filling on its own estimate and
 // completing when that source answers) and nesting one wait's steps inside a bigger wait's bar.
 import type { ExternalAlbumHit, ExternalProviderId, Progress } from '@shared/types'
 import { progressValue } from '../../ui/progress'
@@ -22,7 +22,7 @@ export function nestSpan<P extends Progress>(p: P, [a, b]: [number, number]): P 
   return { ...p, span: [a + (b - a) * s0, a + (b - a) * s1] }
 }
 
-// ---------------------------------------------------------------- "Search elsewhere"
+// ---------------------------------------------------------------- "Search online"
 
 /**
  * How long each web source usually takes to answer a search: YouTube and SoundCloud go through

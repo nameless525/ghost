@@ -1,14 +1,16 @@
 // Downloads overlay (green hue): Active · Queued · Completed · Failed, live from
 // `downloads:changed`. Every row lives in one keyed list, so items glide between sections
-// (FLIP) as their status changes; removed rows fade out in place.
-import { Ban, CircleAlert, CircleCheck, Compass, Download, FolderOpen, FolderSearch, ListX, LoaderCircle, Play, RotateCw, Trash, X } from 'lucide-react'
+// (FLIP) as their status changes; removed rows fade out in place. The footer says where files
+// are saved (open the folder, or change it in Settings).
+import { Ban, CircleAlert, CircleCheck, Compass, Download, FolderOpen, FolderSearch, ListX, LoaderCircle, Play, RotateCw, X } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
 import type { DownloadItem } from '@shared/types'
 import { ghost } from '../../ghost'
 import { trackActions } from '../../lib/track-actions'
-import { navigate } from '../../shell/navigation'
+import { navigate, openSettings } from '../../shell/navigation'
 import type { OverlayProps } from '../../shell/types'
 import { sfx } from '../../sound'
+import { useSettings } from '../../state/settings'
 import { useUI } from '../../state/ui'
 import { isMac } from '../../theme'
 import { Button } from '../../ui/Button'
@@ -16,6 +18,7 @@ import { openContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import { CoverArt } from '../../ui/CoverArt'
 import { formatTime } from '../../ui/format'
 import { IconButton } from '../../ui/IconButton'
+import { Kbd } from '../../ui/Kbd'
 import { LoadingRing } from '../../ui/LoadingRing'
 import { OverlayHeader } from '../../ui/OverlayHeader'
 import { ProgressBar } from '../../ui/ProgressBar'
@@ -160,6 +163,11 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
     if (d.path) void ghost().system.reveal(d.path).catch(() => {})
     else void ghost().downloads.reveal(d.id).catch(() => {})
   })
+  // double-click plays, as in every other track list
+  const play = useEvent((d: DownloadItem) => {
+    sfx.play('confirm', { volume: 0.7 })
+    void trackActions.play([d.trackId], 0, { kind: 'downloaded', id: null, title: 'Downloads' })
+  })
   const clearFinished = () => {
     sfx.play('back', { volume: 0.7 })
     void ghost().downloads.clearFinished()
@@ -181,12 +189,12 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
     if (s === 'active' || s === 'queued') items.push({ label: 'Cancel download', icon: ic(X), danger: true, onSelect: () => cancel(d) })
     if (s === 'failed') items.push({ label: 'Retry', icon: ic(RotateCw), onSelect: () => retry(d) })
     if (s === 'done') {
-      items.push({ label: 'Play', icon: ic(Play), onSelect: () => void trackActions.play([d.trackId], 0, { kind: 'downloaded', id: null, title: 'Downloads' }) })
+      items.push({ label: 'Play', icon: ic(Play), onSelect: () => play(d) })
       items.push({ label: revealLabel, icon: ic(FolderSearch), onSelect: () => reveal(d) })
     }
     openContextMenu({ x: e.clientX, y: e.clientY }, items)
   })
-  const actions = useMemo<RowActions>(() => ({ cancel, retry, reveal, menu }), [cancel, retry, reveal, menu])
+  const actions = useMemo<RowActions>(() => ({ cancel, retry, reveal, play, menu }), [cancel, retry, reveal, play, menu])
 
   return (
     <div className="dl">
@@ -195,10 +203,11 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
         title="Downloads"
         description={desc}
         actions={
-          <>
-            <IconButton icon={<ListX />} label="Clear finished" disabled={!finished} onClick={clearFinished} />
-            <IconButton icon={<FolderOpen />} label="Open downloads folder" onClick={() => void ghost().downloads.openFolder()} />
-          </>
+          finished > 0 && (
+            <Button size="sm" variant="ghost" icon={<ListX />} sound={false} title="Remove completed, failed and canceled downloads from this list (the files stay)" onClick={clearFinished}>
+              Clear finished
+            </Button>
+          )
         }
       />
 
@@ -234,24 +243,23 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
           <EmptyState
             icon={<Download />}
             title="No downloads yet"
-            body="Download a track, an album, a playlist or your whole queue to listen offline. Progress shows up here."
-            actions={
+            body={
               <>
-                <Button
-                  variant="soft"
-                  hue="browse"
-                  icon={<Compass />}
-                  onClick={() => {
-                    useUI.getState().toggleOverlay('downloads', false)
-                    navigate('browse')
-                  }}
-                >
-                  Browse music
-                </Button>
-                <Button variant="ghost" icon={<FolderOpen />} onClick={() => void ghost().downloads.openFolder()}>
-                  Open folder
-                </Button>
+                Right-click any track, album or playlist and choose <b>Download</b> (or press <Kbd combo="Mod+D" size="sm" /> in Browse) to keep it for offline listening. Progress shows up here.
               </>
+            }
+            actions={
+              <Button
+                variant="soft"
+                hue="browse"
+                icon={<Compass />}
+                onClick={() => {
+                  useUI.getState().toggleOverlay('downloads', false)
+                  navigate('browse')
+                }}
+              >
+                Browse music
+              </Button>
             }
           />
         ) : null}
@@ -275,11 +283,6 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
                       <RotateCw /> Retry all
                     </button>
                   )}
-                  {s === 'done' && (
-                    <button type="button" className="dl-head__btn" onClick={clearFinished}>
-                      <Trash /> Clear
-                    </button>
-                  )}
                 </div>
               )
             }
@@ -295,7 +298,25 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
           })}
         </div>
       </ScrollArea>
+      <FolderFooter />
     </div>
+  )
+}
+
+/** Where files go: the folder (click to open it) and a way to change it. */
+function FolderFooter() {
+  const dir = useSettings((s) => s.library.downloadDir)
+  return (
+    <footer className="dl-foot">
+      <FolderOpen className="dl-foot__icon" />
+      <span className="dl-foot__label">Saved to</span>
+      <button type="button" className="dl-foot__path lx-mono" title={`Open ${dir}`} onPointerEnter={() => sfx.play('hover')} onClick={() => void ghost().downloads.openFolder()}>
+        <span>{dir || 'your downloads folder'}</span>
+      </button>
+      <Button size="sm" variant="ghost" onClick={() => openSettings('library')}>
+        Change
+      </Button>
+    </footer>
   )
 }
 
@@ -303,6 +324,7 @@ interface RowActions {
   cancel(d: DownloadItem): void
   retry(d: DownloadItem): void
   reveal(d: DownloadItem): void
+  play(d: DownloadItem): void
   menu(e: RMouseEvent, d: DownloadItem): void
 }
 
@@ -347,7 +369,7 @@ const ItemRow = memo(
         style={entry.leaving ? leavingStyle(entry.box) : undefined}
         className={cx('dl-item', `dl-item--${s}`)}
         onContextMenu={(e) => actions.menu(e, d)}
-        onDoubleClick={() => s === 'done' && actions.reveal(d)}
+        onDoubleClick={() => s === 'done' && actions.play(d)}
       >
         <ItemArt d={d} section={s} index={index} />
         <div className="dl-item__text">
@@ -381,7 +403,7 @@ const ItemRow = memo(
           )}
         </div>
         <div className="dl-item__actions">
-          {(s === 'active' || s === 'queued') && <IconButton size="sm" icon={<X />} label="Cancel" sound={false} onClick={() => actions.cancel(d)} />}
+          {(s === 'active' || s === 'queued') && <IconButton size="sm" icon={<X />} label="Cancel download" sound={false} onClick={() => actions.cancel(d)} />}
           {s === 'done' && <IconButton size="sm" icon={<FolderSearch />} label={revealLabel} onClick={() => actions.reveal(d)} />}
           {s === 'failed' && (
             <Button size="sm" variant="soft" icon={<RotateCw />} sound={false} onClick={() => actions.retry(d)}>

@@ -35,20 +35,32 @@ const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /**
  * Notifications raised during startup are broadcast before any window exists, so they are
- * also replayed to each window once its renderer has loaded.
+ * also replayed to each window once its renderer has loaded. `broadcast` wraps the real one:
+ * every notice sent before the first window's replay (latest per id) is replayed to it too.
+ * The first launch's "Setting up your catalog" notice used to be lost that way: the crawl starts
+ * while the window is still loading.
  */
-function startupNotices(broadcast: Broadcast) {
+function startupNotices(send: Broadcast) {
   const sticky: GhostNotification[] = []
+  let early: Map<string, GhostNotification> | null = new Map()
   const onWindow = (_e: unknown, win: BrowserWindow) => {
     win.webContents.once('did-finish-load', () => {
       setTimeout(() => {
         if (win.isDestroyed()) return
-        for (const n of sticky) win.webContents.send(IPC_EVENT, 'notify', n)
+        const replay = new Map(sticky.map((n) => [n.id, n]))
+        for (const [id, n] of early ?? []) if (!replay.has(id)) replay.set(id, n)
+        early = null
+        for (const n of replay.values()) win.webContents.send(IPC_EVENT, 'notify', n)
       }, 1500)
     })
   }
   app.on('browser-window-created', onWindow)
+  const broadcast = ((event: string, payload: unknown) => {
+    if (event === 'notify' && early) early.set((payload as GhostNotification).id, payload as GhostNotification)
+    send(event as Parameters<Broadcast>[0], payload as never)
+  }) as Broadcast
   return {
+    broadcast,
     push(n: GhostNotification) {
       sticky.push(n)
       broadcast('notify', n)
@@ -119,8 +131,9 @@ async function pickFolder(defaultPath: string): Promise<string | null> {
   return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
 }
 
-export async function createServices(broadcast: Broadcast): Promise<ServicesHandle> {
-  const notices = startupNotices(broadcast)
+export async function createServices(send: Broadcast): Promise<ServicesHandle> {
+  const notices = startupNotices(send)
+  const broadcast = notices.broadcast
 
   // --- storage & settings ----------------------------------------------------
   const db = openDb(paths.db())

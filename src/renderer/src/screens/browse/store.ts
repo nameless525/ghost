@@ -31,10 +31,12 @@ export interface BrowseUIState {
   loading: boolean
   sel: SelInfo | null
   status: CatalogStatus | null
-  /** "Search elsewhere" dialog. */
+  /** The catalog couldn't be queried at all (its first page failed): why. */
+  catalogError: string | null
+  /** "Search online" dialog. */
   externalOpen: boolean
   externalQuery: string
-  /** Enter on a search with no results: run the web search for this query right away. */
+  /** Enter on a search with no results: run the online search for this query right away. */
   externalAuto: string | null
   /** F2 picks that Shift+F2 can rewind. */
   historyLen: number
@@ -48,6 +50,7 @@ export const useBrowse = create<BrowseUIState>(() => ({
   loading: true,
   sel: null,
   status: null,
+  catalogError: null,
   externalOpen: false,
   externalQuery: '',
   externalAuto: null,

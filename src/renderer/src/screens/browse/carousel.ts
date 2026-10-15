@@ -26,8 +26,8 @@ import { createPanel, disposePanel, fillAlbum, fillGroup, fillLoading, fillTrack
 import { albumFallback, ALBUMS_EXPECT_MS } from './progress'
 import { memory, useBrowse, type SelInfo } from './store'
 
-/** A loading row whose track list failed (Enter on it tries again). */
-const DETAIL_FAILED = 'Couldn’t load the tracks · Enter tries again'
+/** A loading row whose track list failed (clicking it, or Enter on its album, tries again). */
+const DETAIL_FAILED = 'Couldn’t load the tracks · Click to try again'
 
 // ---------------------------------------------------------------- geometry
 
@@ -767,11 +767,11 @@ export class Carousel {
         this.childOff = []
         this.childrenH = 0
         this.ex = -1
-        useBrowse.setState({ loading: true })
+        useBrowse.setState({ loading: true, catalogError: null })
         break
       }
       case 'total': {
-        useBrowse.setState({ total: e.total, loading: m.loading })
+        useBrowse.setState({ total: e.total, loading: m.loading, catalogError: m.pageError })
         // A query can come back empty first (the catalog is still indexing) and fill in on a later
         // refresh: if nothing is selected yet, select the first result once there is one.
         if (e.total > 0 && this.sel.gi < 0 && !this.awaitingFirstPage) this.select({ gi: 0, albumId: null, trackId: null }, { sound: false, instant: true })
@@ -1048,7 +1048,11 @@ export class Carousel {
   private onClick(e: MouseEvent): void {
     if (this.suppressClick || e.detail > 1) return
     const it = this.itemFromEvent(e)
-    if (!it || it.leaving || it.type === 'loading') return
+    if (!it || it.leaving) return
+    if (it.type === 'loading') {
+      if (it.row?.label === DETAIL_FAILED) this.retryRow(it.row)
+      return
+    }
     const s = this.sel
     if (it.type === 'group') {
       if (s.gi === it.gi && !s.albumId) this.toggleGroup()
@@ -1063,6 +1067,15 @@ export class Carousel {
     } else {
       this.select(this.selOfItem(it))
     }
+  }
+
+  /** A failed track list's row was clicked: fetch it again (the row shows the wait meanwhile). */
+  private retryRow(r: Row): void {
+    const g = this.model.group(r.gi)
+    const albumId = r.album?.id ?? (g?.kind === 'album' ? g.key.slice(g.key.indexOf(':') + 1) : null)
+    if (!albumId) return
+    sfx.play('select', { volume: 0.5 })
+    void this.model.retryDetail(albumId)
   }
 
   private onDblClick(e: MouseEvent): void {
@@ -1410,6 +1423,7 @@ export class Carousel {
   /** A loading row: its fetch's task progress when main reports one, else an estimate from when the fetch started. */
   private fillLoadingRow(n: PanelNode, r: Row): void {
     const label = r.label ?? 'Loading…'
+    setClass(n, 'is-failed', label === DETAIL_FAILED)
     if (!r.wait) return fillLoading(n, label)
     const task = useTasks.getState()[r.wait]
     if (task) return fillLoading(n, `${task.label}…`, r.wait, task, !!task.done)

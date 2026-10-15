@@ -1,6 +1,7 @@
-// "Can't find it?": search the web sources (YouTube, SoundCloud, Internet Archive, Bandcamp) for album-like results and
-// import one into the catalog. Used inline by the empty state and inside a dialog from the footer.
-import { Check, Download, ExternalLink, Landmark, Telescope } from 'lucide-react'
+// "Search online": look for a soundtrack that isn't in the catalog on the web sources (YouTube,
+// SoundCloud, Bandcamp, the Internet Archive) as album-like results, and import one into the catalog.
+// Used inline by the empty state and inside a dialog from the search panel's "Search online" button.
+import { Check, Download, ExternalLink, Globe, Landmark, Search } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { withKnownSources } from '@shared/defaults'
 import type { AlbumDetail, ExternalAlbumHit, ExternalProviderId, Progress } from '@shared/types'
@@ -30,9 +31,9 @@ const PROVIDERS: Record<ExternalProviderId, { name: string; hue: string }> = {
   soundcloud: { name: 'SoundCloud', hue: 'var(--warning)' }
 }
 
-/** "A, B and C". */
+/** "A, B and C" (in a sentence: "the Internet Archive"). */
 function listNames(ids: ExternalProviderId[]): string {
-  const names = ids.map((id) => PROVIDERS[id].name)
+  const names = ids.map((id) => (id === 'archive' ? 'the Internet Archive' : PROVIDERS[id].name))
   if (!names.length) return 'the web'
   return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
@@ -44,7 +45,7 @@ function useExternalSources(): ExternalProviderId[] {
   return useMemo(() => withKnownSources(order).filter((id): id is ExternalProviderId => id in PROVIDERS && !disabled.includes(id)), [order, disabled])
 }
 
-/** The enabled web sources in priority order, as "Bandcamp, Internet Archive, YouTube and SoundCloud". */
+/** The enabled web sources in priority order, as "Bandcamp, the Internet Archive, YouTube and SoundCloud". */
 export function useExternalSourceNames(): string {
   return listNames(useExternalSources())
 }
@@ -184,8 +185,8 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
 
   if (phase === 'idle') {
     return (
-      <Button variant="primary" size={compact ? 'md' : 'lg'} icon={<Telescope />} onClick={() => void run()} disabled={!q}>
-        Search the web for “{q}”
+      <Button variant="primary" size={compact ? 'md' : 'lg'} icon={<Globe />} onClick={() => void run()} disabled={!q}>
+        Search online for “{q}”
       </Button>
     )
   }
@@ -204,7 +205,7 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
       {phase === 'done' && hits.length === 0 && (
         <div className="bx__msg">
           <GhostMark />
-          Nothing album-like out there for “{q}” either.
+          No albums found online for “{q}”. Try fewer words, or the game’s original title.
         </div>
       )}
       {hits.length > 0 && (
@@ -236,28 +237,36 @@ export function ExternalSearch({ query, auto, onImported, compact, onPhase }: Ex
                     </div>
                   )}
                 </div>
-                <Tooltip content={`${Math.round(h.score * 100)}% likely the complete official soundtrack`}>
-                  <div className="bx-score" aria-label={`Score ${Math.round(h.score * 100)}%`}>
-                    <div className="bx-score__bar">
-                      <div className="bx-score__fill" style={{ transform: `scaleX(${h.score})` }} />
-                    </div>
-                    <span className="tnum">{Math.round(h.score * 100)}%</span>
-                  </div>
-                </Tooltip>
-                <Tooltip content="Open the source page">
-                  <button type="button" className="g-icon-btn g-icon-btn--sm" aria-label="Open source page" onClick={() => void ghost().system.openExternal(h.url)}>
+                <MatchScore score={h.score} />
+                <Tooltip content={`Open on ${p.name}`}>
+                  <button type="button" className="g-icon-btn g-icon-btn--sm" aria-label={`Open on ${p.name}`} onClick={() => void ghost().system.openExternal(h.url)}>
                     <ExternalLink />
                   </button>
                 </Tooltip>
-                <Button size="sm" variant={done ? 'soft' : 'primary'} icon={done ? <Check /> : <Download />} loading={busy} disabled={!!importing && !busy} onClick={() => void doImport(h)}>
-                  {done ? 'Imported' : 'Import'}
-                </Button>
+                <Tooltip content={done ? 'In your catalog' : 'Add it to your catalog, to play, queue and download like any other album'}>
+                  <Button size="sm" variant={done ? 'soft' : 'primary'} icon={done ? <Check /> : <Download />} loading={busy} disabled={!!importing && !busy} onClick={() => void doImport(h)}>
+                    {done ? 'Imported' : 'Import'}
+                  </Button>
+                </Tooltip>
               </div>
             )
           })}
         </div>
       )}
     </div>
+  )
+}
+
+/** How likely a result is the complete official soundtrack, in words (the % is in the tooltip). */
+function MatchScore({ score }: { score: number }) {
+  const pct = Math.round(score * 100)
+  const [label, tone] = score >= 0.8 ? ['Strong match', 'best'] : score >= 0.6 ? ['Good match', 'good'] : ['Possible match', 'weak']
+  return (
+    <Tooltip content={`${pct}% likely to be the complete official soundtrack`}>
+      <span className={cx('bx-score', `bx-score--${tone}`)} aria-label={`${label}, ${pct}%`}>
+        {label}
+      </span>
+    </Tooltip>
   )
 }
 
@@ -340,7 +349,7 @@ function ImportWait({ hit, since }: { hit: ExternalAlbumHit; since: number }) {
   )
 }
 
-/** Footer "Search elsewhere" dialog with an editable query. */
+/** The "Search online" dialog, with an editable query (searches on Enter or the Search button). */
 export function ExternalSearchDialog({ onImported }: { onImported: (d: AlbumDetail) => void }) {
   const open = useBrowse((s) => s.externalOpen)
   const initial = useBrowse((s) => s.externalQuery)
@@ -355,12 +364,17 @@ export function ExternalSearchDialog({ onImported }: { onImported: (d: AlbumDeta
   const close = () => useBrowse.setState({ externalOpen: false })
   const sources = useExternalSourceNames()
   return (
-    <Dialog open={open} onClose={close} title="Search elsewhere" icon={<Telescope />} width={720} hue="browse">
+    <Dialog open={open} onClose={close} title="Search online" icon={<Globe />} width={720} hue="browse">
       <div className="bx-dialog">
-        <p className="bx-dialog__lead">Can’t find a soundtrack? Look for album-like uploads on {sources}, then import one into your catalog.</p>
-        <SearchInput value={draft} onChange={setDraft} onSubmit={(v) => setQuery(v)} placeholder="Game or soundtrack name" autoFocus onEscape={close} />
+        <p className="bx-dialog__lead">Find a soundtrack that isn’t in your catalog on {sources}. Import a result to play it like any other album.</p>
+        <div className="bx-dialog__bar">
+          <SearchInput value={draft} onChange={setDraft} onSubmit={(v) => setQuery(v.trim())} placeholder="Game or soundtrack name" autoFocus onEscape={close} />
+          <Button variant="primary" icon={<Search />} disabled={!draft.trim() || draft.trim() === query} onClick={() => setQuery(draft.trim())}>
+            Search
+          </Button>
+        </div>
         <div className="bx-dialog__results">
-          {query.trim() ? (
+          {query ? (
             <ExternalSearch
               key={query}
               query={query}
@@ -372,7 +386,7 @@ export function ExternalSearchDialog({ onImported }: { onImported: (d: AlbumDeta
               }}
             />
           ) : (
-            <div className="bx__msg">Type a name and press Enter.</div>
+            <div className="bx__msg">Type the name of a game or soundtrack, then press Enter.</div>
           )}
         </div>
       </div>

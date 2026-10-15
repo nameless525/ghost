@@ -62,6 +62,28 @@ export const KIND_LABEL: Record<AlbumKind, string> = {
   other: 'Other'
 }
 
+/** What each album kind means, for the tags' tooltips (first-time users won't know "gamerip"). */
+export const KIND_HINT: Record<AlbumKind, string> = {
+  ost: 'Official soundtrack: the music as released by the game’s publisher',
+  gamerip: 'Gamerip: the music taken straight from the game’s files, often more complete than the official release',
+  arrange: 'Arrangement: the game’s music re-recorded or re-arranged',
+  remix: 'Remixes of the game’s music',
+  single: 'Single: one or a few songs released on their own',
+  compilation: 'Compilation: music from several games or releases',
+  other: 'Other music related to the game'
+}
+
+/** What a source badge (FLAC / 320 / CHIP / YT) means, for its tooltip. */
+export function formatHint(source: Parameters<typeof sourceLabel>[0] | null): string | undefined {
+  const tone = source ? sourceLabel(source)?.tone : null
+  if (tone === 'flac') return 'Lossless audio (CD quality or better)'
+  if (tone === 'chip') return 'Chiptune: GHOST plays the game’s original music data through an emulator'
+  if (tone === 'yt') return 'Streamed from YouTube'
+  if (tone === 'hq') return 'High-quality compressed audio'
+  if (tone === 'lq') return 'Compressed audio'
+  return undefined
+}
+
 const GROUP_NOUN: Record<string, [string, string]> = {
   game: ['album', 'albums'],
   album: ['track', 'tracks'],
@@ -232,7 +254,7 @@ function formatBadges(formats: AudioFormat[]): string {
     const s = sourceLabel(f)
     if (!s || seen.has(s.label)) continue
     seen.add(s.label)
-    out += `<span class="g-source g-source--${s.tone}">${esc(s.label)}</span>`
+    out += `<span class="g-source g-source--${s.tone}" title="${esc(formatHint(f) ?? '')}">${esc(s.label)}</span>`
     if (seen.size >= 2) break
   }
   return out
@@ -262,7 +284,7 @@ export function fillAlbum(n: PanelNode, a: Album, title: string, showGame: boole
     n,
     'right',
     n.right,
-    `${from ? `<span class="bc-from" title="From ${esc(from[1])}">${esc(from[0])}</span>` : ''}<span class="bc-kind bc-kind--${a.kind}">${esc(KIND_LABEL[a.kind] ?? a.kind)}</span>${formatBadges(a.formats)}`
+    `${from ? `<span class="bc-from" title="From ${esc(from[1])}">${esc(from[0])}</span>` : ''}<span class="bc-kind bc-kind--${a.kind}" title="${esc(KIND_HINT[a.kind] ?? '')}">${esc(KIND_LABEL[a.kind] ?? a.kind)}</span>${formatBadges(a.formats)}`
   )
   setImg(n, a.cover, 40) // .bc-thumb is 38 css px
   setClass(n, 'is-expanded', expanded)
@@ -282,7 +304,7 @@ export function fillTrack(n: PanelNode, t: TrackView, title: string, playing: 'o
   let html = ''
   if (t.liked) html += HEART
   if (t.downloaded) html += '<span class="bc-dl" title="Downloaded"></span>'
-  if (src) html += `<span class="g-source g-source--${src.tone}">${esc(src.label)}</span>`
+  if (src) html += `<span class="g-source g-source--${src.tone}" title="${esc(formatHint(t.source) ?? '')}">${esc(src.label)}</span>`
   if (stars != null && Number.isFinite(stars)) {
     html += `<span class="g-intensity g-intensity--sm${stars >= 6.5 ? ' g-intensity--bright' : ''}" style="--ic:${intensityColor(stars)}">${STAR}${stars.toFixed(2)}</span>`
   } else html += `<span class="g-intensity g-intensity--sm g-intensity--empty">${STAR}–</span>`

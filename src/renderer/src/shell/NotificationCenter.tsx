@@ -53,7 +53,7 @@ export default function NotificationCenter({ open }: OverlayProps) {
         {history.length === 0 && (
           <div className="g-ncenter__empty">
             <Bell />
-            <div>Downloads, playlist changes and errors show up here.</div>
+            <div>Finished downloads, catalog updates and problems show up here.</div>
           </div>
         )}
         {history.map((n) => (

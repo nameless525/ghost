@@ -241,7 +241,7 @@ The resolver asks each enabled provider in priority order and scores the candida
    - HES/KSS (no song count) and SGC (no libgme player) aren't indexed.
 7. **Internet Archive.**
    - The curated game-soundtrack collections are indexed: `folksoundomy_gamesoundtracks`, the game items of `hifidelity_soundtracks`, and game-tagged `hifidelity_potpourri` (about 3.8k albums).
-   - Everything else is searched on demand ("Search elsewhere"). Each web source answers separately, and results list as they arrive.
+   - Everything else is searched on demand ("Search online", beside Browse's search box). Each web source answers separately, and results list as they arrive.
 8. **YouTube via yt-dlp.**
    - Universal fallback, searched on demand.
    - Prefer "Artist – Topic" channels (official distributor uploads).
@@ -336,7 +336,7 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 
 **Title ("Press Start")**, the analogue of osu!'s main menu.
 - A big disc logo in the centre with a radial spectrum ring, pulsing on beats.
-- Clicking the logo slides out buttons: Browse · Library · Radio · Settings.
+- Clicking the logo (or pressing any key) slides out buttons: Browse · Library · Settings.
 - The background is the current game's art, with parallax.
 - Startup music: a random liked track, or a built-in theme.
 - After 30 s idle, the buttons retract and the logo drifts (attract mode).
@@ -355,7 +355,7 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 │ ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╱              ╱ Arranged: The Brink of Time   ╱    │
 │      blurred game art · parallax · drifting pixels    ╱ Chrono Cross 1999 ╱     │
 ├───────────────────────────────────────────────────────────────────────────────┤
-│ ╱Random╱ ╱Queue╱ ╱Add to playlist╱ ╱Download╱              group: game · sort: year │
+│ ╱Random╱ ╱Add to queue╱ ╱Add to playlist╱ ╱Download╱                   ╱⋯╱ ╱Play╱ │
 └───────────────────────────────────────────────────────────────────────────────┘
 (values illustrative)
 ```
@@ -365,8 +365,9 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
   - Stats: length, BPM, intensity, loudness.
   - Which source will play.
 - **Background:** the selected game's hero art, blurred and dimmed, cross-fading on every change of selection.
-- **Browse previews:** when the selection rests on a game for 400 ms, its signature track starts from its preview point with a fade-in. If the queue is already playing, previews are opt-in (press P). Only one song is ever audible: a preview pauses a playing queue (the engine fades one out as the other fades in) and resumes it when the preview ends, at its 30 s limit or when it is stopped. Playing, resuming or skipping in the queue, from anywhere, ends the preview. Otherwise the music changes as you browse, which is what makes osu!'s song select feel alive.
-- **Footer:** sheared buttons, plus the group and sort controls.
+- **Browse previews:** when the selection rests on a game for 400 ms, its signature track starts from its preview point with a fade-in. If the queue is already playing, previews are opt-in (press P, or the Preview button on the cover). Only one song is ever audible: a preview pauses a playing queue (the engine fades one out as the other fades in) and resumes it when the preview ends, at its 30 s limit or when it is stopped. Playing, resuming or skipping in the queue, from anywhere, ends the preview. Otherwise the music changes as you browse, which is what makes osu!'s song select feel alive.
+- **Search panel (top right):** the search box with its result count and a "Search online" button beside it (the web sources, for what isn't in the catalog), then group and sort, and "Filters": the search syntax (§7.6) as examples that add themselves when clicked.
+- **Footer:** sheared buttons for the selection (Random, Add to queue, Add to playlist, Download), "More" (the selection's context menu) and Play.
 
 **Play screen**, the analogue of osu!'s player screen.
 - Enter on a track opens it:
@@ -412,15 +413,18 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 | Typing anywhere in Browse | Search (as in osu!) |
 | Space | Play/pause |
 | Ctrl+← / Ctrl+→ | Previous / next track |
-| F2 / Shift+F2 | Random / rewind random |
+| F2 / Shift+F2 | Random / back to the previous random pick (also right-click Random) |
 | P | Preview selection |
 | Q / Shift+Q | Add to queue / play next |
 | Ctrl+S | Add to playlist |
 | Ctrl+D | Download |
+| Ctrl+Enter | Search online (for what's typed) |
+| Ctrl+F | Focus the search box |
 | Ctrl+L | Library |
 | Ctrl+O | Settings |
 | F6 | Music controller |
 | Alt+J | Toggle original / romanized titles |
+| ? | Keyboard shortcuts (every key, by screen; also in Settings → Interface) |
 
 ### 7.6 Search syntax
 Free text plus `key op value` filters. Operators: `=` `!=` `>` `<` `>=` `<=`.

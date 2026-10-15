@@ -18,16 +18,15 @@ import { Highlight, patchSettings } from './controls'
 export const PROVIDERS: Record<string, { name: string; icon: ReactNode; description: string; tone: string }> = {
   local: { name: 'Local files', icon: <HardDrive />, description: 'Your own music folders, matched to the catalog. Always the fastest.', tone: '#9aa6c4' },
   chip: { name: 'Chiptune rips', icon: <Cpu />, description: 'Original sound-chip files (NSF, SPC, VGM…) rendered live with real loop points.', tone: '#5ee6a0' },
-  bandcamp: { name: 'Bandcamp', icon: <Disc3 />, description: 'Official releases straight from composers and labels.', tone: '#4fc3e8' },
+  bandcamp: { name: 'Bandcamp', icon: <Disc3 />, description: 'Official releases straight from composers and labels, searched on demand.', tone: '#4fc3e8' },
   khinsider: { name: 'KHInsider', icon: <Archive />, description: 'The big video game music archive: MP3 and FLAC album rips.', tone: '#f6c75c' },
   zophar: { name: 'Zophar’s Domain', icon: <LibraryBig />, description: 'Per-track MP3 rips of about 19,000 games, including PlayStation, DS, GBA and N64 sets.', tone: '#7fd6a8' },
   modland: { name: 'Modland', icon: <AudioWaveform />, description: 'Original SNES, NES, Game Boy and Sega sound files, emulated live with real loop points.', tone: '#6fc4ff' },
-  archive: { name: 'Internet Archive', icon: <Landmark />, description: 'Curated game soundtrack collections, plus anything on archive.org when you search elsewhere.', tone: '#c9b8ff' },
-  soundcloud: { name: 'SoundCloud', icon: <Cloud />, description: 'Last resort: sets and full-OST uploads, searched on demand via yt-dlp.', tone: '#ff9f5a' },
-  youtube: { name: 'YouTube', icon: <TvMinimalPlay />, description: 'Last resort: full-OST uploads and playlists, via yt-dlp.', tone: '#ff6b6b' }
+  archive: { name: 'Internet Archive', icon: <Landmark />, description: 'Curated game soundtrack collections, plus anything on archive.org when you use Search online.', tone: '#c9b8ff' },
+  soundcloud: { name: 'SoundCloud', icon: <Cloud />, description: 'Last resort: full-soundtrack uploads, searched only when no other source has a track.', tone: '#ff9f5a' },
+  youtube: { name: 'YouTube', icon: <TvMinimalPlay />, description: 'Last resort: full-soundtrack uploads and playlists, searched only when no other source has a track.', tone: '#ff6b6b' }
 }
 
-/** Albums per source and index freshness (refreshed while the catalog indexes). */
 /** Albums per source (refreshed while the catalog indexes) plus each crawl's live state. */
 function useSourceStats(): { stats: Map<string, SourceStat>; live: Map<string, SourceIndexStatus> } {
   const [stats, setStats] = useState<Map<string, SourceStat>>(new Map())

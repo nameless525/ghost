@@ -206,12 +206,16 @@ export class Playlists implements PlaylistsAPI {
       this.touch(id)
     })
     this.changed(id)
-    this.broadcast('notify', {
-      id: `pl-add-${id}-${Date.now().toString(36)}`,
-      kind: 'success',
-      title: `Added to ${r.name}`,
-      body: `${trackIds.length} track${trackIds.length === 1 ? '' : 's'}`
-    })
+    // An insert at a position is an undo (putting removed tracks back), not "Add to playlist":
+    // one notice per restored track used to pile up.
+    if (position === undefined || position === null)
+      this.broadcast('notify', {
+        id: `pl-add-${id}-${Date.now().toString(36)}`,
+        kind: 'success',
+        title: `Added to ${r.name}`,
+        body: `${trackIds.length} track${trackIds.length === 1 ? '' : 's'}`,
+        ephemeral: true
+      })
   }
 
   async removeItems(id: ID, itemUids: string[]): Promise<void> {

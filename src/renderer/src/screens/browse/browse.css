@@ -7,13 +7,17 @@
   /* clip (not hidden): bleeding panels must never make the screen programmatically scrollable */
   overflow: clip;
   --bc-bleed: 80px;
+  /* Sizes below use container units (cqw/cqh), not vw/vh: under a UI scale the app is zoomed, and
+     viewport units would be zoomed too (at 150% the wedge and search panel overlapped). The
+     container is the screen in its own, zoomed, pixels. */
+  container: browse / size;
 }
 
 .browse__wedge {
   position: absolute;
   left: 0;
   top: calc(var(--toolbar-h) + 16px);
-  width: min(640px, 43vw);
+  width: min(640px, 43cqw);
   max-height: calc(100% - var(--toolbar-h) - 100px);
   z-index: 3;
   display: flex;
@@ -24,7 +28,7 @@
   position: absolute;
   top: calc(var(--toolbar-h) + 12px);
   right: 0;
-  width: min(780px, 55vw);
+  width: min(780px, 55cqw);
   z-index: 4;
 }
 
@@ -95,6 +99,10 @@
 .bc-item--loading {
   width: calc(var(--bc-w) - 46px + var(--bc-bleed));
   cursor: default;
+}
+/* a track list that failed: clicking the row tries again */
+.bc-item--loading.is-failed {
+  cursor: pointer;
 }
 
 .bc-panel {
@@ -593,6 +601,13 @@
   color: var(--fg-3);
   font-weight: var(--fw-medium);
 }
+.bc-item--loading.is-failed .bc-title {
+  color: var(--warning);
+}
+.bc-item--loading.is-failed.is-hover .bc-panel {
+  background: rgb(var(--bg-3-rgb) / 0.8);
+  box-shadow: inset 0 0 0 1px rgb(var(--warning-rgb) / 0.45);
+}
 .bc-detail {
   flex: none;
   color: var(--fg-3);
@@ -682,22 +697,23 @@
 .bw__cover {
   position: relative;
   flex: none;
-  width: clamp(132px, 12.5vw, 188px);
+  width: clamp(112px, 12.5cqw, 188px);
   aspect-ratio: 1;
   border-radius: 12px;
   box-shadow:
     0 18px 44px rgb(0 0 0 / 0.55),
     0 0 0 1px rgb(255 255 255 / 0.08);
 }
-.bw__previewing {
+.bw__previewing,
+.bw__preview-btn {
   position: absolute;
   left: 8px;
   bottom: 8px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 22px;
-  padding: 0 8px 0 6px;
+  height: 24px;
+  padding: 0 9px 0 7px;
   border-radius: 99px;
   background: rgb(10 9 16 / 0.82);
   color: var(--accent-hi);
@@ -706,11 +722,45 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.5);
+  transition:
+    background-color var(--dur-hover) var(--ease-out-quint),
+    opacity var(--dur-hover) var(--ease-out-quint),
+    transform var(--dur-hover) var(--ease-out-quint);
+}
+.bw__previewing {
   animation: bw-in 400ms var(--ease-out-quint) both;
 }
-.bw__previewing svg {
+.bw__previewing svg,
+.bw__preview-btn svg {
   width: 13px;
   height: 13px;
+}
+.bw__preview-btn svg {
+  fill: currentColor;
+}
+/* playing: hovering it offers "stop" */
+.bw__previewing-stop,
+.bw__previewing:hover .bw__previewing-on {
+  display: none;
+}
+.bw__previewing:hover .bw__previewing-stop {
+  display: block;
+  fill: currentColor;
+}
+.bw__previewing:hover,
+.bw__preview-btn:hover {
+  background: rgb(var(--accent-rgb) / 0.3);
+  color: var(--fg-0);
+}
+/* not playing: the button appears while the pointer is over the cover */
+.bw__preview-btn {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.bw__cover:hover .bw__preview-btn,
+.bw__preview-btn:focus-visible {
+  opacity: 1;
+  transform: none;
 }
 /* What the selection waits on (CoverStatus.tsx). Fades in only after a beat, so waits that end
    sooner never show. */
@@ -815,13 +865,20 @@
   font-size: var(--fs-2xl);
 }
 .bw__alt {
+  display: block;
+  max-width: 100%;
   margin-top: 4px;
   color: var(--fg-1);
   font-size: var(--fs-md);
+  text-align: left;
   opacity: 0.8;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: opacity var(--dur-hover) var(--ease-out-quint);
+}
+.bw__alt:hover {
+  opacity: 1;
 }
 .bw__line {
   margin-top: 5px;
@@ -935,6 +992,9 @@
   box-shadow: inset 0 0 0 1px var(--line-1);
   min-width: 0;
 }
+.bw__stat--hint {
+  cursor: help;
+}
 .bw__stat-label {
   color: var(--fg-3);
   font-size: var(--fs-2xs);
@@ -953,6 +1013,31 @@
   white-space: nowrap;
   overflow: hidden;
 }
+/* a short screen (a large UI scale): the hero gives up its spare height so the stats still show */
+@container browse (max-height: 560px) {
+  .bw__hero {
+    min-height: 0;
+    padding-top: 16px;
+    padding-bottom: 12px;
+  }
+}
+/* a narrow wedge (small window at a large UI scale): stats keep their values whole */
+@container browse (max-width: 860px) {
+  .bw__stats {
+    gap: 6px;
+  }
+  .bw__stat {
+    padding: 8px 9px 9px;
+  }
+  .bw__stat-value {
+    font-size: var(--fs-lg);
+  }
+}
+@container browse (max-width: 760px) {
+  .bw__stat-value {
+    font-size: var(--fs-md);
+  }
+}
 .bw__unit {
   color: var(--fg-3);
   font-size: var(--fs-xs);
@@ -967,6 +1052,8 @@
   color: var(--fg-2);
 }
 .bw__source-label {
+  flex: none;
+  white-space: nowrap;
   color: var(--fg-3);
   font-size: var(--fs-2xs);
   font-weight: var(--fw-bold);
@@ -1112,6 +1199,48 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  container: bs / inline-size;
+}
+/* the search box, and "Search online" right beside it (where the eye already is) */
+.bs__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.bs__top > .g-search {
+  flex: 1;
+  min-width: 0;
+}
+.bs__online.g-btn {
+  --btn-h: 48px;
+  flex: none;
+  padding: 0 18px 0 16px;
+  font-size: var(--fs-md);
+}
+.bs__online.g-btn svg {
+  width: 18px;
+  height: 18px;
+}
+/* a search that finds little (0–3): the way out glows a little */
+.bs__online--hot.g-btn {
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--accent-rgb) / 0.6),
+    0 0 18px rgb(var(--accent-rgb) / 0.25);
+}
+.bs__online-q {
+  color: var(--accent-hi);
+  font-weight: var(--fw-semibold);
+}
+/* narrow panel (small window or a large UI scale): icon only, the tooltip names it */
+@container bs (max-width: 520px) {
+  .bs__online.g-btn {
+    width: 48px;
+    padding: 0;
+  }
+  .bs__online-label {
+    display: none;
+  }
 }
 .bs__count {
   padding: 0 8px;
@@ -1151,20 +1280,120 @@
   white-space: nowrap;
   overflow: hidden;
 }
-.bs__hint {
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* "Filters": the search syntax as clickable examples (SearchTips.tsx); counts the filters in use */
+.bs__filters {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px 0 10px;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  transition:
+    background-color var(--dur-hover) var(--ease-out-quint),
+    box-shadow var(--dur-hover) var(--ease-out-quint),
+    color var(--dur-hover) var(--ease-out-quint);
 }
-.bs__hint--example {
-  font-family: var(--font-sans);
-  outline: none;
-  word-spacing: 4px;
+.bs__filters:hover,
+.bs__filters[aria-expanded='true'] {
+  background: rgb(255 255 255 / 0.09);
+  box-shadow: inset 0 0 0 1px var(--line-3);
+  color: var(--fg-0);
 }
-/* The example isn't overlaid on the input, so its value chips can breathe. */
-.bs__hint--example .bs-tok--value {
+.bs__filters svg {
+  width: 15px;
+  height: 15px;
+  color: var(--fg-3);
+}
+.bs__filters--on {
+  color: var(--fg-0);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.5);
+}
+.bs__filters--on svg {
+  color: var(--accent-hi);
+}
+.bs__filters-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  line-height: 18px;
+  text-align: center;
+}
+@container bs (max-width: 440px) {
+  .bs__filters-label {
+    display: none;
+  }
+}
+.bs-tips {
+  width: 450px;
+  max-height: none;
+  padding: 14px 12px 12px;
+}
+.bs-tips__title {
   padding: 0 4px;
-  margin: 0 1px;
-  word-spacing: normal;
+  color: var(--fg-0);
+  font-weight: var(--fw-bold);
+}
+.bs-tips__lead,
+.bs-tips__foot {
+  margin: 3px 4px 10px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.bs-tips__foot {
+  margin: 10px 4px 0;
+}
+.bs-tips__foot .g-kbd {
+  vertical-align: -2px;
+}
+.bs-tips__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bs-tips__row {
+  display: grid;
+  grid-template-columns: 136px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  text-align: left;
+  transition: background-color 90ms;
+}
+.bs-tips__row:hover,
+.bs-tips__row:focus-visible {
+  background: rgb(var(--accent-rgb) / 0.14);
+}
+.bs-tips__code {
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  color: var(--fg-0);
+  white-space: nowrap;
+}
+.bs-tips__code .bs-tok--value {
+  padding: 0 3px;
+}
+.bs-tips__what {
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
 }
 .bs__error {
   color: var(--danger);
@@ -1178,7 +1407,6 @@
   min-width: 0;
   max-width: 100%;
   height: 24px;
-  margin-right: -8px;
   padding: 0 8px;
   border-radius: 12px;
   color: var(--fg-2);
@@ -1294,37 +1522,34 @@
 .g-shear-btn:hover .bf__kbd {
   opacity: 1;
 }
-.bf__info {
+.bf__end {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--fg-3);
-  font-size: var(--fs-sm);
-  white-space: nowrap;
-}
-.bf__info b {
-  color: var(--fg-1);
-  font-weight: var(--fw-semibold);
-}
-.bf__dot {
-  color: var(--fg-4);
-}
-.bf__play {
-  margin-left: 12px;
+  flex: none;
 }
 .bf__play.g-shear-btn {
+  margin-left: 4px;
   background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.4), rgb(var(--accent-rgb) / 0.16)), rgb(var(--bg-3-rgb) / 0.9);
   color: var(--fg-0);
 }
+.bf__more.g-shear-btn {
+  padding: 0 calc(14px + var(--sb-h) * var(--shear-k) * 0.5);
+}
 
-@media (max-width: 1280px) {
-  .bf__elsewhere {
+/* Narrow (a small window, or a large UI scale): keycaps go first (tooltips and menus still show
+   them), then the labels of all but Play (the buttons keep their names for screen readers). */
+@container browse (max-width: 1040px) {
+  .bf__kbd {
     display: none;
   }
 }
-@media (max-width: 1100px) {
-  .bf__kbd {
+@container browse (max-width: 880px) {
+  .bf__buttons .bf__label {
     display: none;
+  }
+  .bf__buttons .g-shear-btn {
+    padding: 0 calc(14px + var(--sb-h) * var(--shear-k) * 0.5);
   }
 }
 
@@ -1348,7 +1573,7 @@
   min-height: 0;
   text-align: center;
   /* centred a little above the middle while it's just the message */
-  padding-bottom: 6vh;
+  padding-bottom: 6cqh;
   transition: padding 400ms var(--ease-out-quint);
 }
 .be > * {
@@ -1415,6 +1640,27 @@
   width: 30px;
   height: 30px;
 }
+.be__mark--error {
+  color: var(--warning);
+  background: rgb(var(--warning-rgb) / 0.1);
+  box-shadow: 0 0 0 1px rgb(var(--warning-rgb) / 0.3);
+}
+.be__mark--error svg {
+  width: 26px;
+  height: 26px;
+}
+.be__sub--error {
+  max-width: 560px;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.be__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
 .be__title {
   font-size: var(--fs-2xl);
   font-weight: var(--fw-bold);
@@ -1445,55 +1691,6 @@
   padding: 8px 14px 22px;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 24px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 24px), transparent 100%);
-}
-
-.bfew {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  width: fit-content;
-  max-width: calc(100% - 26px);
-  margin: 10px 26px 0 auto;
-  padding: 4px 4px 4px 14px;
-  border-radius: calc(var(--radius) + 4px);
-  /* Rows scrolling up fade out behind it (no backdrop blur: the carousel moves under it every frame). */
-  background: rgb(var(--bg-1-rgb) / 0.86);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
-  color: var(--fg-3);
-  font-size: var(--fs-sm);
-  animation: bw-in 500ms var(--ease-out-quint) both;
-}
-.bfew__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  max-width: min(560px, 46vw);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 0 14px;
-  border-radius: var(--radius);
-  background: rgb(var(--accent-rgb) / 0.14);
-  color: var(--accent-hi);
-  font-weight: var(--fw-semibold);
-  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.35);
-  transition:
-    background-color var(--dur-hover) var(--ease-out-quint),
-    transform var(--dur-hover) var(--ease-out-quint);
-}
-.bfew__btn:hover {
-  background: rgb(var(--accent-rgb) / 0.26);
-  transform: translateY(-1px);
-}
-.bfew__btn .g-ellipsis {
-  min-width: 0;
-}
-.bfew__btn svg {
-  flex: none;
-  width: 16px;
-  height: 16px;
 }
 
 /* =========================================================================
@@ -1635,28 +1832,30 @@
 .bx-hit__load .g-progress__track {
   border-radius: 0;
 }
+/* how likely the result is the full official soundtrack, in words (MatchScore) */
 .bx-score {
+  --sc: var(--fg-3);
   flex: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  color: var(--fg-2);
+  gap: 6px;
+  color: var(--sc);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
+  white-space: nowrap;
 }
-.bx-score__bar {
-  position: relative;
-  width: 46px;
-  height: 4px;
-  border-radius: 2px;
-  background: rgb(255 255 255 / 0.1);
-  overflow: hidden;
+.bx-score::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sc);
 }
-.bx-score__fill {
-  position: absolute;
-  inset: 0;
-  transform-origin: left;
-  background: linear-gradient(90deg, var(--warning), var(--success));
+.bx-score--best {
+  --sc: var(--success);
+}
+.bx-score--good {
+  --sc: var(--info);
 }
 .bx-dialog {
   display: flex;
@@ -1666,6 +1865,18 @@
 .bx-dialog__lead {
   color: var(--fg-2);
   font-size: var(--fs-sm);
+}
+.bx-dialog__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bx-dialog__bar > .g-search {
+  flex: 1;
+  min-width: 0;
+}
+.bx-dialog__bar > .g-btn {
+  --btn-h: 40px;
 }
 .bx-dialog__results {
   min-height: 120px;

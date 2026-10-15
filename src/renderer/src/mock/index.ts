@@ -942,7 +942,7 @@ export function installMockGhost(): void {
           if (pos === undefined) p.items.push(...items)
           else p.items.splice(pos, 0, ...items)
           refreshMeta(id)
-          emit('notify', { id: uid('n'), kind: 'success', title: `Added to ${p.meta.name}`, body: `${ids.length} track${ids.length === 1 ? '' : 's'}` })
+          if (pos === undefined) emit('notify', { id: uid('n'), kind: 'success', title: `Added to ${p.meta.name}`, body: `${ids.length} track${ids.length === 1 ? '' : 's'}`, ephemeral: true })
         },
         removeItems: async (id, uids) => {
           const p = plDetail(id)

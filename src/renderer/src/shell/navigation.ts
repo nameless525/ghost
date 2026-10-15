@@ -1,4 +1,5 @@
 // Screen navigation helpers on top of useUI.
+import { create } from 'zustand'
 import { useUI, type OverlayId, type ScreenId } from '../state/ui'
 import { sfx } from '../sound'
 
@@ -48,4 +49,14 @@ export function applyDeepLinks(search = window.location.search): void {
     const id = [...OVERLAY_IDS].find((o) => o.toLowerCase() === norm)
     if (id) useUI.getState().toggleOverlay(id, true)
   }
+}
+
+/** A request to show one Settings section ('audio', 'sources', 'library' = Downloads, …); `seq`
+ *  changes with every request so asking again while Settings is open still scrolls there. */
+export const useSettingsRequest = create<{ section: string | null; seq: number }>(() => ({ section: null, seq: 0 }))
+
+/** Open Settings, scrolled to `section` when given. */
+export function openSettings(section?: string): void {
+  useSettingsRequest.setState((s) => ({ section: section ?? null, seq: s.seq + 1 }))
+  useUI.getState().toggleOverlay('settings', true)
 }

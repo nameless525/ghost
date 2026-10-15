@@ -77,7 +77,10 @@ describe('playlists', () => {
     expect(positions.map((r) => r.position)).toEqual([0, 1, 2])
     await t.playlists.addTracks(p.id, ['a1'], 99) // clamped to the end
     expect(ids(await t.playlists.get(p.id))).toEqual(['c1', 'e1', 'b1', 'a1'])
-    expect(t.bc.of('notify').some((n) => n.title === 'Added to Mix')).toBe(true)
+    // appends say so (once each); inserts at a position are undos and stay quiet
+    const added = t.bc.of('notify').filter((n) => n.title === 'Added to Mix')
+    expect(added).toHaveLength(1)
+    expect(added[0]).toMatchObject({ body: '1 track', ephemeral: true })
   })
 
   it('allows the same track twice with distinct item uids', async () => {

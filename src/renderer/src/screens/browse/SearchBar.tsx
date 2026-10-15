@@ -1,10 +1,12 @@
-// Top-right filter control (osu!lazer's song-select filter): syntax-highlighted search,
-// result count, group + sort selectors and a slim catalog-indexing progress line.
-import { Calendar, CalendarClock, DiscAlbum, Dices, Gamepad2, History, Layers, MicVocal, Monitor, Star, Timer, Type } from 'lucide-react'
-import { useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+// Top-right filter control (osu!lazer's song-select filter): syntax-highlighted search with its
+// result count and "Search online" beside it, group + sort selectors, the filters popover and a
+// slim catalog-indexing progress line.
+import { Calendar, CalendarClock, DiscAlbum, Dices, Gamepad2, Globe, History, Layers, MicVocal, Monitor, Star, Timer, Type } from 'lucide-react'
+import { useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import type { GroupBy, SortBy } from '@shared/types'
 import { parseSearch } from '@shared/search'
 import { sfx } from '../../sound'
+import { Button } from '../../ui/Button'
 import { ProgressBar } from '../../ui/ProgressBar'
 import { SearchInput, type SearchInputHandle } from '../../ui/SearchInput'
 import { Select, type SelectOption } from '../../ui/Select'
@@ -12,9 +14,12 @@ import { Tooltip } from '../../ui/Tooltip'
 import { cx } from '../../ui/util'
 import { formatEtaShort } from './activity'
 import { CatalogActivityPopover } from './CatalogActivity'
+import { useExternalSourceNames } from './ExternalSearch'
 import { browseModel } from './model'
-import { applyQuery, setSearchText } from './query'
-import { GROUP_LABELS, GROUP_NOUNS, SORT_LABELS, useBrowse } from './store'
+import { applyQuery, openSearchOnline, setSearchText } from './query'
+import { SearchSyntax } from './SearchSyntax'
+import { SearchTips } from './SearchTips'
+import { GROUP_LABELS, GROUP_NOUNS, SORT_LABELS, naturalQuery, useBrowse } from './store'
 import { useRestartKey } from './waits'
 
 const ic = { width: 15, height: 15 }
@@ -37,25 +42,40 @@ const SORT_OPTIONS: SelectOption<SortBy>[] = [
   { value: 'random', label: SORT_LABELS.random, icon: <Dices style={ic} /> }
 ]
 
-/** Mirror of the query with filter tokens coloured (must reproduce the text exactly). */
-export function SearchSyntax({ text }: { text: string }) {
-  const parsed = useMemo(() => parseSearch(text), [text])
-  const out: ReactNode[] = []
-  let i = 0
-  parsed.tokens.forEach((t, k) => {
-    if (t.start > i) out.push(text.slice(i, t.start))
-    out.push(
-      <span key={k} className={`bs-tok bs-tok--${t.type}`}>
-        {t.text}
-      </span>
-    )
-    i = t.end
-  })
-  if (i < text.length) out.push(text.slice(i))
-  return <>{out}</>
+/** Next to the search box: look for what's typed (or anything) on the web sources, then import it. */
+function SearchOnlineButton({ text, hot }: { text: string; hot: boolean }) {
+  const sources = useExternalSourceNames()
+  const query = useMemo(() => naturalQuery(text.trim()), [text])
+  return (
+    <Tooltip
+      content={
+        query ? (
+          <>
+            {hot && 'Not what you’re after? '}Search {sources} for <b className="bs__online-q">“{query}”</b>
+          </>
+        ) : (
+          `Find soundtracks that aren’t in your catalog on ${sources}`
+        )
+      }
+      shortcut="Mod+Enter"
+    >
+      <Button variant={hot ? 'soft' : 'secondary'} size="lg" icon={<Globe />} className={cx('bs__online', hot && 'bs__online--hot')} aria-label="Search online" onClick={() => openSearchOnline()}>
+        <span className="bs__online-label">Search online</span>
+      </Button>
+    </Tooltip>
+  )
 }
 
-export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHandle>; onSubmit: () => void }) {
+/** ⌘↵ in the box searches online (caught before the box's own Enter, which plays the selection). */
+function onModEnter(e: KeyboardEvent<HTMLInputElement>): void {
+  if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.altKey || e.nativeEvent.isComposing) return
+  e.preventDefault()
+  e.stopPropagation()
+  sfx.play('select')
+  openSearchOnline()
+}
+
+export function SearchBar({ inputRef, onSubmit }: { inputRef: RefObject<SearchInputHandle | null>; onSubmit: () => void }) {
   const text = useBrowse((s) => s.text)
   const group = useBrowse((s) => s.group)
   const sort = useBrowse((s) => s.sort)
@@ -69,28 +89,34 @@ export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHan
   const pending = text.trim() !== browseModel.query.text || loading
 
   const [one, many] = GROUP_NOUNS[group]
-  const count = total == null ? null : total === 0 ? 'No matches' : `${total.toLocaleString()} ${total === 1 ? one : many}`
+  const unavailable = useBrowse((s) => !!s.catalogError)
+  const count = total == null || unavailable ? null : total === 0 ? (text.trim() ? 'No matches' : null) : `${total.toLocaleString()} ${total === 1 ? one : many}`
   const error = parsed.errors[0]?.message
+  // A search that finds little: the way out is right next to it.
+  const few = !pending && !!text.trim() && total != null && total <= 3
 
   return (
     <div className="bs">
       <div className="bs__panel">
         <div className="bs__inner">
-          <SearchInput
-            ref={inputRef}
-            size="lg"
-            value={text}
-            onChange={(v) => setSearchText(v)}
-            onSubmit={() => {
-              applyQuery(true)
-              onSubmit()
-            }}
-            highlight={(v) => <SearchSyntax text={v} />}
-            loading={pending && !!text}
-            placeholder="Search games, albums, composers…"
-            right={count && <span className={cx('bs__count', total === 0 && 'bs__count--none')}>{count}</span>}
-            inputProps={{ 'aria-label': 'Search the catalog' }}
-          />
+          <div className="bs__top">
+            <SearchInput
+              ref={inputRef}
+              size="lg"
+              value={text}
+              onChange={(v) => setSearchText(v)}
+              onSubmit={() => {
+                applyQuery(true)
+                onSubmit()
+              }}
+              highlight={(v) => <SearchSyntax text={v} />}
+              loading={pending && !!text}
+              placeholder="Type a game, album or composer…"
+              right={count && <span className={cx('bs__count', total === 0 && 'bs__count--none')}>{count}</span>}
+              inputProps={{ 'aria-label': 'Search the catalog', onKeyDownCapture: onModEnter }}
+            />
+            <SearchOnlineButton text={text} hot={few} />
+          </div>
           <div className="bs__row">
             <Select<GroupBy>
               value={group}
@@ -112,17 +138,8 @@ export function SearchBar({ inputRef, onSubmit }: { inputRef: Ref<SearchInputHan
               }}
               aria-label="Sort by"
             />
-            <div className="bs__status">
-              {error ? (
-                <span className="bs__error">{error}</span>
-              ) : indexing ? (
-                <IndexingStatus />
-              ) : parsed.filters.length ? (
-                <FilterSummary count={parsed.filters.length} />
-              ) : (
-                <SyntaxHint />
-              )}
-            </div>
+            <div className="bs__status">{error ? <span className="bs__error" title={error}>{error}</span> : indexing ? <IndexingStatus /> : null}</div>
+            <SearchTips count={parsed.filters.length} inputRef={inputRef} />
           </div>
         </div>
         <IndexingLine active={indexing} progress={progress} />
@@ -170,33 +187,6 @@ function IndexingStatus() {
       </button>
       {open && btn.current && <CatalogActivityPopover status={status} anchor={btn.current} onClose={() => setOpen(false)} />}
     </>
-  )
-}
-
-function FilterSummary({ count }: { count: number }) {
-  return (
-    <span className="bs__hint">
-      {count} filter{count === 1 ? '' : 's'} active
-    </span>
-  )
-}
-
-function SyntaxHint() {
-  return (
-    <Tooltip
-      side="bottom"
-      content={
-        <span className="bs__tip">
-          Filters: <b>composer</b> <b>game</b> <b>platform</b> <b>year</b> <b>length</b> <b>bpm</b> <b>intensity</b> <b>source</b> <b>kind</b> <b>liked</b> <b>downloaded</b>
-          <br />
-          Operators = != &gt; &lt; &gt;= &lt;= · exclude with -word
-        </span>
-      }
-    >
-      <span className="bs__hint bs__hint--example" tabIndex={-1}>
-        try <SearchSyntax text="platform=snes intensity>5 length<4m" />
-      </span>
-    </Tooltip>
   )
 }
 

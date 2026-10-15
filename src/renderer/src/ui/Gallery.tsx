@@ -72,7 +72,7 @@ export default function Gallery() {
           <Button variant="primary" icon={<Play />}>
             Play all
           </Button>
-          <Button variant="secondary" icon={<ListPlus />}>
+          <Button variant="secondary" icon={<ListPlus />} tooltip="Add to queue" shortcut="Q">
             Queue
           </Button>
           <Button variant="soft" icon={<Sparkles />}>
@@ -94,7 +94,7 @@ export default function Gallery() {
         <Section title="ShearButton (lazer footer)">
           <ShearButton icon={<Shuffle />} label="Random" hue="browse" />
           <ShearButton icon={<ListMusic />} label="Queue" hue="library" active />
-          <ShearButton icon={<Download />} label="Download" hue="downloads" />
+          <ShearButton icon={<Download />} label="Download" hue="downloads" shortcut="Mod+D" />
           <ShearButton icon={<Plus />} label="Add to playlist" hue="settings" size="sm" />
           <ShearButton icon={<Trophy />} label="Large" hint="With a hint line" size="lg" hue="radio" />
         </Section>

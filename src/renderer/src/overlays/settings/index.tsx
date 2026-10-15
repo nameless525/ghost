@@ -5,6 +5,7 @@ import { SearchX, Settings as SettingsIcon } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as RKeyboardEvent } from 'react'
 import { stagger, tween } from '../../motion/tween'
 import { useKeybinding } from '../../shell/keys'
+import { useSettingsRequest } from '../../shell/navigation'
 import type { OverlayProps } from '../../shell/types'
 import { sfx } from '../../sound'
 import { Button } from '../../ui/Button'
@@ -110,6 +111,24 @@ export default function SettingsOverlay({ open }: SettingsOverlayProps) {
     if (t.closest('input, textarea, [contenteditable="true"], [role="listbox"], [role="slider"]')) return
     search.current?.focus()
   }
+
+  // openSettings('library') from elsewhere (the Downloads footer): land on that section
+  const request = useSettingsRequest((s) => s)
+  const handled = useRef(0)
+  useEffect(() => {
+    if (!open || !request.section || handled.current === request.seq) return
+    const id = request.section as SectionId
+    if (query) setQuery('')
+    // after the panel (and a cleared search) has laid out
+    const t = window.setTimeout(
+      () => {
+        handled.current = request.seq
+        jump(id)
+      },
+      query ? 120 : 60
+    )
+    return () => window.clearTimeout(t)
+  }, [open, request]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useKeybinding('Mod+F', () => {
     search.current?.focus()

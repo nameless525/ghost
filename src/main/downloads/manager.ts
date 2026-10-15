@@ -214,7 +214,10 @@ export class DownloadManager implements DownloadsAPI {
     const fresh = tracks.filter((t) => !busy.has(t.id) && !this.deps.library.downloadedPath(t.id))
     const skipped = tracks.length - fresh.length
     if (!fresh.length) {
-      this.notify('info', tracks.length === 1 ? 'Already downloaded' : 'Nothing new to download', tracks.length === 1 ? tracks[0].title : `${tracks.length} tracks are already downloaded or queued`)
+      const one = tracks.length === 1 ? tracks[0] : null
+      // A single track is either on disk already or still in the queue: say which.
+      const title = one ? (busy.has(one.id) ? 'Already downloading' : 'Already downloaded') : 'Nothing new to download'
+      this.notify('info', title, one ? one.title : `${tracks.length} tracks are already downloaded or queued`)
       return
     }
     const batch = fresh.length > 1 ? randomUUID() : null

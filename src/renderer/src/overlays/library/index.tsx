@@ -9,6 +9,7 @@ import type { OverlayProps } from '../../shell/types'
 import { useKeybinding } from '../../shell/keys'
 import { sfx } from '../../sound'
 import { OverlayHeader } from '../../ui/OverlayHeader'
+import { Tooltip } from '../../ui/Tooltip'
 import { cx } from '../../ui/util'
 import { plural, useLive } from './common'
 import { PlaylistsTab } from './PlaylistsTab'
@@ -93,13 +94,17 @@ export default function LibraryOverlay({ open }: LibraryOverlayProps) {
     downloaded: downloaded.data?.length || null
   }
 
-  const desc = [plural(playlistCount, 'playlist'), liked.data ? `${liked.data.length.toLocaleString()} liked` : null, downloaded.data ? `${downloaded.data.length.toLocaleString()} offline` : null]
-    .filter(Boolean)
-    .join(' · ')
+  // counts once there is something to count; a new library just says what lives here
+  const empty = !playlistCount && !liked.data?.length && !downloaded.data?.length
+  const desc = empty
+    ? ''
+    : [plural(playlistCount, 'playlist'), liked.data ? `${liked.data.length.toLocaleString()} liked` : null, downloaded.data ? `${downloaded.data.length.toLocaleString()} downloaded` : null]
+        .filter(Boolean)
+        .join(' · ')
 
   return (
     <div className="lib">
-      <OverlayHeader icon={<LibraryBig />} title="Library" description={desc || 'Playlists · Liked · History · Downloaded'} />
+      <OverlayHeader icon={<LibraryBig />} title="Library" description={desc || 'Your playlists, likes, history and downloads'} />
       <Tabs value={tab} onChange={select} counts={counts} />
       <div className="lib-panels">
         {TABS.map((t) =>
@@ -171,27 +176,27 @@ function Tabs({ value, onChange, counts }: { value: TabId; onChange: (t: TabId) 
       {TABS.map((t) => {
         const on = t.id === value
         return (
-          <button
-            key={t.id}
-            id={`lib-tab-${t.id}`}
-            type="button"
-            role="tab"
-            aria-selected={on}
-            aria-controls={`lib-panel-${t.id}`}
-            tabIndex={on ? 0 : -1}
-            className={cx('lib-tab', on && 'lib-tab--on')}
-            title={t.label}
-            onPointerEnter={() => sfx.play('hover')}
-            onClick={() => {
-              if (on) return
-              sfx.play('select', { volume: 0.7 })
-              onChange(t.id)
-            }}
-          >
-            {t.icon}
-            <span>{t.label}</span>
-            {counts[t.id] != null && <span className="lib-tab__count tnum">{counts[t.id]}</span>}
-          </button>
+          <Tooltip key={t.id} content={t.label} shortcut={t.key}>
+            <button
+              id={`lib-tab-${t.id}`}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              aria-controls={`lib-panel-${t.id}`}
+              tabIndex={on ? 0 : -1}
+              className={cx('lib-tab', on && 'lib-tab--on')}
+              onPointerEnter={() => sfx.play('hover')}
+              onClick={() => {
+                if (on) return
+                sfx.play('select', { volume: 0.7 })
+                onChange(t.id)
+              }}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+              {counts[t.id] != null && <span className="lib-tab__count tnum">{counts[t.id]}</span>}
+            </button>
+          </Tooltip>
         )
       })}
       <div ref={ind} className="lib-tabs__ind" />

@@ -8,16 +8,18 @@ import type { Album, SourceSummary } from '@shared/types'
 import { artUrl } from '../../lib/art'
 import { useSettings } from '../../state/settings'
 import { CoverArt } from '../../ui/CoverArt'
-import { IntensityBadge, SourceBadge } from '../../ui/Badges'
+import { IntensityBadge, SourceBadge, sourceLabel } from '../../ui/Badges'
 import { formatSum, formatTime, sumKnown } from '../../ui/format'
 import { GhostMark } from '../../ui/GhostMark'
 
 import { LoadingRing } from '../../ui/LoadingRing'
 import { Wedge } from '../../ui/Panel'
+import { Tooltip } from '../../ui/Tooltip'
 import { cx } from '../../ui/util'
+import { toggleTitles } from './actions'
 import { CoverStatus } from './CoverStatus'
 import { browseModel } from './model'
-import { KIND_LABEL, plural } from './panels'
+import { formatHint, KIND_HINT, KIND_LABEL, plural } from './panels'
 import { GROUP_LABELS, providerName, useBrowse, type SelInfo } from './store'
 
 /** The format that will actually play, given the streaming-quality setting. */
@@ -31,7 +33,8 @@ function preferredFormat(formats: Album['formats']): Album['formats'][number] | 
 interface Stat {
   label: string
   value: ReactNode
-  wide?: boolean
+  /** What the number means (tooltip). */
+  hint?: string
 }
 
 interface View {
@@ -44,17 +47,32 @@ interface View {
   hero: string | null
   accent: string | null
   stats: Stat[]
-  source: { badge: SourceSummary | Album['formats'][number] | null; provider: string; extra: string | null } | null
+  source: { badge: SourceSummary | Album['formats'][number] | null; provider: string; extra: string | null; hint?: string } | null
   albums: Album[] | null
   albumId: string | null
 }
 
 const uniq = <T,>(xs: T[]) => [...new Set(xs)]
 /** Totals over albums whose counts/lengths may be unknown (not yet crawled): "–", never 0. */
-const sumMs = (as: Album[]) => formatSum(sumKnown(as.map((a) => a.totalMs || null)), formatTime)
-const sumTracks = (as: Album[]) => formatSum(sumKnown(as.map((a) => a.trackCount)), (n) => n.toLocaleString())
+const msSum = (as: Album[]) => sumKnown(as.map((a) => a.totalMs || null))
+const trackSum = (as: Album[]) => sumKnown(as.map((a) => a.trackCount))
+const sumMs = (as: Album[]) => formatSum(msSum(as), formatTime)
+const sumTracks = (as: Album[]) => formatSum(trackSum(as), (n) => n.toLocaleString())
+/** A total with a "+": only some albums' track lists are known so far. */
+const partialHint = (what: string) => `At least ${what}: some albums’ track lists load when you open them.`
+/** Why a value reads "–". */
+const UNKNOWN_TRACKS = 'Not known yet: an album’s track list loads when you open it.'
+
 /** An album row's "tracks · length", leaving out what isn't known. */
 const albumMeta = (a: Album) => [a.trackCount != null ? String(a.trackCount) : null, a.totalMs ? formatTime(a.totalMs) : null].filter(Boolean).join(' · ')
+
+/** "also MP3" when there's more than the format that plays (the badge shows that one). */
+function otherFormats(formats: Album['formats']): string | null {
+  const best = preferredFormat(formats)
+  const bestLabel = best ? sourceLabel(best)?.label : null
+  const rest = uniq(formats.map((f) => sourceLabel(f)?.label ?? f.toUpperCase())).filter((l) => l !== bestLabel)
+  return rest.length ? `also ${rest.join(', ')}` : null
+}
 
 function yearSpan(years: (number | null)[]): string | null {
   const ys = years.filter((y): y is number => !!y)
@@ -88,10 +106,11 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
       accent: t.accent ?? g?.accent ?? null,
       stats: [
         { label: 'Length', value: <span className="tnum">{t.durationMs ? formatTime(t.durationMs) : '–'}</span> },
-        { label: 'BPM', value: <span className="tnum">{a?.bpm ? Math.round(a.bpm) : '–'}</span> },
-        { label: 'Intensity', value: <IntensityBadge value={a?.intensity ?? null} size="lg" glow /> },
+        { label: 'BPM', value: <span className="tnum">{a?.bpm ? Math.round(a.bpm) : '–'}</span>, hint: a?.bpm ? 'Tempo, in beats per minute' : 'Tempo: measured the first time the track plays' },
+        { label: 'Intensity', value: <IntensityBadge value={a?.intensity ?? null} size="lg" glow />, hint: a?.intensity != null ? 'How energetic the track is, from 0 (calm) to 10 (frantic)' : 'How energetic the track is: measured the first time it plays' },
         {
           label: 'Loudness',
+          hint: a?.lufs != null ? 'Average loudness (LUFS). GHOST evens out the volume between tracks.' : 'Average loudness: measured the first time the track plays',
           value: a?.lufs != null ? (
             <>
               <span className="tnum">{a.lufs.toFixed(1)}</span>
@@ -106,9 +125,10 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
         ? {
             badge: t.source,
             provider: providerName(t.source.provider),
-            extra: [t.source.bitrateKbps ? `${Math.round(t.source.bitrateKbps)} kbps` : null, t.source.confidence < 0.995 ? `${Math.round(t.source.confidence * 100)}% match` : null].filter(Boolean).join(' · ') || null
+            extra: [t.source.bitrateKbps ? `${Math.round(t.source.bitrateKbps)} kbps` : null, t.source.confidence < 0.995 ? `${Math.round(t.source.confidence * 100)}% match` : null].filter(Boolean).join(' · ') || null,
+            hint: t.source.confidence < 0.995 ? 'How sure GHOST is that this recording is the right track' : undefined
           }
-        : { badge: null, provider: 'Resolved when played', extra: null },
+        : { badge: null, provider: 'Found when you play it', extra: null },
       albums,
       albumId: t.albumId
     }
@@ -129,12 +149,16 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
       hero: d?.game?.hero ?? g?.hero ?? null,
       accent: d?.game?.accent ?? g?.accent ?? null,
       stats: [
-        { label: 'Tracks', value: <span className="tnum">{al.trackCount ?? d?.tracks.length ?? '–'}</span> },
-        { label: 'Length', value: <span className="tnum">{al.totalMs ? formatTime(al.totalMs) : '–'}</span> },
-        { label: 'Peak', value: d ? <IntensityBadge value={peak >= 0 ? peak : null} size="lg" glow /> : <LoadingRing size={18} /> },
+        { label: 'Tracks', value: <span className="tnum">{al.trackCount ?? d?.tracks.length ?? '–'}</span>, hint: al.trackCount == null && !d ? UNKNOWN_TRACKS : undefined },
+        { label: 'Length', value: <span className="tnum">{al.totalMs ? formatTime(al.totalMs) : '–'}</span>, hint: al.totalMs ? undefined : UNKNOWN_TRACKS },
+        {
+          label: 'Peak',
+          value: d ? <IntensityBadge value={peak >= 0 ? peak : null} size="lg" glow /> : <LoadingRing size={18} />,
+          hint: peak >= 0 ? 'Intensity of the album’s most energetic track, from 0 to 10' : 'Intensity of the most energetic track: measured as tracks play'
+        },
         { label: 'Discs', value: <span className="tnum">{d ? Math.max(1, ...d.tracks.map((t) => t.disc)) : '–'}</span> }
       ],
-      source: { badge: preferredFormat(al.formats), provider: providerName(al.provider), extra: al.formats.length ? uniq(al.formats.map((f) => f.toUpperCase())).join(' · ') : null },
+      source: { badge: preferredFormat(al.formats), provider: providerName(al.provider), extra: otherFormats(al.formats) },
       albums,
       albumId: al.id
     }
@@ -148,20 +172,24 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
   const { title, alt } = pick(g.title, orig)
   const game = g.gameId ? browseModel.game(g.gameId) : null
   const tracks = albums ? sumTracks(albums) : '–'
+  const sumHint = (sum: { total: number; partial: boolean } | null, what: (n: number) => string) => (!albums ? undefined : !sum ? UNKNOWN_TRACKS : sum.partial ? partialHint(what(sum.total)) : undefined)
+  const tracksHint = sumHint(albums && trackSum(albums), (n) => plural(n, 'track'))
+  const lengthHint = sumHint(albums && msSum(albums), formatTime)
   const composers = albums ? uniq(albums.flatMap((a) => a.composers)).slice(0, 3) : []
+  const years = albums && yearSpan(albums.map((a) => a.year))
   const stats: Stat[] =
     g.kind === 'game'
       ? [
           { label: 'Albums', value: <span className="tnum">{albums?.length ?? g.albumCount}</span> },
-          { label: 'Tracks', value: <span className="tnum">{tracks}</span> },
-          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span> },
-          { label: 'Era', value: <span className="tnum">{(albums && yearSpan(albums.map((a) => a.year))) ?? g.year ?? '–'}</span> }
+          { label: 'Tracks', value: <span className="tnum">{tracks}</span>, hint: tracksHint },
+          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span>, hint: lengthHint },
+          { label: 'Released', value: <span className="tnum">{years ?? g.year ?? '–'}</span>, hint: years ? 'When its soundtrack albums came out' : undefined }
         ]
       : [
           { label: g.kind === 'album' ? 'Tracks' : 'Albums', value: <span className="tnum">{g.albumCount}</span> },
           { label: 'Games', value: <span className="tnum">{albums ? uniq(albums.map((a) => a.gameName ?? a.title)).length : '–'}</span> },
-          { label: 'Tracks', value: <span className="tnum">{tracks}</span> },
-          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span> }
+          { label: 'Tracks', value: <span className="tnum">{tracks}</span>, hint: tracksHint },
+          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span>, hint: lengthHint }
         ]
   const providers = albums ? uniq(albums.map((a) => a.provider)) : []
   const formats = albums ? uniq(albums.flatMap((a) => a.formats)) : []
@@ -175,7 +203,7 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
     hero: g.hero ?? g.cover,
     accent: g.accent,
     stats,
-    source: providers.length ? { badge: preferredFormat(formats), provider: providers.map(providerName).join(', '), extra: formats.length ? formats.map((f) => f.toUpperCase()).join(' · ') : null } : null,
+    source: providers.length ? { badge: preferredFormat(formats), provider: providers.map(providerName).join(', '), extra: otherFormats(formats) } : null,
     albums,
     albumId: null
   }
@@ -227,7 +255,9 @@ export function InfoWedge() {
   // only read while showing "no matches": catalog:status arrives several times a second while
   // indexing, and the game count re-rendered the whole wedge each time
   const catalogGames = useBrowse((s) => (!s.sel && !s.loading && s.total === 0 ? (s.status?.games ?? null) : null))
-  const noMatch = !sel && !loading && total === 0 && !!text
+  // the catalog couldn't be read at all: not a "no matches" (EmptyState says what happened)
+  const unavailable = useBrowse((s) => !!s.catalogError)
+  const noMatch = !sel && !loading && total === 0 && !!text && !unavailable
   const hasFilters = useMemo(() => (noMatch ? parseSearch(text).filters.length > 0 : false), [noMatch, text])
 
   const hero = artUrl(v?.hero ?? v?.cover ?? null, { w: 720 })
@@ -251,7 +281,13 @@ export function InfoWedge() {
               <h1 className={cx('bw__title', v.title.length > 34 && 'bw__title--long')} title={v.title}>
                 {v.title}
               </h1>
-              {v.alt && <div className="bw__alt g-jp">{v.alt}</div>}
+              {v.alt && (
+                <Tooltip content={`${preferOrig ? 'Romanized' : 'Original'} title: click to show it first`} shortcut="Alt+J" side="bottom">
+                  <button type="button" className="bw__alt g-jp" onClick={toggleTitles}>
+                    {v.alt}
+                  </button>
+                </Tooltip>
+              )}
               {v.line && <div className="bw__line">{v.line}</div>}
             </>
           ) : sel && !sel.group ? (
@@ -274,7 +310,7 @@ export function InfoWedge() {
           ) : (
             <div className="bw__empty">
               <GhostMark />
-              <div>{loading || total == null ? 'Loading the catalog…' : 'Your catalog is empty'}</div>
+              <div>{unavailable ? 'Catalog unavailable' : loading || total == null ? 'Loading the catalog…' : 'Your catalog is empty'}</div>
             </div>
           )}
         </Swap>
@@ -300,18 +336,24 @@ export function InfoWedge() {
             )}
             <div className="bw__stats">
               {v.stats.map((s) => (
-                <div key={s.label} className="bw__stat">
-                  <div className="bw__stat-label">{s.label}</div>
-                  <div className="bw__stat-value">{s.value}</div>
-                </div>
+                <Tooltip key={s.label} content={s.hint} disabled={!s.hint} side="bottom">
+                  <div className={cx('bw__stat', s.hint && 'bw__stat--hint')}>
+                    <div className="bw__stat-label">{s.label}</div>
+                    <div className="bw__stat-value">{s.value}</div>
+                  </div>
+                </Tooltip>
               ))}
             </div>
             {v.source && (
               <div className="bw__source">
                 <span className="bw__source-label">Plays from</span>
-                {v.source.badge && <SourceBadge source={v.source.badge} />}
+                {v.source.badge && <SourceBadge source={v.source.badge} title={formatHint(v.source.badge)} />}
                 <span className="bw__source-provider">{v.source.provider}</span>
-                {v.source.extra && <span className="bw__source-extra">{v.source.extra}</span>}
+                {v.source.extra && (
+                  <span className="bw__source-extra" title={v.source.hint}>
+                    {v.source.extra}
+                  </span>
+                )}
               </div>
             )}
             {v.albums && v.albums.length > 0 && (
@@ -322,7 +364,9 @@ export function InfoWedge() {
                 </div>
                 {v.albums.slice(0, 5).map((a) => (
                   <div key={a.id} className={cx('bw__album', a.id === v.albumId && 'bw__album--on')}>
-                    <span className={`bc-kind bc-kind--${a.kind}`}>{KIND_LABEL[a.kind]}</span>
+                    <span className={`bc-kind bc-kind--${a.kind}`} title={KIND_HINT[a.kind]}>
+                      {KIND_LABEL[a.kind]}
+                    </span>
                     <span className="bw__album-title g-ellipsis">{preferOrig ? (a.titleOriginal ?? a.title) : a.title}</span>
                     <span className="bw__album-meta tnum">{albumMeta(a)}</span>
                   </div>
