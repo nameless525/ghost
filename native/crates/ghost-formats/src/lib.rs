@@ -50,17 +50,26 @@ pub fn open_memory(family: Family, data: Vec<u8>, name: &str, opts: &OpenOptions
         let opener = std::sync::Arc::new(vgmstream::MemoryOpener::single(name, data));
         Ok(Box::new(vgmstream::VgmstreamSource::open(name, opener, opts)?))
     };
-    let first: Result<Box<dyn AudioSource>, SourceError> = match family {
-        Family::Gme => gme::GmeSource::open(data.clone(), name, opts).map(|s| Box::new(s) as Box<dyn AudioSource>),
-        Family::Openmpt => openmpt::OpenmptSource::open(&data, name, opts).map(|s| Box::new(s) as Box<dyn AudioSource>),
+    // Keep a copy for the vgmstream fallback only when there can be one (libgme consumes its
+    // input; libopenmpt only borrows it).
+    let fallback = || extension_of(name).is_some_and(|ext| vgmstream::is_extension_supported(&ext));
+    let (err, data) = match family {
+        Family::Gme => {
+            let spare = fallback().then(|| data.clone());
+            match gme::GmeSource::open(data, name, opts) {
+                Ok(s) => return Ok(Box::new(s)),
+                Err(e) => (e, spare),
+            }
+        }
+        Family::Openmpt => match openmpt::OpenmptSource::open(&data, name, opts) {
+            Ok(s) => return Ok(Box::new(s)),
+            Err(e) => (e, Some(data)),
+        },
         Family::Vgmstream => return open_vgm(data),
     };
-    match first {
-        Ok(s) => Ok(s),
-        Err(e) => match extension_of(name) {
-            Some(ext) if vgmstream::is_extension_supported(&ext) => open_vgm(data).map_err(|_| e),
-            _ => Err(e),
-        },
+    match data {
+        Some(data) if fallback() => open_vgm(data).map_err(|_| err),
+        _ => Err(err),
     }
 }
 

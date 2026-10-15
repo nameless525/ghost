@@ -10,7 +10,8 @@
 //!
 //! Sources are release tarballs, trimmed to the library code (no players, plugins or prebuilt
 //! binaries). Everything is compiled with optimisation even in dev builds: the emulators are
-//! unusably slow at -O0/-O1, and nobody steps through them.
+//! unusably slow at -O0/-O1, and nobody steps through them. A few fixes for crashes and hangs on
+//! malformed files are applied to copies at build time ([`GME_PATCHES`]); the tree stays pristine.
 
 use std::path::{Path, PathBuf};
 
@@ -28,10 +29,124 @@ fn files_in(dir: &Path, ext: &str) -> Vec<PathBuf> {
     v
 }
 
+/// Fixes for crashes / hangs on malformed files in the vendored sources, as `(file, [(find,
+/// replace)])`. They are applied to a copy under OUT_DIR, so native/vendor stays an untouched
+/// release tarball, and each `find` must occur exactly once (a vendor upgrade that moves the code
+/// fails the build instead of silently dropping a fix). None of them changes the output for
+/// well-formed files.
+const GME_PATCHES: &[(&str, &[(&str, &str)])] = &[
+    // The CPU cores keep the program counter in a wider integer and never wrap it at 16 bits:
+    // code that runs off the top of memory indexes past the 9-entry page table (reading
+    // whatever follows as a page pointer: SIGSEGV). Real hardware wraps. (The NES core already
+    // uses a uint16_t; HES uses uint_fast16_t, which is only 16 bits wide on some platforms.)
+    ("Gb_Cpu.cpp", &[("\tuint8_t const* instr = s.code_map [pc >> page_shift];", "\tpc &= 0xFFFF;\n\tuint8_t const* instr = s.code_map [pc >> page_shift];")]),
+    ("Kss_Cpu.cpp", &[("\tuint8_t const* instr = s.read [pc >> page_shift];", "\tpc &= 0xFFFF;\n\tuint8_t const* instr = s.read [pc >> page_shift];")]),
+    ("Hes_Cpu.cpp", &[("\tuint8_t const* instr = s.code_map [pc >> page_shift];", "\tpc &= 0xFFFF;\n\tuint8_t const* instr = s.code_map [pc >> page_shift];")]),
+    (
+        "Ay_Emu.cpp",
+        &[
+            // get_data()'s bounds check underflows when the block needs more bytes than the whole
+            // file holds (`file_size - min_size` < 0, compared as unsigned): a song table or data
+            // block claiming more than the file has was accepted, then read past the buffer.
+            (
+                "\tif ( !offset || uint32_t (pos + offset) > uint32_t (file_size - min_size) )",
+                "\tif ( !offset || file_size < min_size || uint32_t (pos + offset) > uint32_t (file_size - min_size) )",
+            ),
+            // A data block whose data pointer is 0 or out of range: get_data() returns NULL,
+            // which was then memcpy'd from.
+            (
+                "\t\tbyte const* in = get_data( file, blocks, 0 ); blocks += 2;\n",
+                "\t\tbyte const* in = get_data( file, blocks, 0 ); blocks += 2;\n\t\tif ( !in )\n\t\t{\n\t\t\tset_warning( \"Missing file data\" );\n\t\t\tbreak;\n\t\t}\n",
+            ),
+            // The selected AY register was never initialised: a write to the data port before
+            // any register select wrote `regs [garbage]` (heap corruption, SIGBUS).
+            ("\tcpc_latch     = 0;\n", "\tcpc_latch     = 0;\n\tapu_addr      = 0;\n"),
+        ],
+    ),
+    // A frame of zero clocks (an absurdly low chip clock from the file, e.g. a VGM's SN76489)
+    // produces no samples, so play_() looped forever (the assert that caught it is compiled out).
+    ("Classic_Emu.cpp", &[("\t\t\tassert( clocks_emulated );\n", "\t\t\tif ( !clocks_emulated )\n\t\t\t\treturn \"Emulation error (empty frame)\";\n")]),
+    // The Nuked OPN2 state was allocated uninitialised (OPN2_Reset only runs once a clock is
+    // set): value-initialise it, so nothing ever runs on garbage indices.
+    ("Ym2612_Nuked.cpp", &[("\timpl = new Ym2612_NukedImpl::ym3438_t;", "\timpl = new Ym2612_NukedImpl::ym3438_t();")]),
+    // GYM frames are scanned up to their terminating 0 byte with no end-of-data check: a
+    // truncated file (last frame without its 0) was read past the end of the buffer.
+    (
+        "Gym_Emu.cpp",
+        &[
+            (
+                "\tint cmd;\n\twhile ( (cmd = *p++) != 0 )\n\t{\n\t\tint data = *p++;\n",
+                "\tint cmd;\n\twhile ( p < data_end && (cmd = *p++) != 0 )\n\t{\n\t\tif ( data_end - p < (cmd <= 2 ? 2 : 1) )\n\t\t\tbreak;\n\t\tint data = *p++;\n",
+            ),
+            (
+                "\tint cmd;\n\twhile ( (cmd = *pos++) != 0 )\n\t{\n\t\tint data = *pos++;\n",
+                "\tint cmd;\n\twhile ( pos < data_end && (cmd = *pos++) != 0 )\n\t{\n\t\tif ( data_end - pos < (cmd <= 2 ? 2 : 1) )\n\t\t{\n\t\t\tpos = data_end;\n\t\t\tbreak;\n\t\t}\n\t\tint data = *pos++;\n",
+            ),
+        ],
+    ),
+    // An NSFE whose NEND chunk comes without a DATA chunk loaded "successfully" with the NSF
+    // emulator never initialised: playing it ran on uninitialised state (hangs, wild jumps).
+    (
+        "Nsfe_Emu.cpp",
+        &[(
+            "\t\t\tcase BLARGG_4CHAR('D','N','E','N'):\n\t\t\t\tcheck( phase == 2 );\n",
+            "\t\t\tcase BLARGG_4CHAR('D','N','E','N'):\n\t\t\t\tif ( phase != 2 )\n\t\t\t\t\treturn \"Corrupt file (no DATA chunk)\";\n",
+        )],
+    ),
+    (
+        "Vgm_Emu_Impl.cpp",
+        &[
+            // A loop body that takes no time (loop offset pointing at the end command, or a body
+            // without waits) made run_commands spin forever: end the track instead.
+            (
+                "\tbyte const* pos = this->pos;\n",
+                "\tbyte const* pos = this->pos;\n\tbool looped = false;\n\tvgm_time_t loop_time = 0;\n",
+            ),
+            (
+                "\t\tcase cmd_end:\n\t\t\tpos = loop_begin;",
+                "\t\tcase cmd_end:\n\t\t\tif ( looped && vgm_time == loop_time ) { pos = data_end; break; }\n\t\t\tlooped = true;\n\t\t\tloop_time = vgm_time;\n\t\t\tpos = loop_begin;",
+            ),
+            // A disabled FM chip (no clock in the header) still accepted register writes when the
+            // FM time came out negative, and that is often: fm_time_offset is only initialised when
+            // the file uses FM. A stray YM2612 command in a PSG-only VGM then wrote into a chip
+            // that was never reset (uninitialised write-buffer index: heap corruption).
+            (
+                "\tint count = time - last_time;\n\tif ( count > 0 )\n\t{\n\t\tif ( last_time < 0 )\n\t\t\treturn false;\n",
+                "\tif ( last_time < 0 )\n\t\treturn false;\n\tint count = time - last_time;\n\tif ( count > 0 )\n\t{\n",
+            ),
+            // The PCM bank position comes from the file (0xE0 seeks, 0x8n reads): never read
+            // outside the file data.
+            (
+                "\t\t\t\t\twrite_pcm( vgm_time, *pcm_pos++ );",
+                "\t\t\t\t\tif ( pcm_pos >= data && pcm_pos < data_end )\n\t\t\t\t\t\twrite_pcm( vgm_time, *pcm_pos );\n\t\t\t\t\tpcm_pos++;",
+            ),
+        ],
+    ),
+];
+
+/// `src` with `patches` applied, written under `out` (or `src` itself if there are none).
+fn patched(out: &Path, src: &Path, patches: &[(&str, &[(&str, &str)])]) -> PathBuf {
+    let name = src.file_name().unwrap().to_string_lossy().into_owned();
+    let Some((_, fixes)) = patches.iter().find(|(f, _)| *f == name) else { return src.to_path_buf() };
+    let mut text = std::fs::read_to_string(src).unwrap_or_else(|e| panic!("read {}: {e}", src.display()));
+    for (find, replace) in fixes.iter() {
+        assert_eq!(text.matches(find).count(), 1, "patch for {name} no longer applies: {find:?}");
+        text = text.replacen(find, replace, 1);
+    }
+    std::fs::create_dir_all(out).unwrap();
+    let dst = out.join(&name);
+    std::fs::write(&dst, text).unwrap();
+    dst
+}
+
 fn base(cpp: bool) -> cc::Build {
     let mut b = cc::Build::new();
     b.cpp(cpp).opt_level(2).debug(false).warnings(false).extra_warnings(false).pic(true);
     b.flag_if_supported("-w");
+    // Release builds of the libraries, as their own build systems make them: libgme is full of
+    // `assert`s (some on emulation state that malformed files can reach), and a failed assert
+    // aborts the whole process (the Electron app). Decoded output is identical either way.
+    b.define("NDEBUG", None);
     b
 }
 
@@ -127,7 +242,7 @@ fn main() {
         let name = f.file_name().unwrap().to_string_lossy().into_owned();
         // The MAME core is GPL: never built.
         if !skip.contains(&name.as_str()) {
-            b.file(f);
+            b.file(patched(&out.join("patched/gme"), &f, GME_PATCHES));
         }
     }
     b.compile("ghost_gme_cpp");
@@ -144,7 +259,6 @@ fn main() {
         ("MPT_WITH_STBVORBIS", None),
         ("STB_VORBIS_NO_PULLDATA_API", None),
         ("STB_VORBIS_NO_STDIO", None),
-        ("NDEBUG", None),
     ];
     let mut b = base(true);
     b.include(mpt.join("src")).include(mpt.join("common")).include(&mpt).include(mpt.join("include"));

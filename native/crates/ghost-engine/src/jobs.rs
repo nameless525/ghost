@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::cache::CacheManager;
-use crate::decode::decode_all;
+use crate::decode::decode_chunks;
 use crate::{EngineEvent, SourceSpec};
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -61,28 +61,39 @@ pub fn analyze_job(
     cancel: Arc<AtomicBool>,
     loops: (crate::LoopMode, u32, f32),
 ) {
-    let (samples, channels, rate) = match decode_all(&source, &cache, cancel.clone(), loops) {
-        Ok(v) => v,
+    use ghost_analysis::offline::OfflineAnalyzer;
+    // Analysis runs alongside decoding (on the analysis crate's low-priority pool), chunk by
+    // chunk: no whole-track buffer, and results bit-identical to the batch `analyze()`.
+    let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decode_chunks(&source, &cache, cancel.clone(), loops, OfflineAnalyzer::new, |a, chunk| a.push(chunk))
+    }))
+    .unwrap_or_else(|_| Err("decoder crashed (malformed stream)".into()));
+    let mut analyzer = match decoded {
+        Ok(a) => a,
         Err(e) => {
-            if let Some(tx) = &loudness_tx {
-                let _ = tx.send(Loudness { id: id.clone(), lufs: None });
-            }
-            if !cancel.load(Ordering::Relaxed) {
-                let _ = events.send(EngineEvent::Error { id: Some(id), message: format!("analysis failed: {e}"), recoverable: true });
+            match &loudness_tx {
+                // The playing track's own background measurement is best effort: its id is the
+                // queue item's, so an error event would read as a playback failure.
+                Some(tx) => {
+                    let _ = tx.send(Loudness { id: id.clone(), lufs: None });
+                }
+                None if !cancel.load(Ordering::Relaxed) => {
+                    let _ = events.send(EngineEvent::Error { id: Some(id), message: format!("analysis failed: {e}"), recoverable: true });
+                }
+                None => {}
             }
             return;
         }
     };
+    // The playing track's gain waits on this: ready right after the last chunk (~1 ms), and
+    // exactly the value the full analysis reports.
     if let Some(tx) = &loudness_tx {
-        let (lufs, _) = ghost_analysis::offline::loudness(&samples, channels, rate);
+        let lufs = analyzer.integrated_lufs();
         let _ = tx.send(Loudness { id: id.clone(), lufs: lufs.filter(|l| l.is_finite()) });
     }
     if cancel.load(Ordering::Relaxed) {
         return;
     }
-    let mut result = ghost_analysis::offline::analyze(&samples, channels, rate);
-    if result.duration_ms == 0 && rate > 0 {
-        result.duration_ms = (samples.len() / channels.max(1)) as u64 * 1000 / rate as u64;
-    }
+    let result = analyzer.finish();
     let _ = events.send(EngineEvent::Analysis { id, cache_key: cache_key_of(&source), result });
 }

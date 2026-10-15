@@ -444,3 +444,110 @@ fn engine_handle_is_send_and_sync() {
     assert_send_sync::<ghost_engine::Engine>();
     assert_send_sync::<ghost_engine::OfflineSink>();
 }
+
+/// An expiring URL (YouTube-style) that starts answering 403 mid-stream must surface as a
+/// recoverable error carrying the status, so the player can re-resolve it; a fresh URL for the
+/// same cache key then plays on.
+#[test]
+fn url_expiring_mid_stream_reports_http_status() {
+    let dir = tmp_dir("expire");
+    let rate = 48_000;
+    let sig = sweep(rate, rate as usize * 12, 60.0, 8_000.0, 0.5);
+    let wavf = dir.join("long.wav");
+    wav::write_f32(&wavf, rate, 2, &sig).unwrap();
+    let bytes = std::fs::read(&wavf).unwrap();
+    let srv = serve_with(bytes.clone(), "long.wav", Duration::from_millis(1), false, |a| (a >= 1024 * 1024).then_some(403));
+    let (engine, sink) = offline(&dir, rate);
+    let events = engine.events();
+    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "expire".into(), format_hint: None, extras: Default::default() };
+    engine.set_current(track("x", spec), 0, true);
+    let t0 = std::time::Instant::now();
+    let message = loop {
+        while sink.blocks.try_recv().is_ok() {}
+        match events.recv_timeout(Duration::from_millis(20)) {
+            Ok(EngineEvent::Error { id, recoverable, message }) => {
+                assert_eq!(id.as_deref(), Some("x"));
+                assert!(recoverable, "{message}");
+                break message;
+            }
+            _ => assert!(t0.elapsed() < Duration::from_secs(10), "no error event"),
+        }
+    };
+    assert!(message.contains("HTTP 403"), "{message}");
+    // Re-resolved: same cache key, new URL.
+    let fresh = serve(bytes, "long.wav", Duration::ZERO, false);
+    let spec = SourceSpec::Http { url: fresh.url.clone(), headers: vec![], cache_key: "expire".into(), format_hint: None, extras: Default::default() };
+    engine.set_current(track("x2", spec), 5_000, true);
+    let t1 = std::time::Instant::now();
+    loop {
+        while sink.blocks.try_recv().is_ok() {}
+        match events.recv_timeout(Duration::from_millis(20)) {
+            Ok(EngineEvent::State { state: PlaybackState::Playing, id: Some(id) }) if id == "x2" => break,
+            Ok(EngineEvent::Error { message, .. }) => panic!("fresh URL failed: {message}"),
+            _ => assert!(t1.elapsed() < Duration::from_secs(10), "fresh URL never played"),
+        }
+    }
+}
+
+/// A FLAC still downloading with megabytes of embedded cover art in front of the audio: playback
+/// starts without waiting for the artwork, and decodes exactly like the local file.
+#[test]
+fn streamed_flac_skips_embedded_art() {
+    use ghost_engine::source::{self, OpenCtx};
+    let dir = tmp_dir("art-flac");
+    let rate = 44_100;
+    let sig = sweep(rate, rate as usize * 20, 50.0, 10_000.0, 0.5);
+    let plain = dir.join("plain.flac");
+    let mut w = ghost_engine::flac::FlacWriter::create(&plain, rate, 2, 16).unwrap();
+    w.write(&sig).unwrap();
+    w.finish().unwrap();
+    // Insert a 4 MB PICTURE block after STREAMINFO.
+    let f = std::fs::read(&plain).unwrap();
+    assert_eq!(&f[..4], b"fLaC");
+    let si_len = u32::from_be_bytes([0, f[5], f[6], f[7]]) as usize;
+    let si_end = 8 + si_len;
+    let mut pic = Vec::new();
+    pic.extend(3u32.to_be_bytes());
+    pic.extend(10u32.to_be_bytes());
+    pic.extend(b"image/jpeg");
+    pic.extend(0u32.to_be_bytes());
+    pic.extend([0u8; 16]);
+    let art = 4 * 1024 * 1024;
+    pic.extend((art as u32).to_be_bytes());
+    pic.extend((0..art).map(|i| (i * 7 % 251) as u8));
+    let mut withart = f[..si_end].to_vec();
+    withart[4] &= 0x7f; // STREAMINFO is no longer the last block
+    withart.push(6 | (f[4] & 0x80));
+    withart.extend(&(pic.len() as u32).to_be_bytes()[1..]);
+    withart.extend(&pic);
+    withart.extend(&f[si_end..]);
+    let local = dir.join("art.flac");
+    std::fs::write(&local, &withart).unwrap();
+
+    let decode = |spec: &SourceSpec, cache: &std::sync::Arc<ghost_engine::cache::CacheManager>| {
+        let ctx = OpenCtx { cache, cancel: Default::default(), accurate_seek: false };
+        let t = std::time::Instant::now();
+        let mut s = source::open(spec, &ctx).unwrap_or_else(|e| panic!("{}", e.message));
+        let mut buf = vec![0.0f32; 4096];
+        let n = s.read(&mut buf).unwrap();
+        let first = t.elapsed();
+        let mut all = buf[..n * 2].to_vec();
+        loop {
+            let n = s.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            all.extend_from_slice(&buf[..n * 2]);
+        }
+        (first, all)
+    };
+    let cache = ghost_engine::cache::CacheManager::new(dir.join("cache"), 1 << 30, "test").unwrap();
+    let (_, want) = decode(&file(&local), &cache);
+    // ~3 MB/s: the artwork alone would take well over a second.
+    let srv = serve(withart.clone(), "art.flac", Duration::from_millis(5), false);
+    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "art".into(), format_hint: None, extras: Default::default() };
+    let (first, got) = decode(&spec, &cache);
+    assert!(first < Duration::from_millis(800), "first audio after {first:?}");
+    assert_eq!(got.len(), want.len());
+    assert!(got == want, "streamed decode differs");
+}

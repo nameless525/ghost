@@ -65,7 +65,12 @@ fn not_archive() -> SourceError {
 
 /// List the files (not directories) in an archive.
 pub fn list(data: &[u8]) -> Result<Vec<Entry>, SourceError> {
-    match kind_of(data).ok_or_else(not_archive)? {
+    let kind = kind_of(data).ok_or_else(not_archive)?;
+    std::panic::catch_unwind(|| list_(data, kind)).unwrap_or_else(|_| Err(err("corrupt archive")))
+}
+
+fn list_(data: &[u8], kind: Kind) -> Result<Vec<Entry>, SourceError> {
+    match kind {
         Kind::Zip => {
             let mut z = zip::ZipArchive::new(Cursor::new(data)).map_err(err)?;
             let mut out = Vec::with_capacity(z.len());
@@ -120,39 +125,64 @@ impl Extracted {
 }
 
 /// Decompress every file in the archive.
+///
+/// At most [`MAX_EXTRACTED_BYTES`] are inflated in total, counting the bytes actually produced:
+/// zip headers can understate an entry's size (a zip bomb inflates far past what it declares),
+/// and declared sizes are not trusted for allocations either.
 pub fn extract_all(data: &[u8]) -> Result<Extracted, SourceError> {
+    let kind = kind_of(data).ok_or_else(not_archive)?;
+    // The zip / 7z readers parse untrusted headers: a panic in them must not take the app down.
+    std::panic::catch_unwind(|| extract_limited(data, kind, MAX_EXTRACTED_BYTES)).unwrap_or_else(|_| Err(err("corrupt archive")))
+}
+
+/// Read one entry, counting it against the remaining budget (`left`).
+fn read_entry(r: &mut dyn Read, declared: u64, left: &mut u64) -> std::io::Result<Vec<u8>> {
+    // Pre-allocate what the header declares, within reason (a lie only costs a regrow).
+    let mut buf = Vec::with_capacity(declared.min(*left).min(MAX_PREALLOC) as usize);
+    // One byte past the budget tells "exactly at the limit" from "over it".
+    r.take(*left + 1).read_to_end(&mut buf)?;
+    if buf.len() as u64 > *left {
+        return Err(std::io::Error::other("too large uncompressed"));
+    }
+    *left -= buf.len() as u64;
+    Ok(buf)
+}
+
+/// Largest up-front allocation for one entry.
+const MAX_PREALLOC: u64 = 64 << 20;
+
+fn extract_limited(data: &[u8], kind: Kind, limit: u64) -> Result<Extracted, SourceError> {
     let mut out = Extracted::default();
-    let mut total = 0u64;
-    match kind_of(data).ok_or_else(not_archive)? {
+    let mut left = limit;
+    match kind {
         Kind::Zip => {
             let mut z = zip::ZipArchive::new(Cursor::new(data)).map_err(err)?;
+            let declared = (0..z.len()).filter_map(|i| z.by_index_raw(i).ok().map(|f| f.size())).fold(0u64, u64::saturating_add);
+            if declared > limit {
+                return Err(err("too large"));
+            }
             for i in 0..z.len() {
                 let mut f = z.by_index(i).map_err(err)?;
                 if f.is_dir() {
                     continue;
                 }
                 let name = zip_name(f.name_raw());
-                total += f.size();
-                if total > MAX_EXTRACTED_BYTES {
-                    return Err(err("too large"));
-                }
-                let mut buf = Vec::with_capacity(f.size() as usize);
-                (&mut f).take(MAX_EXTRACTED_BYTES).read_to_end(&mut buf).map_err(|e| err(format!("{name}: {e}")))?;
+                let size = f.size();
+                let buf = read_entry(&mut f, size, &mut left).map_err(|e| err(format!("{name}: {e}")))?;
                 out.files.push((name, Arc::from(buf)));
             }
         }
         Kind::SevenZ => {
             let mut r = sevenz_rust2::ArchiveReader::new(Cursor::new(data), sevenz_rust2::Password::empty()).map_err(err)?;
-            let declared: u64 = r.archive().files.iter().map(|f| f.size()).sum();
-            if declared > MAX_EXTRACTED_BYTES {
+            let declared = r.archive().files.iter().map(|f| f.size()).fold(0u64, u64::saturating_add);
+            if declared > limit {
                 return Err(err("too large"));
             }
             r.for_each_entries(|entry, reader| {
                 if entry.is_directory() {
                     return Ok(true);
                 }
-                let mut buf = Vec::with_capacity(entry.size() as usize);
-                reader.take(MAX_EXTRACTED_BYTES).read_to_end(&mut buf)?;
+                let buf = read_entry(reader, entry.size(), &mut left)?;
                 out.files.push((clean_path(entry.name()), Arc::from(buf)));
                 Ok(true)
             })
@@ -189,6 +219,31 @@ mod tests {
         let pl = x.playlists();
         assert_eq!(pl.len(), 2);
         assert_eq!(pl[0].1, "01 Intro.vgz\r\n");
+    }
+
+    #[test]
+    fn extraction_is_bounded_by_bytes_produced_not_declared() {
+        let big = vec![0u8; 100_000];
+        let z = zip_bytes(&[("a.bin", &big), ("b.bin", &big)]);
+        assert_eq!(extract_limited(&z, Kind::Zip, 200_000).unwrap().total_bytes(), 200_000);
+        assert!(extract_limited(&z, Kind::Zip, 199_999).is_err());
+        // A zip bomb: headers claiming 1 KB per entry (the deflate streams still produce 100 KB).
+        let mut bomb = z.clone();
+        let (real, fake) = (100_000u32.to_le_bytes(), 1_000u32.to_le_bytes());
+        let mut patched = 0;
+        for i in 0..bomb.len() - 4 {
+            if bomb[i..i + 4] == real {
+                bomb[i..i + 4].copy_from_slice(&fake);
+                patched += 1;
+            }
+        }
+        assert_eq!(patched, 4, "local + central header of each entry");
+        assert_eq!(list(&bomb).unwrap()[0].size, 1_000);
+        // The zip reader itself doesn't stop at the declared size...
+        assert_eq!(extract_limited(&bomb, Kind::Zip, 1 << 20).unwrap().total_bytes(), 200_000);
+        // ...so the budget counts what is actually inflated.
+        let e = extract_limited(&bomb, Kind::Zip, 150_000).err().expect("inflated past the limit");
+        assert!(e.message.contains("too large"), "{e}");
     }
 
     #[test]

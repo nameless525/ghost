@@ -1,10 +1,19 @@
 //! Cover-art pipeline for GHOST's `ghost-art://` protocol, run off the Electron main thread.
 //!
-//! `process` decodes a JPEG / PNG / WebP / GIF (first frame), applies the EXIF orientation,
-//! downscales it with a SIMD convolution resize (never upscales) and re-encodes it: JPEG for
-//! opaque images, fast PNG for images with real transparency (logos). Small enough inputs pass
-//! through untouched. Optionally it also picks the accent colour from a 48×48 box-filtered copy
-//! (`accent_from_pixels`, a port of `src/main/net/accent.ts`).
+//! `process` decodes a JPEG / PNG / WebP / GIF (first frame), downscales it with a SIMD
+//! convolution resize (never upscales), applies the EXIF orientation (after the resize, so only
+//! the small copy is rotated) and re-encodes it: JPEG for opaque images, fast PNG for images with
+//! real transparency (logos). Small enough inputs pass through untouched. Optionally it also picks
+//! the accent colour from a 48×48 box-filtered copy (`accent_from_pixels`, a port of
+//! `src/main/net/accent.ts`).
+//!
+//! Pixels stay in the decoder's layout where possible: greyscale stays 1 channel (a third of the
+//! memory / resize / encode work; no accent by definition) and opaque RGBA (every GIF, many PNG /
+//! WebP files) stays 4 channels instead of being copied to RGB.
+//!
+//! Hostile input: dimensions are checked from the header against `MAX_DIMENSION` / `MAX_PIXELS`
+//! before any pixel buffer exists, decoder-internal allocations are capped, and nothing here
+//! panics on malformed data (the napi wrapper still catches panics, defensively).
 //!
 //! Everything here is synchronous and allocation-heavy; callers run it on worker threads.
 
@@ -14,7 +23,7 @@ use std::time::Instant;
 
 use fast_image_resize as fr;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Limits};
+use image::{ColorType, DynamicImage, ImageBuffer, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Limits};
 
 mod accent;
 
@@ -24,6 +33,16 @@ pub use accent::accent_from_pixels;
 pub const ACCENT_SIZE: u32 = 48;
 /// Inputs larger than this in either dimension are rejected before decoding.
 pub const MAX_DIMENSION: u32 = 16_384;
+/// Inputs with more pixels than this (16384 × 8192 ≈ 134 MP; a 600 dpi scan of a gatefold LP
+/// sleeve is ~104 MP) are rejected from the header. A few-KB PNG / GIF can claim 16384² px:
+/// without this one call allocated up to ~3.8 GiB (16-bit RGBA, then 8-bit and RGB copies), and
+/// the pool runs three. Now the worst case is ~0.6–0.8 GiB.
+pub const MAX_PIXELS: u64 = 16_384 * 8192;
+/// Largest decoded buffer we allocate: MAX_PIXELS of RGBA8 (16-bit sources must be smaller).
+const MAX_DECODE_BYTES: u64 = MAX_PIXELS * 4;
+/// Cap on decoder-internal allocations (PNG ancillary chunks such as a zlib-compressed ICC
+/// profile or text, a GIF frame that doesn't match its logical screen): was 1 GiB.
+const MAX_DECODER_ALLOC: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum OutFormat {
@@ -148,7 +167,8 @@ fn us(t: Instant) -> u64 {
     t.elapsed().as_micros() as u64
 }
 
-/// Output size for `w`×`h` within the limits (aspect kept, never larger than the input).
+/// Output size for `w`×`h` within the limits (aspect kept, never larger than the input, never 0
+/// unless the input is).
 pub fn fit(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     let mut scale = 1.0f64;
     if max_w > 0 && w > max_w {
@@ -160,81 +180,101 @@ pub fn fit(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     if scale >= 1.0 {
         return (w, h);
     }
-    let tw = ((w as f64 * scale).round() as u32).clamp(1, w);
-    let th = ((h as f64 * scale).round() as u32).clamp(1, h);
+    // `max(1).min(n.max(1))`, not `clamp(1, n)`: clamp panics when n == 0.
+    let tw = ((w as f64 * scale).round() as u32).max(1).min(w.max(1));
+    let th = ((h as f64 * scale).round() as u32).max(1).min(h.max(1));
     (tw, th)
 }
 
-/// Decoded pixels, 8-bit, either RGB (opaque) or RGBA (has real transparency).
+/// Decoded 8-bit pixels: 1 channel (greyscale), 3 (RGB) or 4 (RGBA; `alpha` says whether any
+/// pixel is actually transparent: opaque RGBA is resized without alpha handling, encoded as JPEG
+/// straight from RGBA, and never copied to RGB).
 struct Pixels {
     width: u32,
     height: u32,
+    channels: u8,
     alpha: bool,
     data: Vec<u8>,
 }
 
 impl Pixels {
-    fn channels(&self) -> usize {
-        if self.alpha {
-            4
-        } else {
-            3
-        }
-    }
-
     fn pixel_type(&self) -> fr::PixelType {
-        if self.alpha {
-            fr::PixelType::U8x4
-        } else {
-            fr::PixelType::U8x3
+        match self.channels {
+            1 => fr::PixelType::U8,
+            3 => fr::PixelType::U8x3,
+            _ => fr::PixelType::U8x4,
         }
     }
 
     fn from_image(img: DynamicImage) -> Pixels {
         let (width, height) = (img.width(), img.height());
-        if img.color().has_alpha() {
-            let rgba = img.into_rgba8().into_raw();
-            if rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255) {
-                // Alpha channel without transparency: treat as opaque (JPEG, cheaper resize).
-                let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
-                for p in rgba.as_chunks::<4>().0 {
-                    rgb.extend_from_slice(&p[..3]);
-                }
-                return Pixels { width, height, alpha: false, data: rgb };
-            }
-            Pixels { width, height, alpha: true, data: rgba }
+        let color = img.color();
+        if color.has_alpha() {
+            let data = img.into_rgba8().into_raw();
+            // Alpha channel without transparency: treat as opaque (JPEG, cheaper resize).
+            let alpha = !data.as_chunks::<4>().0.iter().all(|p| p[3] == 255);
+            Pixels { width, height, channels: 4, alpha, data }
+        } else if matches!(color, ColorType::L8 | ColorType::L16) {
+            Pixels { width, height, channels: 1, alpha: false, data: img.into_luma8().into_raw() }
         } else {
-            Pixels { width, height, alpha: false, data: img.into_rgb8().into_raw() }
+            Pixels { width, height, channels: 3, alpha: false, data: img.into_rgb8().into_raw() }
         }
     }
 
-    /// Resized copy (`algorithm` convolution). `self` is borrowed, so the source survives.
+    /// Resized copy (`filter` convolution). `self` is borrowed, so the source survives.
     fn resized(&self, tw: u32, th: u32, filter: fr::FilterType) -> Result<Pixels, ArtError> {
-        // fast_image_resize wants a mutable buffer for the source view only to support in-place
-        // alpha handling; it does not modify an `Image` source.
         let src = fr::images::ImageRef::new(self.width, self.height, &self.data, self.pixel_type())
             .map_err(|e| ArtError::Resize(e.to_string()))?;
         let mut dst = fr::images::Image::new(tw, th, self.pixel_type());
         let opts = fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(filter)).use_alpha(self.alpha);
         fr::Resizer::new().resize(&src, &mut dst, &opts).map_err(|e| ArtError::Resize(e.to_string()))?;
-        Ok(Pixels { width: tw, height: th, alpha: self.alpha, data: dst.into_vec() })
+        Ok(Pixels { width: tw, height: th, channels: self.channels, alpha: self.alpha, data: dst.into_vec() })
     }
 
-    /// RGBA pixels of a 48×48 box-filtered copy (aspect ignored, like the old pipeline).
+    /// The same pixels with an EXIF orientation applied.
+    fn oriented(self, o: Orientation) -> Result<Pixels, ArtError> {
+        if o == Orientation::NoTransforms {
+            return Ok(self);
+        }
+        let Pixels { width, height, channels, alpha, data } = self;
+        let bad = || ArtError::Decode("pixel buffer size mismatch".into());
+        let mut img = match channels {
+            1 => DynamicImage::ImageLuma8(ImageBuffer::from_raw(width, height, data).ok_or_else(bad)?),
+            3 => DynamicImage::ImageRgb8(ImageBuffer::from_raw(width, height, data).ok_or_else(bad)?),
+            _ => DynamicImage::ImageRgba8(ImageBuffer::from_raw(width, height, data).ok_or_else(bad)?),
+        };
+        img.apply_orientation(o);
+        let (width, height) = (img.width(), img.height());
+        let data = match img {
+            DynamicImage::ImageLuma8(b) => b.into_raw(),
+            DynamicImage::ImageRgb8(b) => b.into_raw(),
+            DynamicImage::ImageRgba8(b) => b.into_raw(),
+            other => other.into_rgba8().into_raw(), // unreachable: orientation keeps the type
+        };
+        Ok(Pixels { width, height, channels, alpha, data })
+    }
+
+    /// Accent colour from a 48×48 box-filtered copy (aspect ignored, like the old pipeline). A
+    /// histogram, so the orientation doesn't matter. Greyscale has no accent by definition.
     fn accent(&self) -> Result<Option<[u8; 3]>, ArtError> {
+        if self.channels == 1 {
+            return Ok(None);
+        }
         let small = if self.width == ACCENT_SIZE && self.height == ACCENT_SIZE {
             None
         } else {
             Some(self.resized(ACCENT_SIZE, ACCENT_SIZE, fr::FilterType::Box)?)
         };
         let p = small.as_ref().unwrap_or(self);
-        Ok(accent_from_pixels(&p.data, p.channels()))
+        Ok(accent_from_pixels(&p.data, p.channels as usize))
     }
 }
 
 struct Decoded {
     format: ImageFormat,
+    /// In the stored orientation; `orientation` still has to be applied.
     pixels: Pixels,
+    orientation: Orientation,
     icc: Option<Vec<u8>>,
 }
 
@@ -242,7 +282,7 @@ fn limits() -> Limits {
     let mut l = Limits::default();
     l.max_image_width = Some(MAX_DIMENSION);
     l.max_image_height = Some(MAX_DIMENSION);
-    l.max_alloc = Some(1024 * 1024 * 1024);
+    l.max_alloc = Some(MAX_DECODER_ALLOC);
     l
 }
 
@@ -270,19 +310,33 @@ fn open(bytes: &[u8]) -> Result<(ImageFormat, impl ImageDecoder + '_), ArtError>
     Ok((format, decoder))
 }
 
+/// Rejects empty images and anything over the size caps, from the header alone.
+fn check_size(w: u32, h: u32) -> Result<(), ArtError> {
+    if w == 0 || h == 0 {
+        return Err(ArtError::Decode("empty image".into()));
+    }
+    if w > MAX_DIMENSION || h > MAX_DIMENSION || w as u64 * h as u64 > MAX_PIXELS {
+        return Err(ArtError::TooLarge(w, h));
+    }
+    Ok(())
+}
+
+fn swaps_axes(o: Orientation) -> bool {
+    matches!(o, Orientation::Rotate90 | Orientation::Rotate270 | Orientation::Rotate90FlipH | Orientation::Rotate270FlipH)
+}
+
 fn oriented_size(w: u32, h: u32, o: Orientation) -> (u32, u32) {
-    match o {
-        Orientation::Rotate90 | Orientation::Rotate270 | Orientation::Rotate90FlipH | Orientation::Rotate270FlipH => (h, w),
-        _ => (w, h),
+    if swaps_axes(o) {
+        (h, w)
+    } else {
+        (w, h)
     }
 }
 
 fn header(bytes: &[u8]) -> Result<Header, ArtError> {
     let (format, mut d) = open(bytes)?;
     let (w, h) = d.dimensions();
-    if w > MAX_DIMENSION || h > MAX_DIMENSION {
-        return Err(ArtError::TooLarge(w, h));
-    }
+    check_size(w, h)?;
     let orientation = d.orientation().unwrap_or(Orientation::NoTransforms);
     let (width, height) = oriented_size(w, h, orientation);
     Ok(Header { format, width, height, orientation })
@@ -291,17 +345,34 @@ fn header(bytes: &[u8]) -> Result<Header, ArtError> {
 fn decode(bytes: &[u8]) -> Result<Decoded, ArtError> {
     let (format, mut d) = open(bytes)?;
     let (w, h) = d.dimensions();
-    if w == 0 || h == 0 {
-        return Err(ArtError::Decode("empty image".into()));
-    }
-    if w > MAX_DIMENSION || h > MAX_DIMENSION {
+    check_size(w, h)?;
+    // `into_decoder` + `from_decoder` (unlike `ImageReader::decode`) doesn't hold the main
+    // buffer to `max_alloc`; 16-bit sources are 2× the pixels' worth.
+    if d.total_bytes() > MAX_DECODE_BYTES {
         return Err(ArtError::TooLarge(w, h));
     }
     let orientation = d.orientation().unwrap_or(Orientation::NoTransforms);
     let icc = d.icc_profile().ok().flatten();
-    let mut img = DynamicImage::from_decoder(d).map_err(decode_err)?;
-    img.apply_orientation(orientation);
-    Ok(Decoded { format, pixels: Pixels::from_image(img), icc })
+    let img = DynamicImage::from_decoder(d).map_err(decode_err)?;
+    Ok(Decoded { format, pixels: Pixels::from_image(img), orientation, icc })
+}
+
+/// Whether an ICC profile describes `channels`-channel output: its header's data colour space
+/// (bytes 16..20) must be `GRAY` for greyscale and `RGB ` otherwise. A CMYK profile from a print
+/// scan (decoded to RGB) or an RGB one on greyscale output would be wrong there (browsers ignore
+/// mismatched profiles) and is often far bigger than a thumbnail.
+fn icc_fits(icc: &[u8], channels: u8) -> bool {
+    let want: &[u8; 4] = if channels == 1 { b"GRAY" } else { b"RGB " };
+    icc.get(16..20) == Some(&want[..])
+}
+
+/// Opaque RGBA → RGB for the lossless encoders (small: only ever an already-resized image).
+fn rgb_of_rgba(rgba: &[u8]) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
+    for p in rgba.as_chunks::<4>().0 {
+        rgb.extend_from_slice(&p[..3]);
+    }
+    rgb
 }
 
 fn encode(p: &Pixels, format: OutFormat, quality: u8, icc: Option<&[u8]>) -> Result<(Vec<u8>, &'static str), ArtError> {
@@ -311,25 +382,42 @@ fn encode(p: &Pixels, format: OutFormat, quality: u8, icc: Option<&[u8]>) -> Res
         OutFormat::Auto => OutFormat::Jpeg,
         f => f,
     };
-    let mut out = Vec::with_capacity((p.width * p.height / 4) as usize + 1024);
+    let icc = icc.filter(|icc| icc_fits(icc, p.channels));
+    let mut out = Vec::with_capacity(p.width as usize * p.height as usize / 4 + 1024);
+    // Lossless outputs of opaque RGBA drop the constant alpha channel.
+    let lossless_rgb;
+    let (lossless, lossless_ct) = match (p.channels, p.alpha) {
+        (1, _) => (&p.data[..], image::ExtendedColorType::L8),
+        (3, _) => (&p.data[..], image::ExtendedColorType::Rgb8),
+        (_, true) => (&p.data[..], image::ExtendedColorType::Rgba8),
+        (_, false) if format == OutFormat::Png || format == OutFormat::Webp => {
+            lossless_rgb = rgb_of_rgba(&p.data);
+            (&lossless_rgb[..], image::ExtendedColorType::Rgb8)
+        }
+        (_, false) => (&p.data[..], image::ExtendedColorType::Rgba8),
+    };
     match format {
         OutFormat::Jpeg | OutFormat::Auto => {
             let rgb;
-            let (data, ct) = if p.alpha {
-                // Composite on black: the renderer's backgrounds are dark.
-                rgb = p
-                    .data
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .flat_map(|px| {
-                        let a = px[3] as u16;
-                        [px[0], px[1], px[2]].map(|c| ((c as u16 * a + 127) / 255) as u8)
-                    })
-                    .collect::<Vec<u8>>();
-                (&rgb[..], jpeg_encoder::ColorType::Rgb)
-            } else {
-                (&p.data[..], jpeg_encoder::ColorType::Rgb)
+            let (data, ct) = match (p.channels, p.alpha) {
+                (1, _) => (&p.data[..], jpeg_encoder::ColorType::Luma),
+                (3, _) => (&p.data[..], jpeg_encoder::ColorType::Rgb),
+                // Opaque RGBA: the encoder ignores the alpha byte.
+                (_, false) => (&p.data[..], jpeg_encoder::ColorType::Rgba),
+                (_, true) => {
+                    // Composite on black: the renderer's backgrounds are dark.
+                    rgb = p
+                        .data
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .flat_map(|px| {
+                            let a = px[3] as u16;
+                            [px[0], px[1], px[2]].map(|c| ((c as u16 * a + 127) / 255) as u8)
+                        })
+                        .collect::<Vec<u8>>();
+                    (&rgb[..], jpeg_encoder::ColorType::Rgb)
+                }
             };
             if p.width > u16::MAX as u32 || p.height > u16::MAX as u32 {
                 return Err(ArtError::TooLarge(p.width, p.height));
@@ -343,7 +431,6 @@ fn encode(p: &Pixels, format: OutFormat, quality: u8, icc: Option<&[u8]>) -> Res
             Ok((out, "image/jpeg"))
         }
         OutFormat::Png => {
-            let ct = if p.alpha { image::ExtendedColorType::Rgba8 } else { image::ExtendedColorType::Rgb8 };
             let mut e = image::codecs::png::PngEncoder::new_with_quality(
                 &mut out,
                 image::codecs::png::CompressionType::Fast,
@@ -352,13 +439,12 @@ fn encode(p: &Pixels, format: OutFormat, quality: u8, icc: Option<&[u8]>) -> Res
             if let Some(icc) = icc {
                 let _ = e.set_icc_profile(icc.to_vec());
             }
-            e.write_image(&p.data, p.width, p.height, ct).map_err(|e| enc_err(&e))?;
+            e.write_image(lossless, p.width, p.height, lossless_ct).map_err(|e| enc_err(&e))?;
             Ok((out, "image/png"))
         }
         OutFormat::Webp => {
-            let ct = if p.alpha { image::ExtendedColorType::Rgba8 } else { image::ExtendedColorType::Rgb8 };
             image::codecs::webp::WebPEncoder::new_lossless(&mut out)
-                .write_image(&p.data, p.width, p.height, ct)
+                .write_image(lossless, p.width, p.height, lossless_ct)
                 .map_err(|e| enc_err(&e))?;
             Ok((out, "image/webp"))
         }
@@ -367,10 +453,21 @@ fn encode(p: &Pixels, format: OutFormat, quality: u8, icc: Option<&[u8]>) -> Res
 
 /// Decode, downscale to fit `opts`, re-encode, and optionally pick the accent colour.
 pub fn process(bytes: &[u8], opts: &ArtOptions) -> Result<ArtOutput, ArtError> {
+    process_impl(bytes, opts, true)
+}
+
+/// `process`, except that a passthrough result's `data` is left empty: for callers that still
+/// hold the input and would only copy it back (the napi wrapper returns the caller's own Buffer).
+pub fn process_keeping_input(bytes: &[u8], opts: &ArtOptions) -> Result<ArtOutput, ArtError> {
+    process_impl(bytes, opts, false)
+}
+
+fn process_impl(bytes: &[u8], opts: &ArtOptions, copy_passthrough: bool) -> Result<ArtOutput, ArtError> {
     let mut timings = Timings::default();
     let t = Instant::now();
     let fits = |w: u32, h: u32| fit(w, h, opts.max_width, opts.max_height) == (w, h);
     let passthrough_ok = |len: usize| opts.passthrough_max_bytes > 0 && len <= opts.passthrough_max_bytes;
+    let input = |copy: bool| if copy { bytes.to_vec() } else { Vec::new() };
 
     // Fast path: small enough, no accent wanted → headers only, no pixel decode.
     if !opts.accent && passthrough_ok(bytes.len()) {
@@ -378,7 +475,7 @@ pub fn process(bytes: &[u8], opts: &ArtOptions) -> Result<ArtOutput, ArtError> {
         if fits(h.width, h.height) && h.orientation == Orientation::NoTransforms {
             timings.decode_us = us(t);
             return Ok(ArtOutput {
-                data: bytes.to_vec(),
+                data: input(copy_passthrough),
                 width: h.width,
                 height: h.height,
                 mime: mime_of(h.format),
@@ -392,34 +489,41 @@ pub fn process(bytes: &[u8], opts: &ArtOptions) -> Result<ArtOutput, ArtError> {
         }
     }
 
-    let Decoded { format, pixels, icc } = decode(bytes)?;
+    let Decoded { format, pixels, orientation, icc } = decode(bytes)?;
     timings.decode_us = us(t);
-    let (sw, sh) = (pixels.width, pixels.height);
+    // Sizes are in display orientation; the pixels are still in stored orientation.
+    let (sw, sh) = oriented_size(pixels.width, pixels.height, orientation);
     let (tw, th) = fit(sw, sh, opts.max_width, opts.max_height);
+    let resize = (tw, th) != (sw, sh);
+    // Passthrough keeps the original bytes (and its EXIF orientation, which Chromium applies).
+    let passthrough = !resize && passthrough_ok(bytes.len());
 
     let t = Instant::now();
-    let out_px = if (tw, th) != (sw, sh) { Some(pixels.resized(tw, th, fr::FilterType::Lanczos3)?) } else { None };
+    let px = if resize {
+        let (rw, rh) = oriented_size(tw, th, orientation);
+        let small = pixels.resized(rw, rh, fr::FilterType::Lanczos3)?;
+        drop(pixels); // the full-size decode is the biggest buffer: free it before encoding
+        small
+    } else {
+        pixels
+    };
+    // Rotating after the resize touches the small copy only. Passthrough output keeps the
+    // stored orientation, and the accent is a histogram: no need to rotate at all.
+    let px = if passthrough { px } else { px.oriented(orientation)? };
     timings.resize_us = us(t);
-    let final_px = out_px.as_ref().unwrap_or(&pixels);
 
     let t = Instant::now();
-    let accent = if opts.accent { final_px.accent()? } else { None };
+    let accent = if opts.accent { px.accent()? } else { None };
     timings.accent_us = us(t);
 
     let t = Instant::now();
-    // Passthrough keeps the original bytes (and its EXIF orientation, which Chromium applies).
-    let (data, mime, passthrough) = if out_px.is_none() && passthrough_ok(bytes.len()) {
-        (bytes.to_vec(), mime_of(format), true)
-    } else {
-        let (d, m) = encode(final_px, opts.format, opts.quality, icc.as_deref())?;
-        (d, m, false)
-    };
+    let (data, mime) = if passthrough { (input(copy_passthrough), mime_of(format)) } else { encode(&px, opts.format, opts.quality, icc.as_deref())? };
     timings.encode_us = us(t);
 
     Ok(ArtOutput {
         data,
-        width: final_px.width,
-        height: final_px.height,
+        width: tw,
+        height: th,
         mime,
         source_width: sw,
         source_height: sh,
@@ -430,17 +534,13 @@ pub fn process(bytes: &[u8], opts: &ArtOptions) -> Result<ArtOutput, ArtError> {
     })
 }
 
-/// Accent colour only (decode + 48×48 box downsample + `accent_from_pixels`).
+/// Accent colour only (decode + 48×48 box downsample + `accent_from_pixels`). The same
+/// computation as `process` with `accent` on an image that needs no resize.
 pub fn accent_of(bytes: &[u8]) -> Result<Option<[u8; 3]>, ArtError> {
-    let d = decode(bytes)?;
-    // Very large images: shrink to ≤ 512 px first (box filter cost scales with the source).
-    let p = &d.pixels;
-    let (tw, th) = fit(p.width, p.height, 512, 512);
-    if (tw, th) != (p.width, p.height) {
-        p.resized(tw, th, fr::FilterType::Box)?.accent()
-    } else {
-        p.accent()
-    }
+    // One box pass straight to 48×48: cheaper than the old two-step (≤ 512 px first, then 48)
+    // because the box filter's cost is ~linear in the source either way, and it gives the same
+    // answer as `process`.
+    decode(bytes)?.pixels.accent()
 }
 
 /// `#rrggbb` for an accent triple.

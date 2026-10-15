@@ -189,9 +189,12 @@ fn four_minute_track_analyses_in_under_1_5_s() {
         add_tone(&mut buf, k as f32 * 2.0, 2.0, [110.0, 146.8, 130.8, 164.8][k % 4], 0.15);
     }
     let stereo = to_stereo(&buf);
-    let _ = analyze(&stereo[..secs(5.0) * 2], 2, SR); // warm up the thread pool
+    // Time the code, not the scheduler: by default offline analysis runs on low-priority
+    // workers, which a busy machine may starve; inside a rayon pool it uses that pool instead
+    // (here rayon's global pool, at normal priority).
+    let _ = rayon::scope(|_| analyze(&stereo[..secs(5.0) * 2], 2, SR)); // warm up the thread pool
     let t = Instant::now();
-    let a = analyze(&stereo, 2, SR);
+    let a = rayon::scope(|_| analyze(&stereo, 2, SR));
     let el = t.elapsed().as_secs_f64();
     println!("4-minute analysis: {:.0} ms (bpm {:?}, {} beats)", el * 1e3, a.bpm, a.beats.len());
     assert!(el < 1.5, "took {el:.2} s");

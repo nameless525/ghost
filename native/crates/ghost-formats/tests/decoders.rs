@@ -273,3 +273,215 @@ fn brstm_pcm16_loops_sample_exact() {
         assert_eq!((b[i * 2], b[i * 2 + 1]), (v(frames[20_000 + i][0]), v(frames[20_000 + i][1])), "frame {i} after the wrap");
     }
 }
+
+// ------------------------------------------------------------------ malformed files (regressions)
+
+/// Run `f` on its own thread; fail instead of hanging the suite if it doesn't finish in time.
+fn within<T: Send + 'static>(secs: u64, what: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(secs)).unwrap_or_else(|_| panic!("{what}: still decoding after {secs} s (hang)"))
+}
+
+/// A v1.50 VGM: SN76489 (+ YM2612 at `ym2612_clock` if non-zero), `cmds` as the command stream,
+/// looping back to command offset `loop_at` (relative to the stream start) if given.
+fn raw_vgm(cmds: &[u8], total: u32, loop_at: Option<usize>, ym2612_clock: u32) -> Vec<u8> {
+    let mut h = vec![0u8; 0x40];
+    h[..4].copy_from_slice(b"Vgm ");
+    h[0x04..0x08].copy_from_slice(&((0x40 + cmds.len() - 4) as u32).to_le_bytes());
+    h[0x08..0x0C].copy_from_slice(&0x150u32.to_le_bytes());
+    h[0x0C..0x10].copy_from_slice(&PSG_CLOCK.to_le_bytes());
+    h[0x18..0x1C].copy_from_slice(&total.to_le_bytes());
+    if let Some(l) = loop_at {
+        h[0x1C..0x20].copy_from_slice(&((0x40 + l - 0x1C) as u32).to_le_bytes());
+    }
+    h[0x2C..0x30].copy_from_slice(&ym2612_clock.to_le_bytes());
+    h[0x34..0x38].copy_from_slice(&0x0Cu32.to_le_bytes());
+    h.extend_from_slice(cmds);
+    h
+}
+
+/// Read up to `frames`, stopping at the end of the stream; never fails on decode errors.
+fn drain(s: &mut dyn AudioSource, frames: usize) -> usize {
+    let mut buf = vec![0f32; 1024 * s.channels()];
+    let mut done = 0;
+    while done < frames {
+        match s.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => done += n,
+        }
+    }
+    done
+}
+
+#[test]
+fn vgm_loop_that_takes_no_time_ends_instead_of_hanging() {
+    // 0.1 s of tone, then a loop offset pointing at the end command itself, or at a loop body
+    // with no wait in it: libgme jumped back forever without advancing time.
+    let tone = [0x50, 0x90, 0x50, 0x8E, 0x50, 0x0F, 0x61, 0x3A, 0x11]; // period 254, full volume
+    let at_end = [&tone[..], &[0x66]].concat();
+    let no_wait = [&tone[..], &[0x50, 0x9F, 0x66]].concat(); // the body only mutes the tone
+    for vgm in [raw_vgm(&at_end, 4410, Some(tone.len()), 0), raw_vgm(&no_wait, 4410, Some(tone.len()), 0)] {
+        let n = within(20, "zero-time VGM loop", move || {
+            let mut s = open_memory(Family::Gme, vgm, "loop.vgm", &opts(None)).unwrap();
+            drain(s.as_mut(), 44_100 * 3)
+        });
+        // The tone plays, then the track ends.
+        assert!((4410..44_100 * 3).contains(&n), "{n} frames");
+    }
+}
+
+#[test]
+fn vgm_pcm_reads_stay_inside_the_file() {
+    // A 4-byte YM2612 PCM bank, a seek to 2 GB past it, then 2000 "write PCM sample + wait"
+    // commands: libgme read them from wherever that pointed (SIGSEGV).
+    let mut cmds = vec![0x67, 0x66, 0x00, 4, 0, 0, 0, 0x80, 0x90, 0xA0, 0xB0];
+    cmds.extend_from_slice(&[0xE0, 0xF0, 0xFF, 0xFF, 0x7F]);
+    cmds.extend(std::iter::repeat_n(0x81, 2000));
+    cmds.push(0x66);
+    let vgm = raw_vgm(&cmds, 2000, None, 7_670_453);
+    let n = within(20, "VGM PCM seek", move || {
+        let mut s = open_memory(Family::Gme, vgm, "pcm.vgm", &opts(None)).unwrap();
+        drain(s.as_mut(), 44_100)
+    });
+    assert!(n > 0);
+}
+
+#[test]
+fn vgm_with_unusable_chip_clock_is_rejected() {
+    // Clock 0 once the dual-chip / variant bits are masked off: the YM2612 core divided by it
+    // (an endless loop on ARM). Absurd clocks made it hundreds of times slower than realtime.
+    for clock in [0x8000_0000u32, 0xC000_0000, 0x1D61_1F50, 500] {
+        let vgm = raw_vgm(&[0x61, 0x44, 0xAC, 0x66], 44_100, None, clock);
+        let e = within(20, "VGM FM clock", move || open_memory(Family::Gme, vgm, "fm.vgm", &opts(None)).err()).expect("rejected");
+        assert!(e.message.contains("YM2612 clock"), "{e}");
+    }
+    // An SN76489 at a few Hz: frames of zero clocks, so libgme never produced a sample.
+    for psg in [1u32, 10] {
+        let mut vgm = raw_vgm(&[0x61, 0x44, 0xAC, 0x66], 44_100, None, 0);
+        vgm[0x0C..0x10].copy_from_slice(&psg.to_le_bytes());
+        let e = within(20, "VGM PSG clock", move || open_memory(Family::Gme, vgm, "psg.vgm", &opts(None)).err()).expect("rejected");
+        assert!(e.message.contains("SN76489 clock"), "{e}");
+    }
+    // Real clocks (and the dual-chip flag) are fine.
+    for clock in [7_670_453u32, 0x4000_0000 | 7_600_489] {
+        let vgm = raw_vgm(&[0x61, 0x44, 0xAC, 0x66], 44_100, None, clock);
+        assert!(open_memory(Family::Gme, vgm, "fm.vgm", &opts(None)).is_ok());
+    }
+}
+
+#[test]
+fn gbs_code_running_off_the_top_of_memory_wraps() {
+    // init: JP $FF80, into zeroed high RAM: NOPs up to $FFFF. The Game Boy core didn't wrap the
+    // program counter and fetched opcodes through a page pointer read past its 9-entry table.
+    let mut gbs = vec![0u8; 0x70];
+    gbs[..3].copy_from_slice(b"GBS");
+    gbs[3] = 1; // version
+    gbs[4] = 1; // songs
+    gbs[5] = 1; // first song
+    gbs[6..8].copy_from_slice(&0x0400u16.to_le_bytes()); // load
+    gbs[8..10].copy_from_slice(&0x0400u16.to_le_bytes()); // init
+    gbs[10..12].copy_from_slice(&0x0403u16.to_le_bytes()); // play
+    gbs[12..14].copy_from_slice(&0xFFFEu16.to_le_bytes()); // stack
+    gbs.extend_from_slice(&[0xC3, 0x80, 0xFF, 0xC9]); // JP $FF80; play: RET
+    let n = within(20, "GBS PC wrap", move || {
+        let mut s = open_memory(Family::Gme, gbs, "wrap.gbs", &opts(None)).unwrap();
+        drain(s.as_mut(), 44_100 * 3)
+    });
+    println!("gbs pc wrap: {n} frames");
+}
+
+/// A ZXAYEMUL file with one song (init at $8000, one 0x100-byte block at $8000 from `code`).
+/// Pointers are big-endian and relative to their own position.
+fn ay_file(code: &[u8]) -> Vec<u8> {
+    let mut ay = vec![0u8; 0x36];
+    ay[..8].copy_from_slice(b"ZXAYEMUL");
+    let rel = |ay: &mut Vec<u8>, at: usize, to: usize| ay[at..at + 2].copy_from_slice(&((to as i32 - at as i32) as i16).to_be_bytes());
+    rel(&mut ay, 0x0C, 0x34); // author
+    rel(&mut ay, 0x0E, 0x34); // misc
+    rel(&mut ay, 0x12, 0x14); // song table
+    rel(&mut ay, 0x14, 0x34); // song name
+    rel(&mut ay, 0x16, 0x18); // song data
+    ay[0x18..0x1C].copy_from_slice(&[0, 1, 2, 3]);
+    ay[0x1C..0x1E].copy_from_slice(&0x0100u16.to_be_bytes());
+    rel(&mut ay, 0x22, 0x26); // points
+    rel(&mut ay, 0x24, 0x2C); // blocks
+    ay[0x26..0x28].copy_from_slice(&0xF000u16.to_be_bytes()); // stack
+    ay[0x28..0x2A].copy_from_slice(&0x8000u16.to_be_bytes()); // init
+    ay[0x2C..0x2E].copy_from_slice(&0x8000u16.to_be_bytes()); // block address
+    ay[0x2E..0x30].copy_from_slice(&(code.len() as u16).to_be_bytes()); // block length
+    rel(&mut ay, 0x30, 0x36); // block data
+    ay[0x34] = b'x';
+    ay.extend_from_slice(code);
+    ay
+}
+
+#[test]
+fn ay_blocks_must_lie_inside_the_file() {
+    let code = [0xC9; 8];
+    let open = |ay: Vec<u8>| within(20, "AY", move || open_memory(Family::Gme, ay, "t.ay", &opts(None)).map(|mut s| drain(s.as_mut(), 44_100)));
+    assert!(open(ay_file(&code)).is_ok());
+    // A null data pointer: libgme memcpy'd the block from NULL.
+    let mut ay = ay_file(&code);
+    ay[0x30..0x32].fill(0);
+    let n = open(ay);
+    println!("ay with a null block: {:?} frames", n.map_err(|e| e.message));
+    // A song table claiming more bytes than the whole file: libgme's bounds check underflowed
+    // and accepted it, then read the table past the end of the buffer.
+    let mut ay = ay_file(&code);
+    ay[0x10] = 200; // songs - 1: a 804-byte table in a 62-byte file
+    let e = open(ay).expect_err("rejected");
+    assert!(e.message.contains("Missing track data"), "{e}");
+}
+
+#[test]
+fn nsfe_without_data_chunk_is_rejected() {
+    // INFO then NEND, no DATA: libgme accepted it and ran the never-loaded NSF emulator.
+    let mut nsfe = b"NSFE".to_vec();
+    let mut chunk = |tag: &[u8], body: &[u8]| {
+        nsfe.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        nsfe.extend_from_slice(tag);
+        nsfe.extend_from_slice(body);
+    };
+    chunk(b"INFO", &[0x00, 0x80, 0x00, 0x80, 0x03, 0x80, 0, 0, 1, 0]);
+    chunk(b"NEND", &[]);
+    let r = within(20, "NSFE without DATA", move || open_memory(Family::Gme, nsfe, "nodata.nsfe", &opts(None)).err());
+    assert!(r.as_ref().is_some_and(|e| e.message.contains("DATA")), "{r:?}");
+}
+
+#[test]
+fn nezplug_line_plays_the_matched_track_when_the_file_name_has_a_comma() {
+    // libgme ends a playlist file name at ", <digit>": it read "Set 1, 2.nsf::NSF,3" as track 2
+    // and played the wrong song.
+    let nsf = nsf_songs(&[253, 126, 80], "Three");
+    let pl = vec!["Set 1, 2.nsf::NSF,3,Third,1:00,,5\n".to_string()];
+    let mut s = open_memory(Family::Gme, nsf, "Set 1, 2.nsf", &OpenOptions { subsong: Some(2), playlists: pl }).unwrap();
+    assert_eq!(s.meta().title.as_deref(), Some("Third"));
+    let a = read_frames(s.as_mut(), 22_050);
+    let f = zero_cross_freq(&a[4410 * 2..], 2, 44_100);
+    assert!((f - nes_pulse_freq(80)).abs() < 5.0, "{f} Hz");
+}
+
+#[test]
+fn fm_writes_to_a_vgm_without_fm_are_ignored() {
+    // SN76489-only header (no YM2612 clock) with YM2612 register writes in the stream: libgme
+    // passed them to a chip that was never set up whenever its (uninitialised) FM clock offset
+    // made the write time negative. Uninitialised memory is often zero in a fresh process: run
+    // with MallocPreScribble=1 (macOS) to make the old crash deterministic.
+    let mut cmds = vec![0x50, 0x90, 0x50, 0x8E, 0x50, 0x0F];
+    for r in 0..64u8 {
+        cmds.extend_from_slice(&[0x52, 0x30 + r, 0x55, 0x53, 0x30 + r, 0x55, 0x61, 0x44, 0x01]);
+    }
+    cmds.push(0x66);
+    let vgm = raw_vgm(&cmds, 64 * 0x144, None, 0);
+    for _ in 0..20 {
+        let vgm = vgm.clone();
+        let n = within(20, "VGM stray FM", move || {
+            let mut s = open_memory(Family::Gme, vgm, "stray.vgm", &opts(None)).unwrap();
+            drain(s.as_mut(), 44_100)
+        });
+        assert!(n > 0);
+    }
+}

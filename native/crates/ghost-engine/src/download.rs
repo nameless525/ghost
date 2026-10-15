@@ -102,7 +102,11 @@ impl Downloads {
         crate::util::spawn_named("ghost-download", move || {
             crate::util::set_low_priority();
             let mut rep = Reporter { id, gen, jobs, events, last: Instant::now() - PROGRESS_INTERVAL };
-            match run(&source, &dest, &tags, options, loops, &cache, &cancel, &mut rep) {
+            // Untrusted streams and tags pass through decoders, taggers and the FLAC encoder: a
+            // panic must still end the job with an event.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&source, &dest, &tags, options, loops, &cache, &cancel, &mut rep)))
+                .unwrap_or_else(|_| Err("download crashed (malformed source or tags)".to_string()));
+            match result {
                 Ok(path) => rep.send(DownloadStatus::Done, file_len(&path), Some(file_len(&path)), Some(path), None),
                 Err(_) if cancel.load(Ordering::Relaxed) => rep.send(DownloadStatus::Canceled, 0, None, None, None),
                 Err(e) => rep.send(DownloadStatus::Error, 0, None, None, Some(e)),

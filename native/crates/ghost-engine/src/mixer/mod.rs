@@ -214,6 +214,8 @@ pub struct Mixer {
     /// Frames rendered since the mixer was last active (tap gating).
     idle_frames: u64,
     tap_hold: u64,
+    /// Every block of the last `render` call was silent (output path can skip conversion).
+    quiet: bool,
 }
 
 pub struct MixerParts {
@@ -273,6 +275,7 @@ impl Mixer {
             low_water: (LOW_WATER_SEC * r) as usize,
             idle_frames: 0,
             tap_hold: (TAP_IDLE_HOLD_SEC * r) as u64,
+            quiet: false,
         });
         MixerParts { mixer, link: MixerLink { cmd: cmd_tx, events: ev_rx, garbage: garbage_rx }, tap: tap_rx }
     }
@@ -285,6 +288,12 @@ impl Mixer {
     /// Output delay added by the mixer itself (limiter look-ahead), in frames.
     pub fn latency_frames(&self) -> usize {
         self.limiter.latency()
+    }
+
+    /// The last `render` produced nothing but (idle) silence.
+    #[inline]
+    pub fn was_quiet(&self) -> bool {
+        self.quiet
     }
 
     /// Next device frame to be rendered.
@@ -468,6 +477,7 @@ impl Mixer {
     pub fn render(&mut self, out: &mut [f32], epoch_us: u64) {
         self.process_commands();
         let n = out.len() / 2;
+        self.quiet = true;
         let mut off = 0;
         while off < n {
             let m = (n - off).min(MAX_BLOCK);
@@ -511,6 +521,7 @@ impl Mixer {
         if quiet {
             out.fill(0.0);
         } else {
+            self.quiet = false;
             let mut tap_idx = 0;
             for i in 0..n {
                 let t = self.transport.step();

@@ -19,6 +19,10 @@ struct Cli {
     /// Cache size cap in MB.
     #[arg(long, global = true, default_value_t = 2048)]
     cache_mb: u64,
+    /// Extra HTTP request header for URL sources, "Name: value" (repeatable), e.g.
+    /// -H "Referer: https://downloads.khinsider.com/".
+    #[arg(long = "header", short = 'H', global = true)]
+    headers: Vec<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -239,9 +243,17 @@ fn parse_mask(s: &str) -> Result<u64, String> {
     }
 }
 
+/// Parsed `--header` values (set once in `main`).
+static HEADERS: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
 fn source(s: &str) -> SourceSpec {
     if s.starts_with("http://") || s.starts_with("https://") {
-        SourceSpec::http(s, s)
+        match SourceSpec::http(s, s) {
+            SourceSpec::Http { url, cache_key, format_hint, extras, .. } => {
+                SourceSpec::Http { url, headers: HEADERS.get().cloned().unwrap_or_default(), cache_key, format_hint, extras }
+            }
+            f => f,
+        }
     } else {
         SourceSpec::file(PathBuf::from(s))
     }
@@ -699,6 +711,17 @@ fn cmd_cache_stats(cli: &Cli, clear: bool) -> Result<(), String> {
 
 fn main() {
     let cli = Cli::parse();
+    let mut headers = Vec::new();
+    for h in &cli.headers {
+        match h.split_once(':') {
+            Some((k, v)) if !k.trim().is_empty() => headers.push((k.trim().to_string(), v.trim().to_string())),
+            _ => {
+                eprintln!("error: bad --header {h:?} (expected \"Name: value\")");
+                std::process::exit(2);
+            }
+        }
+    }
+    let _ = HEADERS.set(headers);
     let res = match &cli.cmd {
         Cmd::Play(o) => cmd_play(&cli, o),
         Cmd::Render { opts, out, rate } => cmd_render(&cli, opts, out, *rate),

@@ -26,15 +26,22 @@ const HOPS_PER_SEC: u32 = 200;
 const HISTORY: usize = 400; // 2 s at 200 Hz
 const SILENCE_RMS: f32 = 1e-4; // -80 dBFS
 const IDLE_AFTER_US: u64 = 1_000_000;
-/// Poll interval while tap blocks are flowing (device callbacks arrive every ~10–20 ms; frames
-/// are stamped with their audible time, which is further out than that).
-const ACTIVE_POLL: Duration = Duration::from_millis(4);
-/// Slowest poll once the tap has been quiet for `IDLE_AFTER_QUIET`.
+/// Poll interval while tap blocks are flowing. Device callbacks arrive every ~10–21 ms and a
+/// block's frames become audible one output latency later (typically 10–30 ms, Bluetooth 100+),
+/// so frames analysed up to 8 ms after their block arrived are still ready before they're heard.
+const ACTIVE_POLL: Duration = Duration::from_millis(8);
+/// Poll once the tap has been quiet for `IDLE_AFTER_QUIET`.
 const IDLE_POLL: Duration = Duration::from_millis(100);
 const IDLE_AFTER_QUIET: Duration = Duration::from_millis(500);
+/// Quiet this long (and no `Wake`): nothing is about to play, so sleep until a command wakes us
+/// (the tap ring holds seconds of audio, so even a missed wake loses nothing).
+const DEEP_IDLE_POLL: Duration = Duration::from_secs(2);
+const DEEP_IDLE_AFTER: Duration = Duration::from_secs(5);
 
 pub enum TapMsg {
     Source { tap: rtrb::Consumer<TapBlock>, rate: u32 },
+    /// Audio may start soon (play / load / seek / preview): poll actively again.
+    Wake,
     Shutdown,
 }
 
@@ -150,6 +157,10 @@ fn run(shared: Arc<AnalysisShared>, clock: Arc<Clock>, rx: Receiver<TapMsg>) {
                     fifo.clear();
                     last_data = Instant::now();
                 }
+                Ok(TapMsg::Wake) => {
+                    last_data = Instant::now();
+                    wait = ACTIVE_POLL;
+                }
                 Ok(TapMsg::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => break,
             }
@@ -211,6 +222,8 @@ fn run(shared: Arc<AnalysisShared>, clock: Arc<Clock>, rx: Receiver<TapMsg>) {
         if got {
             last_data = Instant::now();
             wait = ACTIVE_POLL;
+        } else if last_data.elapsed() > DEEP_IDLE_AFTER {
+            wait = DEEP_IDLE_POLL;
         } else if last_data.elapsed() > IDLE_AFTER_QUIET {
             wait = IDLE_POLL;
         }

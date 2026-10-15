@@ -2,13 +2,15 @@
 //!
 //! Each remote source is stored as `<sha1(cache_key)>.data` (a sparse file, written chunk by
 //! chunk) plus a `.meta` sidecar holding the total size, content type and a bitmap of the 256 KB
-//! chunks that are present. A fetcher thread per open entry fills it with HTTP Range requests:
-//! chunks a blocked reader is waiting for first, then ~30 s ahead of the read position, then the
-//! rest of the file. Servers that ignore Range are filled linearly. Decoders read through
-//! [`CacheReader`], an ordinary blocking `Read + Seek`.
+//! chunks that are present. A fetcher thread per open entry fills it with bounded HTTP Range
+//! requests: chunks a blocked reader is waiting for first, then ~30 s ahead of the read position,
+//! then the rest of the file (forward from the read position, then from the start). Servers that
+//! ignore Range are filled linearly. Decoders read through [`CacheReader`], an ordinary blocking
+//! `Read + Seek`; bytes of the chunk being downloaded are readable as soon as they are on disk,
+//! so playback starts after the first few KB rather than the first whole chunk.
 //!
 //! Least-recently-used entries are evicted (never ones that are open) once the directory grows
-//! past `cache_max_bytes`.
+//! past `cache_max_bytes`; the directory scan runs on a background thread.
 
 mod fetch;
 mod reader;
@@ -36,6 +38,9 @@ pub const CHUNK_SIZE: u64 = 256 * 1024;
 const META_MAGIC: &[u8; 4] = b"GHC1";
 /// Bytes to prefetch ahead of the read position (~30 s of 320 kbps audio).
 pub const PREFETCH_BYTES: u64 = 1536 * 1024;
+/// How long a URL that answered 401/403/404/410 is considered dead (a transient block, e.g. a
+/// CDN challenge, may lift; an expired signed URL never does, but by then it was replaced).
+pub(crate) const DEAD_URL_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug)]
 pub enum CacheEvent {
@@ -70,6 +75,8 @@ pub struct CacheManager {
     pub(crate) stall_timeout: Duration,
     /// How long a fetcher keeps filling after its last reader went away.
     pub(crate) idle_grace: Duration,
+    /// An eviction pass is queued or running (coalesces passes requested while one runs).
+    evict_pending: AtomicBool,
 }
 
 /// Chunk bitmap plus bookkeeping, guarded by `Entry::state`.
@@ -84,6 +91,15 @@ pub(crate) struct State {
     pub range_ok: Option<bool>,
     /// Chunks blocked readers are waiting for (most urgent first).
     pub demand: Vec<u64>,
+    /// The chunk being downloaded right now and how many of its leading bytes are on disk
+    /// (readable before the chunk is complete).
+    pub partial: Option<(u64, u64)>,
+    /// Readers blocked waiting for data (progress notifications are skipped when zero).
+    pub waiting: u32,
+    /// URLs that answered 401/403/404/410, and when: not fetched again for `DEAD_URL_TTL` (a
+    /// provider may still hand them out, e.g. a stale preload of an expired YouTube URL), so
+    /// callers fail fast and re-resolve instead of hammering a dead link.
+    pub dead_urls: Vec<(String, Instant)>,
     pub fatal: Option<String>,
     pub last_error: Option<String>,
     pub fetcher_running: bool,
@@ -154,6 +170,7 @@ impl CacheManager {
             subscribers: Mutex::new(Vec::new()),
             stall_timeout: Duration::from_secs(8),
             idle_grace: Duration::from_secs(5),
+            evict_pending: AtomicBool::new(false),
         }))
     }
 
@@ -168,6 +185,7 @@ impl CacheManager {
             subscribers: Mutex::new(Vec::new()),
             stall_timeout: stall,
             idle_grace: Duration::from_millis(300),
+            evict_pending: AtomicBool::new(false),
         })
     }
 
@@ -198,10 +216,15 @@ impl CacheManager {
         let mut map = self.entries.lock();
         if let Some(e) = map.get(&key).and_then(Weak::upgrade) {
             let mut st = e.state.lock();
-            st.url = url.clone();
-            st.headers = headers.clone();
-            if st.fatal.is_some() && !st.complete {
-                // A new attempt (likely a re-resolved URL) clears a previous fatal error.
+            st.dead_urls.retain(|(_, at)| at.elapsed() < DEAD_URL_TTL);
+            if !st.dead_urls.iter().any(|(d, _)| d == url) {
+                st.url = url.clone();
+                st.headers = headers.clone();
+            }
+            let current_dead = st.dead_urls.iter().any(|(d, _)| *d == st.url);
+            if st.fatal.is_some() && !st.complete && !current_dead {
+                // A new attempt (likely a re-resolved URL) clears a previous fatal error; a URL
+                // that already answered 403/404/410 keeps failing fast instead of being retried.
                 st.fatal = None;
             }
             drop(st);
@@ -225,6 +248,9 @@ impl CacheManager {
             complete: false,
             range_ok: None,
             demand: Vec::new(),
+            partial: None,
+            waiting: 0,
+            dead_urls: Vec::new(),
             fatal: None,
             last_error: None,
             fetcher_running: false,
@@ -264,7 +290,8 @@ impl CacheManager {
         map.retain(|_, w| w.strong_count() > 0);
         drop(map);
         entry.write_meta();
-        self.evict();
+        // Not on the open path: a scan touches every file in the cache directory.
+        self.evict_async();
         Ok(entry)
     }
 
@@ -299,7 +326,9 @@ impl CacheManager {
             .collect()
     }
 
-    fn scan(&self) -> Vec<(String, u64, std::time::SystemTime, bool)> {
+    /// Every entry: (hash stem, bytes on disk, last use, complete). `complete` (which reads each
+    /// `.meta` file) is only filled in when `with_complete` is set.
+    fn scan(&self, with_complete: bool) -> Vec<(String, u64, std::time::SystemTime, bool)> {
         let mut out = Vec::new();
         let Ok(rd) = std::fs::read_dir(&self.dir) else { return out };
         for ent in rd.flatten() {
@@ -310,17 +339,30 @@ impl CacheManager {
             let Some(stem) = p.file_stem().map(|s| s.to_string_lossy().into_owned()) else { continue };
             let data = self.dir.join(format!("{stem}.data"));
             let size = disk_usage(&data);
-            let atime = std::fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-            let complete = read_meta(&p).map(|m| m.complete).unwrap_or(false);
+            let atime = ent.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            let complete = with_complete && read_meta(&p).is_some_and(|m| m.complete);
             out.push((stem, size, atime, complete));
         }
         out
     }
 
+    /// Run [`evict`](Self::evict) on a background thread (coalesced).
+    pub fn evict_async(self: &Arc<Self>) {
+        if self.evict_pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let mgr = self.clone();
+        crate::util::spawn_named("ghost-cache-evict", move || {
+            crate::util::set_low_priority();
+            mgr.evict();
+            mgr.evict_pending.store(false, Ordering::Release);
+        });
+    }
+
     /// Evict least-recently-used entries (not currently open) until under the size cap.
     pub fn evict(&self) {
         let max = self.max_bytes.load(Ordering::Relaxed);
-        let mut all = self.scan();
+        let mut all = self.scan(false);
         let mut total: u64 = all.iter().map(|e| e.1).sum();
         if total <= max {
             return;
@@ -341,7 +383,7 @@ impl CacheManager {
     }
 
     pub fn stats(&self) -> CacheStats {
-        let all = self.scan();
+        let all = self.scan(true);
         CacheStats {
             dir: self.dir.clone(),
             entries: all.len(),
@@ -355,7 +397,7 @@ impl CacheManager {
     /// Delete every entry that isn't open.
     pub fn clear(&self) {
         let open = self.open_hashes();
-        for (stem, ..) in self.scan() {
+        for (stem, ..) in self.scan(false) {
             if !open.contains(&stem) {
                 let _ = std::fs::remove_file(self.dir.join(format!("{stem}.meta")));
                 let _ = std::fs::remove_file(self.dir.join(format!("{stem}.data")));

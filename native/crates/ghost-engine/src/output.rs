@@ -118,6 +118,10 @@ where
     let err_stats = stats.clone();
     let mut registered = false;
     let mut prev_start: Option<Instant> = None;
+    // A mixer panic must not unwind into CoreAudio (that aborts the app): go silent and ask the
+    // controller to rebuild the stream with a fresh mixer.
+    let mut poisoned = false;
+    let err_cb = err.clone();
     device.build_output_stream::<T, _, _>(
         config,
         move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
@@ -131,21 +135,38 @@ where
             clock.latency_us.store(lat_us, Ordering::Relaxed);
             let epoch0 = epoch_us() + lat_us;
             let frames = data.len() / ch;
+            if poisoned {
+                data.fill(silence);
+                return;
+            }
             let mut off = 0;
             while off < frames {
                 let n = (frames - off).min(MAX_BLOCK);
-                mixer.render(&mut scratch[..n * 2], epoch0 + off as u64 * 1_000_000 / rate);
-                for i in 0..n {
-                    let (l, r) = (scratch[2 * i], scratch[2 * i + 1]);
-                    let frame = &mut data[(off + i) * ch..(off + i + 1) * ch];
-                    if ch == 1 {
-                        frame[0] = T::from_sample((l + r) * 0.5);
-                    } else {
-                        frame[0] = T::from_sample(l);
-                        frame[1] = T::from_sample(r);
-                        for s in &mut frame[2..] {
-                            *s = silence;
-                        }
+                let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mixer.render(&mut scratch[..n * 2], epoch0 + off as u64 * 1_000_000 / rate)));
+                if rendered.is_err() {
+                    poisoned = true;
+                    err_cb.fetch_or(ERR_REBUILD, Ordering::Relaxed);
+                    data.fill(silence);
+                    return;
+                }
+                let dst = &mut data[off * ch..(off + n) * ch];
+                let src = &scratch[..n * 2];
+                if mixer.was_quiet() {
+                    dst.fill(silence);
+                } else if ch == 2 {
+                    for (d, s) in dst.as_chunks_mut::<2>().0.iter_mut().zip(src.as_chunks::<2>().0) {
+                        d[0] = T::from_sample(s[0]);
+                        d[1] = T::from_sample(s[1]);
+                    }
+                } else if ch == 1 {
+                    for (d, s) in dst.iter_mut().zip(src.as_chunks::<2>().0) {
+                        *d = T::from_sample((s[0] + s[1]) * 0.5);
+                    }
+                } else {
+                    for (d, s) in dst.chunks_exact_mut(ch).zip(src.as_chunks::<2>().0) {
+                        d[0] = T::from_sample(s[0]);
+                        d[1] = T::from_sample(s[1]);
+                        d[2..].fill(silence);
                     }
                 }
                 off += n;
@@ -246,5 +267,76 @@ impl Drop for NullOutput {
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
+    }
+}
+
+/// Output-device change notifications (default device switched, device added or removed), so
+/// the controller doesn't have to enumerate devices on a timer. On macOS a CoreAudio property
+/// listener (registered once per process, never removed) bumps a generation counter and wakes
+/// subscribers; elsewhere `watching()` is false and the controller keeps polling.
+pub mod device_watch {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    use crossbeam_channel::Sender;
+
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    static SUBSCRIBERS: Mutex<Vec<Sender<()>>> = Mutex::new(Vec::new());
+
+    /// Current change generation (compare with a remembered value).
+    pub fn generation() -> u64 {
+        GENERATION.load(Ordering::Acquire)
+    }
+
+    /// Wake `tx` on every change (dropped receivers are pruned).
+    pub fn subscribe(tx: Sender<()>) {
+        SUBSCRIBERS.lock().unwrap_or_else(|p| p.into_inner()).push(tx);
+    }
+
+    #[allow(dead_code)]
+    fn changed() {
+        GENERATION.fetch_add(1, Ordering::AcqRel);
+        SUBSCRIBERS.lock().unwrap_or_else(|p| p.into_inner()).retain(|tx| !matches!(tx.try_send(()), Err(crossbeam_channel::TrySendError::Disconnected(_))));
+    }
+
+    /// Whether change notifications are active (registers the listener on first call).
+    pub fn watching() -> bool {
+        static OK: OnceLock<bool> = OnceLock::new();
+        *OK.get_or_init(register)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn register() -> bool {
+        use std::ffi::c_void;
+        #[repr(C)]
+        struct Address {
+            selector: u32,
+            scope: u32,
+            element: u32,
+        }
+        type Listener = extern "C" fn(u32, u32, *const Address, *mut c_void) -> i32;
+        #[link(name = "CoreAudio", kind = "framework")]
+        extern "C" {
+            fn AudioObjectAddPropertyListener(object: u32, address: *const Address, listener: Listener, client: *mut c_void) -> i32;
+        }
+        extern "C" fn on_change(_: u32, _: u32, _: *const Address, _: *mut c_void) -> i32 {
+            // Runs on a CoreAudio notification thread (not the IO thread); must not unwind.
+            let _ = std::panic::catch_unwind(changed);
+            0
+        }
+        const SYSTEM_OBJECT: u32 = 1;
+        const SCOPE_GLOBAL: u32 = u32::from_be_bytes(*b"glob");
+        let mut ok = true;
+        for selector in [u32::from_be_bytes(*b"dev#"), u32::from_be_bytes(*b"dOut")] {
+            let addr = Address { selector, scope: SCOPE_GLOBAL, element: 0 };
+            // SAFETY: valid address struct and a 'static listener with no client data.
+            ok &= unsafe { AudioObjectAddPropertyListener(SYSTEM_OBJECT, &addr, on_change, std::ptr::null_mut()) } == 0;
+        }
+        ok
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn register() -> bool {
+        false
     }
 }

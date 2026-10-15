@@ -155,7 +155,8 @@ fn opt_ms(v: Option<f64>) -> Option<u64> {
 }
 
 fn opt_f32(v: Option<f64>) -> Option<f32> {
-    v.filter(|x| x.is_finite()).map(|x| x as f32)
+    // Filter after the cast: 1e300 is a finite f64 but an infinite f32.
+    v.map(|x| x as f32).filter(|x| x.is_finite())
 }
 
 /// Optional non-negative integer field (`NaN`, negatives and fractions are rejected).

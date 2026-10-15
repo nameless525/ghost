@@ -371,7 +371,12 @@ impl Engine {
             tap_tx,
             mode,
         });
-        util::spawn_named("ghost-engine", move || ctl.run());
+        let crash_tx = events_tx.clone();
+        util::spawn_named("ghost-engine", move || {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctl.run())).is_err() {
+                let _ = crash_tx.send(EngineEvent::Error { id: None, message: "audio engine crashed; restart GHOST".into(), recoverable: false });
+            }
+        });
         let inner = Arc::new(EngineInner {
             cmd_tx,
             shared,
@@ -413,23 +418,28 @@ impl Engine {
         self.cmd(engine::Cmd::Seek(ms));
     }
     pub fn set_volume_db(&self, db: f32) {
-        self.cmd(engine::Cmd::Volume(db));
+        // NaN would slip past the mute threshold and `min(12.0)` and play at +12 dB.
+        if db.is_finite() {
+            self.cmd(engine::Cmd::Volume(db));
+        }
     }
     pub fn set_muted(&self, muted: bool) {
         self.cmd(engine::Cmd::Muted(muted));
     }
     /// Applies live to playing tracks that carry loop points.
     pub fn set_loop(&self, mode: LoopMode, count: u32, fade_sec: f32) {
-        self.inner.loops.set(mode, count, fade_sec);
+        self.inner.loops.set(mode, count, if fade_sec.is_finite() { fade_sec } else { 10.0 });
     }
     pub fn set_normalization(&self, enabled: bool, target_lufs: f32, mode: NormalizationMode) {
-        self.cmd(engine::Cmd::Normalization { enabled, target: target_lufs, mode });
+        // A NaN target would make every voice gain NaN (and poison the limiter state).
+        let target = if target_lufs.is_finite() { target_lufs.clamp(-70.0, 0.0) } else { -16.0 };
+        self.cmd(engine::Cmd::Normalization { enabled, target, mode });
     }
     pub fn set_gapless(&self, enabled: bool) {
         self.cmd(engine::Cmd::Gapless(enabled));
     }
     pub fn set_crossfade(&self, sec: f32) {
-        self.cmd(engine::Cmd::Crossfade(sec));
+        self.cmd(engine::Cmd::Crossfade(if sec.is_finite() { sec } else { 0.0 }));
     }
     pub fn set_overlay_filter(&self, active: bool) {
         self.cmd(engine::Cmd::Overlay(active));
@@ -462,13 +472,13 @@ impl Engine {
         self.inner.shared.analysis.wake_all();
     }
 
+    /// Output devices as last seen by the engine (kept current by change notifications / polling).
+    /// Enumerates directly only before the engine's first look (that takes tens of ms).
     pub fn list_devices(&self) -> Vec<DeviceInfo> {
-        let cached = self.inner.shared.devices.lock().clone();
-        if cached.is_empty() {
-            output::list_devices()
-        } else {
-            cached
+        if self.inner.shared.devices_polled.load(std::sync::atomic::Ordering::Acquire) {
+            return self.inner.shared.devices.lock().clone();
         }
+        output::list_devices()
     }
     pub fn set_device(&self, id: Option<String>) {
         self.cmd(engine::Cmd::SetDevice(id));

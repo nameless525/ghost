@@ -300,6 +300,13 @@ fn sparse_entry_survives_reopen() {
         r.seek(SeekFrom::Start(pos)).unwrap();
         let mut buf = vec![0u8; 1000];
         r.read_exact(&mut buf).unwrap();
+        // The read may be served from the chunk still downloading; only whole chunks persist.
+        let c = pos / CHUNK_SIZE;
+        let t = Instant::now();
+        while !r.entry().state.lock().has(c) {
+            assert!(t.elapsed() < Duration::from_secs(5), "chunk never completed");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         r.entry().stop();
     }
     std::thread::sleep(Duration::from_millis(300));
@@ -340,4 +347,248 @@ fn lru_eviction_respects_cap_and_open_entries() {
     assert!(mgr.complete_path("e3").is_some(), "most recent entry was evicted");
     assert!(mgr.complete_path("e1").is_none(), "LRU entry survived");
     drop(kept);
+}
+
+/// Minimal HTTP/1.1 server with keep-alive that counts connections and records every request's
+/// Range header; `deny(start)` returning Some(status) answers that status instead of data.
+pub(crate) struct KaServer {
+    pub url: String,
+    pub conns: Arc<AtomicUsize>,
+    pub ranges: Arc<parking_lot::Mutex<Vec<String>>>,
+}
+
+pub(crate) fn serve_keepalive(data: Arc<Vec<u8>>, per_16k: Duration, deny: impl Fn(u64) -> Option<u16> + Send + Sync + 'static) -> KaServer {
+    use std::io::{BufRead, BufReader, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let conns = Arc::new(AtomicUsize::new(0));
+    let ranges = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let deny = Arc::new(deny);
+    let (c2, r2) = (conns.clone(), ranges.clone());
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            c2.fetch_add(1, Ordering::Relaxed);
+            let (data, ranges, deny) = (data.clone(), r2.clone(), deny.clone());
+            std::thread::spawn(move || {
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut w = s;
+                loop {
+                    let mut line = String::new();
+                    if r.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let mut range = String::new();
+                    loop {
+                        let mut h = String::new();
+                        if r.read_line(&mut h).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        let h = h.trim_end().to_string();
+                        if h.is_empty() {
+                            break;
+                        }
+                        if let Some((k, v)) = h.split_once(':') {
+                            if k.eq_ignore_ascii_case("range") {
+                                range = v.trim().to_string();
+                            }
+                        }
+                    }
+                    ranges.lock().push(range.clone());
+                    let len = data.len() as u64;
+                    let spec = range.strip_prefix("bytes=").unwrap_or("0-");
+                    let (a, b) = spec.split_once('-').unwrap();
+                    let a: u64 = a.parse().unwrap_or(0);
+                    let b: u64 = b.parse().unwrap_or(len - 1).min(len - 1);
+                    if let Some(status) = deny(a) {
+                        let _ = write!(w, "HTTP/1.1 {status} No\r\nContent-Length: 0\r\n\r\n");
+                        continue;
+                    }
+                    let head = format!("HTTP/1.1 206 Partial\r\nContent-Type: audio/mpeg\r\nContent-Length: {}\r\nContent-Range: bytes {a}-{b}/{len}\r\n\r\n", b - a + 1);
+                    if w.write_all(head.as_bytes()).is_err() {
+                        return;
+                    }
+                    for piece in data[a as usize..=b as usize].chunks(16 * 1024) {
+                        if !per_16k.is_zero() {
+                            std::thread::sleep(per_16k);
+                        }
+                        if w.write_all(piece).is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    KaServer { url: format!("http://127.0.0.1:{port}/track.mp3"), conns, ranges }
+}
+
+#[test]
+fn first_bytes_are_readable_before_the_chunk_completes() {
+    // 16 KB every 20 ms: a whole 256 KB chunk takes ~320 ms.
+    let data = test_data(2 * 1024 * 1024, 20);
+    let srv = serve_keepalive(data.clone(), Duration::from_millis(20), |_| None);
+    let mgr = CacheManager::new_for_test(tmp_dir("partial"), 1 << 30, Duration::from_secs(8));
+    let mut r = mgr.open_reader(&spec(&srv.url, "partial"), None).unwrap();
+    let t = Instant::now();
+    let mut buf = vec![0u8; 8192];
+    r.read_exact(&mut buf).unwrap();
+    let dt = t.elapsed();
+    assert_eq!(&buf[..], &data[..8192]);
+    assert!(dt < Duration::from_millis(200), "first 8 KB took {dt:?}");
+    // The rest reads back exactly, across partial and complete chunks.
+    let mut all = buf;
+    r.read_to_end(&mut all).unwrap();
+    assert_eq!(all, *data);
+}
+
+#[test]
+fn ranges_are_bounded_and_connections_reused() {
+    let data = test_data(20 * 1024 * 1024 + 333, 21);
+    let srv = serve_keepalive(data.clone(), Duration::ZERO, |_| None);
+    let mgr = CacheManager::new_for_test(tmp_dir("reuse"), 1 << 30, Duration::from_secs(8));
+    let mut r = mgr.open_reader(&spec(&srv.url, "reuse"), None).unwrap();
+    let mut all = Vec::new();
+    r.read_to_end(&mut all).unwrap();
+    assert_eq!(all, *data);
+    let ranges = srv.ranges.lock().clone();
+    assert!(ranges.len() >= 3, "{ranges:?}");
+    for rg in &ranges {
+        let (a, b) = rg.strip_prefix("bytes=").unwrap().split_once('-').unwrap();
+        let (a, b): (u64, u64) = (a.parse().unwrap(), b.parse().expect("open-ended range request"));
+        assert!(b - a < 10 * 1024 * 1024, "range too large: {rg}");
+    }
+    // Sequential reads never preempt: every request reuses the first connection.
+    assert_eq!(srv.conns.load(Ordering::Relaxed), 1, "{ranges:?}");
+}
+
+#[test]
+fn dead_url_mid_stream_fails_fast_and_a_fresh_url_resumes() {
+    // The URL works for the first MB, then answers 403 (an expiring YouTube URL).
+    let data = test_data(4 * 1024 * 1024, 22);
+    let dead = serve_keepalive(data.clone(), Duration::ZERO, |a| (a >= 1024 * 1024).then_some(403));
+    let fresh = serve_keepalive(data.clone(), Duration::ZERO, |_| None);
+    let mgr = CacheManager::new_for_test(tmp_dir("dead"), 1 << 30, Duration::from_secs(8));
+    let mut r = mgr.open_reader(&spec(&dead.url, "yt"), None).unwrap();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut pos = 0usize;
+    let err = loop {
+        match r.read(&mut buf) {
+            Ok(0) => panic!("unexpected end"),
+            Ok(n) => {
+                assert_eq!(&buf[..n], &data[pos..pos + n]);
+                pos += n;
+            }
+            Err(e) => break e,
+        }
+    };
+    assert_eq!(err.to_string(), "stream failed: HTTP 403");
+    assert_eq!(pos, 1024 * 1024, "cached data before the failure stays readable");
+    let denied = dead.ranges.lock().len();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(dead.ranges.lock().len(), denied, "dead URL retried");
+    // A stale preload handing out the dead URL again doesn't revive it...
+    let again = mgr.open_reader(&spec(&dead.url, "yt"), None).unwrap();
+    assert!(again.wait_header().is_ok(), "cached start must stay readable");
+    let mut again = again;
+    again.seek(SeekFrom::Start(2 * 1024 * 1024)).unwrap();
+    assert_eq!(again.read(&mut buf).unwrap_err().to_string(), "stream failed: HTTP 403");
+    assert_eq!(dead.ranges.lock().len(), denied, "dead URL retried");
+    // ...a re-resolved URL resumes where the reader stopped.
+    let mut r2 = mgr.open_reader(&spec(&fresh.url, "yt"), None).unwrap();
+    r2.seek(SeekFrom::Start(pos as u64)).unwrap();
+    let mut rest = Vec::new();
+    r2.read_to_end(&mut rest).unwrap();
+    assert_eq!(&rest[..], &data[pos..]);
+    // and a stale preload with the dead URL doesn't switch the entry back.
+    drop(mgr.open_reader(&spec(&dead.url, "yt"), None).unwrap());
+    assert_eq!(r2.entry().state.lock().url, fresh.url);
+}
+
+#[test]
+fn changed_file_size_drops_stale_chunks() {
+    let dir = tmp_dir("resize");
+    let old = test_data(8 * 1024 * 1024, 23);
+    {
+        let srv = serve_keepalive(old.clone(), Duration::from_millis(5), |_| None);
+        let mgr = CacheManager::new_for_test(dir.clone(), 1 << 30, Duration::from_secs(8));
+        let mut r = mgr.open_reader(&spec(&srv.url, "resize"), None).unwrap();
+        let mut b = vec![0u8; 1000];
+        r.read_exact(&mut b).unwrap();
+        let t = Instant::now();
+        while !r.entry().state.lock().has(0) {
+            assert!(t.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        r.entry().stop();
+    }
+    std::thread::sleep(Duration::from_millis(400));
+    // Same key, different file (e.g. a re-encoded upload): nothing of the old one may leak in.
+    let new = test_data(6 * 1024 * 1024 + 4096, 24);
+    let srv = serve_keepalive(new.clone(), Duration::ZERO, |_| None);
+    let mgr = CacheManager::new_for_test(dir, 1 << 30, Duration::from_secs(8));
+    let mut r = mgr.open_reader(&spec(&srv.url, "resize"), None).unwrap();
+    // Read from the middle first so the size is learned from a fetch, then the start.
+    r.seek(SeekFrom::Start(5_000_000)).unwrap();
+    let mut b = vec![0u8; 1000];
+    r.read_exact(&mut b).unwrap();
+    assert_eq!(&b[..], &new[5_000_000..5_001_000]);
+    r.seek(SeekFrom::Start(0)).unwrap();
+    let mut all = Vec::new();
+    r.read_to_end(&mut all).unwrap();
+    assert_eq!(all, *new);
+}
+
+#[test]
+fn slow_server_trickling_data_is_not_a_stall() {
+    // 16 KB every 300 ms (~53 KB/s): a 256 KB chunk takes ~5 s, far over the 1 s stall timeout,
+    // but bytes keep arriving, so readers keep going.
+    let data = test_data(200 * 1024, 30);
+    let srv = serve_keepalive(data.clone(), Duration::from_millis(300), |_| None);
+    let mgr = CacheManager::new_for_test(tmp_dir("trickle"), 1 << 30, Duration::from_secs(1));
+    let mut r = mgr.open_reader(&spec(&srv.url, "trickle"), None).unwrap();
+    let mut got = vec![0u8; 100 * 1024];
+    r.read_exact(&mut got).unwrap();
+    assert_eq!(&got[..], &data[..100 * 1024]);
+}
+
+#[test]
+fn redirects_keep_the_range() {
+    use std::io::{BufRead, BufReader, Write};
+    let data = test_data(3 * 1024 * 1024 + 5, 31);
+    let target = serve_keepalive(data.clone(), Duration::ZERO, |_| None);
+    // A server that answers everything with 302 → target.
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let to = target.url.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let to = to.clone();
+            std::thread::spawn(move || {
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut w = s;
+                loop {
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        if r.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        if line.trim_end().is_empty() {
+                            break;
+                        }
+                    }
+                    let _ = write!(w, "HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\n\r\n");
+                }
+            });
+        }
+    });
+    let mgr = CacheManager::new_for_test(tmp_dir("redirect"), 1 << 30, Duration::from_secs(8));
+    let mut r = mgr.open_reader(&spec(&format!("http://127.0.0.1:{port}/a.mp3"), "redirect"), None).unwrap();
+    r.seek(SeekFrom::Start(2_000_000)).unwrap();
+    let mut b = vec![0u8; 5000];
+    r.read_exact(&mut b).unwrap();
+    assert_eq!(&b[..], &data[2_000_000..2_005_000]);
+    let ranges = target.ranges.lock().clone();
+    assert!(!ranges.is_empty() && ranges.iter().all(|r| r.starts_with("bytes=")), "{ranges:?}");
+    assert_eq!(r.entry().state.lock().range_ok, Some(true));
 }

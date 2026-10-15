@@ -114,6 +114,12 @@ impl Read for Body {
 }
 
 pub fn serve(data: Vec<u8>, name: &str, delay_per_16k: Duration, hang: bool) -> Server {
+    serve_with(data, name, delay_per_16k, hang, |_| None)
+}
+
+/// [`serve`], answering `deny(range start)` (when Some) as the HTTP status instead of data.
+pub fn serve_with(data: Vec<u8>, name: &str, delay_per_16k: Duration, hang: bool, deny: impl Fn(u64) -> Option<u16> + Send + Sync + 'static) -> Server {
+    let deny = Arc::new(deny);
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let port = server.server_addr().to_ip().unwrap().port();
     let stop = Arc::new(AtomicBool::new(false));
@@ -122,7 +128,7 @@ pub fn serve(data: Vec<u8>, name: &str, delay_per_16k: Duration, hang: bool) -> 
     std::thread::spawn(move || {
         while !st.load(Ordering::Relaxed) {
             let Ok(Some(req)) = server.recv_timeout(Duration::from_millis(50)) else { continue };
-            let (data, st) = (data.clone(), st.clone());
+            let (data, st, deny) = (data.clone(), st.clone(), deny.clone());
             std::thread::spawn(move || {
                 if hang {
                     while !st.load(Ordering::Relaxed) {
@@ -136,6 +142,11 @@ pub fn serve(data: Vec<u8>, name: &str, delay_per_16k: Duration, hang: bool) -> 
                     .iter()
                     .find(|h| h.field.equiv("Range"))
                     .and_then(|h| h.value.as_str().strip_prefix("bytes=").map(str::to_string));
+                let start_at = range.as_deref().and_then(|r| r.split_once('-')).and_then(|(a, _)| a.parse::<u64>().ok()).unwrap_or(0);
+                if let Some(status) = deny(start_at) {
+                    let _ = req.respond(tiny_http::Response::empty(status));
+                    return;
+                }
                 let (status, start, end, extra) = match range {
                     Some(r) => {
                         let (a, b) = r.split_once('-').unwrap();

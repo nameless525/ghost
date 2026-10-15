@@ -1,8 +1,9 @@
 //! Real-time analysis for visuals: 96 smoothed log bands, a triggered waveform, RMS/peak and
 //! a loudness-independent spectral-flux onset value.
 //!
-//! Everything is allocated in [`RealtimeAnalyzer::new`]; `push_interleaved`, `compute` and
-//! `reset` never allocate, lock or do I/O (see `tests/realtime_no_alloc.rs`).
+//! Everything is allocated in [`RealtimeAnalyzer::new`](crate::realtime::RealtimeAnalyzer::new);
+//! `push_interleaved`, `compute` and `reset` never allocate, lock or do I/O (see
+//! `tests/realtime_no_alloc.rs`).
 //!
 //! Spectrum: two Hann-windowed FFTs over the same mono history (multi-resolution). Bass and
 //! low-mid bands (where a log band is narrower than a short-FFT bin) come from a ~85 ms FFT
@@ -82,7 +83,12 @@ pub struct RealtimeAnalyzer {
     peak: f32,
     wave_prev: [f32; WAVEFORM_LEN],
     have_wave: bool,
+    /// The newest `WAVE_SPAN` samples, oldest first (trigger search scratch).
+    wave_lin: Box<[f32]>,
 }
+
+/// Samples the waveform trigger looks at: the display window plus the search range plus one.
+const WAVE_SPAN: usize = WAVEFORM_LEN + WAVE_SEARCH + 1;
 
 impl RealtimeAnalyzer {
     pub fn new(sample_rate: u32) -> Self {
@@ -149,6 +155,7 @@ impl RealtimeAnalyzer {
             peak: 0.0,
             wave_prev: [0.0; WAVEFORM_LEN],
             have_wave: false,
+            wave_lin: vec![0.0; WAVE_SPAN].into_boxed_slice(),
         }
     }
 
@@ -310,47 +317,100 @@ impl RealtimeAnalyzer {
     /// oscilloscope drawing is stable. Among recent crossings, prefer the one that best matches
     /// the previously displayed frame (keeps complex waveforms from hopping between triggers).
     fn write_waveform(&mut self, out: &mut [f32; WAVEFORM_LEN]) {
-        let ring = &self.ring;
-        let mask = self.mask;
-        let at = |back: usize| ring[self.write.wrapping_sub(back) & mask];
-        // `back` = how many samples before the write index the window starts.
-        let mut best_back = WAVEFORM_LEN;
-        let mut best_score = f32::NEG_INFINITY;
+        // `back` = how many samples before the write index a window starts; the sample `back`
+        // before the write index is `lin[WAVE_SPAN - back]`.
+        let lin = &mut self.wave_lin;
+        Self::copy_recent(&self.ring, self.write, self.mask, lin);
+        let lin = &*lin;
+        let at = |back: usize| lin[WAVE_SPAN - back];
+        // Candidates: the newest WAVE_MAX_CANDIDATES rising zero crossings, newest first. Flag
+        // every crossing with one vectorisable compare over the search range (`flag[i]` is the
+        // crossing `d = WAVE_SEARCH - 1 - i` samples further back), then walk the flags from
+        // the newest end eight at a time.
+        let base = WAVE_SPAN - WAVEFORM_LEN; // `lin` index of the sample `WAVEFORM_LEN` back
+        let x1s = &lin[base + 1 - WAVE_SEARCH..=base];
+        let x0s = &lin[base - WAVE_SEARCH..base];
+        let mut flag = [0u8; WAVE_SEARCH];
+        for ((f, &x0), &x1) in flag.iter_mut().zip(x0s).zip(x1s) {
+            *f = ((x0 < 0.0) & (x1 >= 0.0)) as u8;
+        }
+        let mut cand = [0usize; WAVE_MAX_CANDIDATES];
         let mut found = 0usize;
-        let prev_energy: f32 = self.wave_prev.iter().map(|x| x * x).sum();
-        for d in 0..WAVE_SEARCH {
-            let back = WAVEFORM_LEN + d;
-            let (x0, x1) = (at(back + 1), at(back));
-            if !(x0 < 0.0 && x1 >= 0.0) {
-                continue;
+        let (words, _) = flag.as_chunks::<8>();
+        'scan: for (wi, chunk) in words.iter().enumerate().rev() {
+            let mut word = u64::from_le_bytes(*chunk);
+            while word != 0 {
+                let byte = (63 - word.leading_zeros() as usize) / 8;
+                cand[found] = WAVE_SEARCH - 1 - (wi * 8 + byte);
+                found += 1;
+                if found == WAVE_MAX_CANDIDATES {
+                    break 'scan;
+                }
+                word &= !(0xFFu64 << (byte * 8));
             }
-            found += 1;
-            let recency = -0.15 * d as f32 / WAVE_SEARCH as f32;
-            let score = if self.have_wave && prev_energy > 1e-9 {
-                let mut dot = 0.0f32;
-                let mut e = 0.0f32;
+        }
+        // Scores in candidate order. Correlations run four candidates at a time, and the
+        // previous frame's energy is accumulated alongside the first group; every sum keeps the
+        // order of a plain one-at-a-time loop, so results are identical to it.
+        let mut score = [0.0f32; WAVE_MAX_CANDIDATES];
+        let mut correlate = self.have_wave;
+        if correlate {
+            let prev = &self.wave_prev;
+            let win = |d: usize| -> &[f32; WAVEFORM_LEN] { lin[WAVE_SPAN - WAVEFORM_LEN - d..][..WAVEFORM_LEN].try_into().unwrap() };
+            let mut prev_energy = -0.0f32;
+            let mut k = 0;
+            loop {
+                let g = (found - k).min(4);
+                let w: [&[f32; WAVEFORM_LEN]; 4] =
+                    std::array::from_fn(|q| win(cand[(k + q.min(g.max(1) - 1)).min(WAVE_MAX_CANDIDATES - 1)]));
+                let mut dot = [0.0f32; 4];
+                let mut e = [0.0f32; 4];
+                let first = k == 0;
                 let mut i = 0;
                 while i < WAVEFORM_LEN {
-                    let x = at(back - i);
-                    dot += x * self.wave_prev[i];
-                    e += x * x;
+                    let p = prev[i];
+                    if first {
+                        prev_energy += p * p;
+                        prev_energy += prev[i + 1] * prev[i + 1];
+                    }
+                    for q in 0..4 {
+                        let x = w[q][i];
+                        dot[q] += x * p;
+                        e[q] += x * x;
+                    }
                     i += 2;
                 }
-                dot / ((e * prev_energy * 0.5).sqrt() + 1e-9) + recency
-            } else {
-                (x1 - x0) + recency
-            };
-            if score > best_score {
-                best_score = score;
-                best_back = back;
-            }
-            if found >= WAVE_MAX_CANDIDATES {
-                break;
+                let enough = prev_energy > 1e-9; // false for NaN too
+                if first && !enough {
+                    correlate = false;
+                    break;
+                }
+                for q in 0..g {
+                    let recency = -0.15 * cand[k + q] as f32 / WAVE_SEARCH as f32;
+                    score[k + q] = dot[q] / ((e[q] * prev_energy * 0.5).sqrt() + 1e-9) + recency;
+                }
+                k += g;
+                if k >= found {
+                    break;
+                }
             }
         }
-        for (i, o) in out.iter_mut().enumerate() {
-            *o = at(best_back - i);
+        if !correlate {
+            for (s, &d) in score.iter_mut().zip(&cand[..found]) {
+                let back = WAVEFORM_LEN + d;
+                let recency = -0.15 * d as f32 / WAVE_SEARCH as f32;
+                *s = (at(back) - at(back + 1)) + recency;
+            }
         }
+        let mut best_back = WAVEFORM_LEN;
+        let mut best_score = f32::NEG_INFINITY;
+        for (&s, &d) in score.iter().zip(&cand[..found]) {
+            if s > best_score {
+                best_score = s;
+                best_back = WAVEFORM_LEN + d;
+            }
+        }
+        out.copy_from_slice(&lin[WAVE_SPAN - best_back..][..WAVEFORM_LEN]);
         self.wave_prev = *out;
         self.have_wave = true;
     }

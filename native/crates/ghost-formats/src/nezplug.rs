@@ -5,9 +5,14 @@
 //! Track numbers prefixed with `$` are hexadecimal and 0-based; decimal numbers are 1-based
 //! (0-based for KSS), matching libgme's parser. Some sets number decimal tracks from 0 anyway
 //! (HCS GBS sets: "DMG-TRA-0.gbs::GBS,0,Title"): a decimal 0 for a file marks its numbering
-//! 0-based, and the line handed to libgme then names its track in hex so libgme reads it the same
-//! way. Only enough is parsed here to find the line for a given file and sub-song; libgme itself
-//! parses the timing fields.
+//! 0-based. Only enough is parsed here to find the line for a given file and sub-song; libgme
+//! itself parses the timing fields.
+//!
+//! The line handed to libgme is rewritten to address the track we matched, unambiguously: its
+//! track in hex (which libgme never adjusts), its file name without the characters libgme's
+//! parser treats specially. Left alone, libgme can read a different track than we did (it ends
+//! the file name at a `,` followed by a digit), including a decimal 0 in a 1-based set, which
+//! becomes track -1 and passes libgme's signed range check on its way to the emulator.
 
 use crate::file_name_of;
 
@@ -55,12 +60,15 @@ fn numbers_from_zero(playlists: &[String], want: &str) -> bool {
     playlists.iter().flat_map(|t| t.lines()).filter_map(parse_line).any(|e| e.decimal && e.track == 0 && file_name_of(&e.file).eq_ignore_ascii_case(want))
 }
 
-/// `line` with its track field replaced by `$XX` (hex, 0-based).
-fn with_hex_track(line: &str, track: u32) -> Option<String> {
+/// `line` for libgme, addressing raw track `track`: the file name stripped of the characters
+/// libgme's parser treats specially, and the track field as `$XX` (hex: always 0-based, never
+/// adjusted by libgme).
+fn libgme_line(line: &str, track: u32) -> Option<String> {
     let (file, rest) = line.split_once("::")?;
     let (kind, rest) = rest.split_once(',')?;
+    let file: String = file.trim().chars().filter(|c| !matches!(c, ',' | ':' | '\\')).collect();
     let tail = rest.split_once(',').map(|(_, t)| format!(",{t}")).unwrap_or_default();
-    Some(format!("{file}::{kind},${track:02X}{tail}"))
+    Some(format!("{file}::{},${track:02X}{tail}", kind.trim()))
 }
 
 /// Find the playlist line for `file` / `subsong` and return a one-entry playlist (keeping the
@@ -68,8 +76,7 @@ fn with_hex_track(line: &str, track: u32) -> Option<String> {
 pub fn playlist_for(playlists: &[String], file: &str, subsong: u32, zero_based_decimal: bool) -> Option<String> {
     let want = file_name_of(file);
     // libgme would read this set's decimal tracks as 1-based: detect 0-based numbering ourselves.
-    let detected = !zero_based_decimal && numbers_from_zero(playlists, want);
-    let zero_based_decimal = zero_based_decimal || detected;
+    let zero_based_decimal = zero_based_decimal || numbers_from_zero(playlists, want);
     for text in playlists {
         let mut header = String::new();
         for line in text.lines() {
@@ -81,8 +88,7 @@ pub fn playlist_for(playlists: &[String], file: &str, subsong: u32, zero_based_d
             }
             let Some(e) = parse_line(t) else { continue };
             if file_name_of(&e.file).eq_ignore_ascii_case(want) && e.raw_track(zero_based_decimal) == Some(subsong) {
-                let line = if detected && e.decimal { with_hex_track(t, subsong).unwrap_or_else(|| t.to_string()) } else { t.to_string() };
-                return Some(format!("{header}{line}\n"));
+                return Some(format!("{header}{}\n", libgme_line(t, subsong)?));
             }
         }
     }
@@ -121,15 +127,29 @@ mod tests {
         assert_eq!(playlist_for(&pl, "Game.gbs", 2, false).as_deref(), Some("Game.gbs::GBS,$02,Name,0:36,,10\n"));
         // KSS is 0-based already: lines pass through unchanged
         let pl = vec!["Game.kss::KSS,0,One,1:00,,5".to_string()];
-        assert_eq!(playlist_for(&pl, "Game.kss", 0, true).as_deref(), Some("Game.kss::KSS,0,One,1:00,,5\n"));
-        assert_eq!(with_hex_track("a.gbs::GBS,12", 11).as_deref(), Some("a.gbs::GBS,$0B"));
+        assert_eq!(playlist_for(&pl, "Game.kss", 0, true).as_deref(), Some("Game.kss::KSS,$00,One,1:00,,5\n"));
+        assert_eq!(libgme_line("a.gbs::GBS,12", 11).as_deref(), Some("a.gbs::GBS,$0B"));
     }
 
     #[test]
     fn finds_line_for_track() {
         let pl = vec!["#TITLE Game\nGame.nsf::NSF,1,One,1:00,,5\nGame.nsf::NSF,2,Two,2:00,,5\n".to_string()];
-        assert_eq!(playlist_for(&pl, "game.NSF", 1, false).as_deref(), Some("#TITLE Game\nGame.nsf::NSF,2,Two,2:00,,5\n"));
+        assert_eq!(playlist_for(&pl, "game.NSF", 1, false).as_deref(), Some("#TITLE Game\nGame.nsf::NSF,$01,Two,2:00,,5\n"));
         assert_eq!(playlist_for(&pl, "Game.nsf", 5, false), None);
         assert_eq!(playlist_for(&pl, "Other.nsf", 0, false), None);
+    }
+
+    #[test]
+    fn line_for_libgme_names_the_validated_track() {
+        // libgme would end this file name at ",0" and read decimal track 0, i.e. track -1: the
+        // line it gets addresses our track and nothing else.
+        let pl = vec!["a,0.nsf::NSF,3,Title,1:00,,5".to_string(), "b.nsf::NSF,99999999999,X".to_string()];
+        assert_eq!(playlist_for(&pl, "a,0.nsf", 2, false).as_deref(), Some("a0.nsf::NSF,$02,Title,1:00,,5\n"));
+        // The realistic case: a set named "..., <digit>..." (libgme would play track 2 - 1).
+        let pl = vec!["Final Fantasy 1, 2 (J).nsf::NSF,5,Title,1:00,,5".to_string()];
+        assert_eq!(playlist_for(&pl, "Final Fantasy 1, 2 (J).nsf", 4, false).as_deref(), Some("Final Fantasy 1 2 (J).nsf::NSF,$04,Title,1:00,,5\n"));
+        // Not a track number we can represent: no line (libgme would wrap it around).
+        assert_eq!(playlist_for(&pl, "b.nsf", 0, false), None);
+        assert_eq!(libgme_line("dir\\x:y.ay::AY, $1F ,T", 31).as_deref(), Some("dirxy.ay::AY,$1F,T"));
     }
 }

@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::{CacheManager, Entry, CHUNK_SIZE};
+use super::{CacheManager, Entry, State, CHUNK_SIZE};
 
 pub struct CacheReader {
     entry: Arc<Entry>,
@@ -41,9 +41,9 @@ impl CacheReader {
         self.entry.is_complete()
     }
 
-    /// Block until the first chunk (and with it size / content type) is available.
+    /// Block until the first bytes (and with them size / content type) are available.
     pub fn wait_header(&self) -> io::Result<()> {
-        self.ensure_chunk(0)
+        self.ensure_available(0).map(|_| ())
     }
 
     /// Bytes present so far (for progress reporting).
@@ -60,21 +60,21 @@ impl CacheReader {
         self.cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
-    /// Wait until chunk `c` is present (or known to be past the end of the file).
-    fn ensure_chunk(&self, c: u64) -> io::Result<()> {
+    /// Wait until bytes at `pos` are on disk; returns how many can be read there without
+    /// blocking (0 = end of the stream).
+    fn ensure_available(&self, pos: u64) -> io::Result<u64> {
         let stall = self.mgr.stall_timeout;
+        let c = pos / CHUNK_SIZE;
         let mut st = self.entry.state.lock();
+        if let Some(n) = available_at(&st, pos) {
+            return Ok(n);
+        }
         let mut since = Instant::now();
         let mut gen = st.progress_gen;
         let mut demanded = false;
         let result = loop {
-            if st.has(c) || st.complete {
-                break Ok(());
-            }
-            if let Some(t) = st.total {
-                if c * CHUNK_SIZE >= t {
-                    break Ok(());
-                }
+            if let Some(n) = available_at(&st, pos) {
+                break Ok(n);
             }
             if let Some(f) = &st.fatal {
                 break Err(io::Error::other(format!("stream failed: {f}")));
@@ -102,7 +102,9 @@ impl CacheReader {
                 let why = st.last_error.clone().unwrap_or_else(|| "no data".into());
                 break Err(io::Error::new(io::ErrorKind::TimedOut, format!("stream stalled for {}s ({why})", stall.as_secs())));
             }
+            st.waiting += 1;
             self.entry.cond.wait_for(&mut st, Duration::from_millis(100));
+            st.waiting -= 1;
         };
         if demanded {
             st.demand.retain(|&d| d != c);
@@ -128,17 +130,11 @@ impl Read for CacheReader {
             return Ok(0);
         }
         self.entry.read_hint.store(self.pos, Ordering::Relaxed);
-        let c = self.pos / CHUNK_SIZE;
-        self.ensure_chunk(c)?;
-        let total = self.entry.total();
-        if let Some(t) = total {
-            if self.pos >= t {
-                return Ok(0);
-            }
+        let avail = self.ensure_available(self.pos)?;
+        if avail == 0 {
+            return Ok(0);
         }
-        let chunk_end = (c + 1) * CHUNK_SIZE;
-        let end = total.map_or(chunk_end, |t| t.min(chunk_end));
-        let n = (buf.len() as u64).min(end - self.pos) as usize;
+        let n = (buf.len() as u64).min(avail) as usize;
         let got = self.entry.read_at(&mut buf[..n], self.pos)?;
         self.pos += got as u64;
         Ok(got)
@@ -152,7 +148,7 @@ impl Seek for CacheReader {
             SeekFrom::Current(d) => self.pos as i64 + d,
             SeekFrom::End(d) => {
                 if self.entry.total().is_none() {
-                    self.ensure_chunk(0)?;
+                    self.ensure_available(0)?;
                 }
                 let t = self.entry.total().ok_or_else(|| io::Error::other("length unknown"))?;
                 t as i64 + d
@@ -172,5 +168,25 @@ impl symphonia::core::io::MediaSource for CacheReader {
     }
     fn byte_len(&self) -> Option<u64> {
         self.entry.total()
+    }
+}
+
+/// Bytes readable at `pos` without waiting: `Some(0)` at/after the end, `None` if the data isn't
+/// on disk yet. Within the chunk being downloaded, the prefix already written counts.
+fn available_at(st: &State, pos: u64) -> Option<u64> {
+    if let Some(t) = st.total {
+        if pos >= t {
+            return Some(0);
+        }
+    }
+    let c = pos / CHUNK_SIZE;
+    let chunk_end = (c + 1) * CHUNK_SIZE;
+    let end = st.total.map_or(chunk_end, |t| t.min(chunk_end));
+    if st.complete || st.has(c) {
+        return Some(end - pos);
+    }
+    match st.partial {
+        Some((pc, filled)) if pc == c && c * CHUNK_SIZE + filled > pos => Some(c * CHUNK_SIZE + filled - pos),
+        _ => None,
     }
 }

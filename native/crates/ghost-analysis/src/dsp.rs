@@ -153,7 +153,12 @@ impl BandMap {
     /// Fill `out` with band powers. No allocation.
     #[inline]
     pub fn apply(&self, power: &[f32], out: &mut [f32]) {
+        const EPS: f32 = 1e-20;
         let last = power.len() - 1;
+        // Log power of bins `cj - 1 ..= cj + 2`: neighbouring narrow bands share bins, so
+        // compute each logarithm once (the values are the same either way).
+        let mut cj = usize::MAX;
+        let mut lp = [0.0f32; 4];
         for (b, o) in out.iter_mut().enumerate().take(self.bands()) {
             let c = self.narrow[b];
             if c >= 0.0 {
@@ -161,11 +166,15 @@ impl BandMap {
                 // continuous in frequency, so a gliding tone's peak glides across the bands.
                 let j = (c.floor() as usize).clamp(1, last - 2);
                 let t = c - j as f32;
-                const EPS: f32 = 1e-20;
-                let p0 = (power[j - 1] + EPS).ln();
-                let p1 = (power[j] + EPS).ln();
-                let p2 = (power[j + 1] + EPS).ln();
-                let p3 = (power[j + 2] + EPS).ln();
+                if j != cj {
+                    lp = if j == cj.wrapping_add(1) {
+                        [lp[1], lp[2], lp[3], (power[j + 2] + EPS).ln()]
+                    } else {
+                        [(power[j - 1] + EPS).ln(), (power[j] + EPS).ln(), (power[j + 1] + EPS).ln(), (power[j + 2] + EPS).ln()]
+                    };
+                    cj = j;
+                }
+                let [p0, p1, p2, p3] = lp;
                 let y = 0.5
                     * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (3.0 * (p1 - p2) + p3 - p0) * t * t * t);
                 // A tone halfway between bins really is ~1.4 dB above both (Hann scalloping);

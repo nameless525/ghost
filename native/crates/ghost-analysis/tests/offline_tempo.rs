@@ -179,6 +179,37 @@ fn degenerate_inputs_do_not_panic() {
 }
 
 #[test]
+fn unusual_sample_rates_do_not_panic() {
+    // Below ~5.6 kHz the 2.5–12 kHz brightness band is empty; that used to panic (bad slice).
+    for rate in [1_000u32, 4_000, 5_000, 5_512, 8_000, 11_025, 192_000, 384_000] {
+        let x: Vec<f32> = (0..rate as usize * 8).map(|i| 0.3 * (i as f32 * 0.07).sin() * if i % 4000 < 400 { 1.0 } else { 0.3 }).collect();
+        let a = analyze(&to_stereo(&x), 2, rate);
+        assert_eq!(a.energy.len(), ghost_analysis::ENERGY_POINTS, "{rate} Hz");
+        // (Below ~3.4 kHz the BS.1770 shelf filter is above Nyquist: no loudness, as in ebur128.)
+        assert!(rate < 4_000 || a.integrated_lufs.is_some(), "{rate} Hz");
+    }
+}
+
+#[test]
+fn non_finite_samples_do_not_erase_loudness() {
+    // One bad sample used to poison the loudness filters: no LUFS, LRA, energy curve or
+    // intensity for the rest of the track (and one inf removed the true peak).
+    let (mono, _) = kick_track(128.0, 30.0, 0.5);
+    let clean = analyze(&to_stereo(&mono), 2, SR);
+    let mut dirty = to_stereo(&mono);
+    dirty[1001] = f32::NAN;
+    dirty[50_000] = f32::INFINITY;
+    dirty[90_001] = f32::NEG_INFINITY;
+    let a = analyze(&dirty, 2, SR);
+    let (lc, la) = (clean.integrated_lufs.unwrap(), a.integrated_lufs.expect("integrated loudness"));
+    assert!((lc - la).abs() < 0.05, "{lc} vs {la}");
+    assert!(a.loudness_range.is_some() && a.true_peak_db.is_some() && a.intensity.is_some());
+    let diff = a.energy.iter().zip(&clean.energy).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+    assert!(diff < 0.05, "energy curve differs by {diff}");
+    assert!((a.bpm.unwrap() - clean.bpm.unwrap()).abs() < 0.01);
+}
+
+#[test]
 fn downbeat_phase_follows_the_accent() {
     // 120 BPM, accented kick every 4th beat starting at beat 2 (0-based), soft hats otherwise.
     let bpm = 120.0;

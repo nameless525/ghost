@@ -22,7 +22,13 @@ use crate::util::{db_to_lin, epoch_us};
 use crate::voice::{self, Bus, Continuation, Voice, VoiceShared};
 use crate::{DeviceInfo, EngineEvent, NormalizationMode, PlaybackState, PositionInfo, SourceSpec, TrackInfo, TrackLoad};
 
+/// Device enumeration cadence without change notifications (and the idle loop's longest sleep).
 const DEVICE_POLL: Duration = Duration::from_millis(1500);
+/// Safety-net enumeration cadence when CoreAudio change notifications are active.
+const DEVICE_POLL_WATCHED: Duration = Duration::from_secs(30);
+/// After a command, keep the housekeeping cadence fast this long (voices the mixer drops come
+/// back through its garbage queue shortly after).
+const BUSY_AFTER_CMD: Duration = Duration::from_secs(2);
 const SEEK_BUFFERING_AFTER: Duration = Duration::from_millis(250);
 const PROVISIONAL_GAIN_DB: f32 = -4.0;
 const LOUDNESS_RAMP_SEC: f32 = 2.0;
@@ -62,6 +68,8 @@ pub struct Shared {
     pub analysis: Arc<AnalysisShared>,
     voices: Mutex<VecDeque<VoiceEntry>>,
     pub devices: Mutex<Vec<DeviceInfo>>,
+    /// `devices` holds a real enumeration (possibly empty), so callers needn't enumerate.
+    pub devices_polled: AtomicBool,
     pub transport_playing: AtomicBool,
     pub rate: AtomicU32,
     pub device_name: Mutex<String>,
@@ -78,6 +86,7 @@ impl Shared {
             analysis: Arc::new(AnalysisShared::default()),
             voices: Mutex::new(VecDeque::with_capacity(64)),
             devices: Mutex::new(Vec::new()),
+            devices_polled: AtomicBool::new(false),
             transport_playing: AtomicBool::new(false),
             rate: AtomicU32::new(0),
             device_name: Mutex::new(String::new()),
@@ -189,6 +198,13 @@ pub struct Controller {
     device_err: Arc<AtomicU32>,
     known_devices: Vec<DeviceInfo>,
     last_poll: Instant,
+    /// Device-change notifications (wake-ups) and the generation last enumerated.
+    dev_rx: Receiver<()>,
+    /// Kept so `dev_rx` never disconnects (a disconnected channel is always ready in `select!`).
+    _dev_tx: Sender<()>,
+    dev_gen: u64,
+    dev_watched: bool,
+    last_cmd: Instant,
     last_open_error: Option<String>,
 
     current: Option<Track>,
@@ -233,6 +249,11 @@ impl Controller {
         let (cache_tx, cache_rx) = crossbeam_channel::unbounded();
         init.cache.subscribe(cache_tx);
         let (loud_tx, loud_rx) = crossbeam_channel::unbounded();
+        let (dev_tx, dev_rx) = crossbeam_channel::bounded(1);
+        let dev_watched = matches!(init.mode, OutputMode::Device) && output::device_watch::watching();
+        if dev_watched {
+            output::device_watch::subscribe(dev_tx.clone());
+        }
         Self {
             cache: init.cache,
             events: init.events,
@@ -253,7 +274,12 @@ impl Controller {
             selected_device: None,
             device_err: Arc::new(AtomicU32::new(0)),
             known_devices: Vec::new(),
-            last_poll: Instant::now() - DEVICE_POLL,
+            last_poll: Instant::now().checked_sub(DEVICE_POLL_WATCHED).unwrap_or_else(Instant::now),
+            dev_rx,
+            _dev_tx: dev_tx,
+            dev_gen: output::device_watch::generation(),
+            dev_watched,
+            last_cmd: Instant::now(),
             last_open_error: None,
             current: None,
             next: None,
@@ -288,8 +314,12 @@ impl Controller {
             select! {
                 recv(self.cmd_rx) -> c => match c {
                     Ok(Cmd::Shutdown) | Err(_) => break,
-                    Ok(c) => self.handle(c),
+                    Ok(c) => {
+                        self.last_cmd = Instant::now();
+                        self.handle(c);
+                    }
                 },
+                recv(self.dev_rx) -> _ => {},
                 recv(self.worker_rx) -> w => if let Ok(w) = w { self.on_worker(w) },
                 recv(self.cache_rx) -> e => if let Ok(e) = e { self.on_cache(e) },
                 recv(self.loud_rx) -> l => if let Ok(l) = l { self.on_loudness(l) },
@@ -307,16 +337,19 @@ impl Controller {
         let _ = self.tap_tx.send(TapMsg::Shutdown);
     }
 
-    /// Housekeeping cadence (commands always wake the loop at once): mixer events and buffering
-    /// checks matter while audio runs; paused, only freed voices trickle back; idle, only device
-    /// polling (every 1.5 s) remains.
+    /// Housekeeping cadence (commands and device changes always wake the loop at once): mixer
+    /// events and buffering checks matter while audio runs; right after a command, voices the
+    /// mixer let go trickle back; otherwise (paused, stopped, idle) nothing happens until the
+    /// next command, so the loop only wakes for device-error checks.
     fn poll_interval(&self) -> Duration {
         if self.preview.is_some() || (self.playing && self.current.is_some()) {
-            Duration::from_millis(10)
-        } else if self.current.is_some() || !self.voices.is_empty() {
+            // Only UI-facing events wait on this (gapless / crossfade / underrun handling all
+            // happen in the mixer and workers); 20 ms is below anything visible.
+            Duration::from_millis(20)
+        } else if self.last_cmd.elapsed() < BUSY_AFTER_CMD {
             Duration::from_millis(50)
         } else {
-            Duration::from_millis(100)
+            DEVICE_POLL
         }
     }
 
@@ -682,6 +715,9 @@ impl Controller {
     // ---------------------------------------------------------------- commands
 
     fn handle(&mut self, cmd: Cmd) {
+        if matches!(cmd, Cmd::SetCurrent { .. } | Cmd::Play | Cmd::Seek(_) | Cmd::Preview { .. } | Cmd::SetNext(_)) {
+            let _ = self.tap_tx.send(TapMsg::Wake);
+        }
         match cmd {
             Cmd::SetCurrent { track, start_ms, autoplay } => self.set_current(track, start_ms, autoplay),
             Cmd::SetNext(t) => self.set_next(t),
@@ -1084,9 +1120,11 @@ impl Controller {
         self.measuring.remove(&l.id);
         let mut changed = false;
         for t in [&mut self.current, &mut self.next].into_iter().flatten() {
-            if t.load.id == l.id && l.lufs.is_some() {
-                t.measured_lufs = l.lufs;
-                changed = true;
+            if t.load.id == l.id {
+                // NaN = measured but failed: keeps the provisional gain and stops re-measuring
+                // (a full decode) on every later trigger.
+                t.measured_lufs = Some(l.lufs.unwrap_or(f32::NAN));
+                changed |= l.lufs.is_some();
             }
         }
         if changed {
@@ -1111,10 +1149,20 @@ impl Controller {
             self.rebuild_output();
             return;
         }
-        if self.last_poll.elapsed() < DEVICE_POLL {
+        let gen = output::device_watch::generation();
+        let every = if self.dev_watched { DEVICE_POLL_WATCHED } else { DEVICE_POLL };
+        if gen == self.dev_gen && self.last_poll.elapsed() < every && !matches!(self.out, Out::None) {
             return;
         }
-        self.last_poll = Instant::now();
+        if matches!(self.out, Out::None) && self.last_poll.elapsed() < DEVICE_POLL {
+            return;
+        }
+        let notified = gen != self.dev_gen;
+        self.dev_gen = gen;
+        // After a change notification, look once more shortly after (CoreAudio may notify before
+        // every property has settled).
+        let now = Instant::now();
+        self.last_poll = if notified { now.checked_sub(every - Duration::from_millis(500)).unwrap_or(now) } else { now };
         let devices = output::list_devices();
         let changed = devices.len() != self.known_devices.len()
             || devices.iter().zip(&self.known_devices).any(|(a, b)| a.id != b.id || a.name != b.name || a.is_default != b.is_default);
@@ -1123,6 +1171,7 @@ impl Controller {
             *self.shared.devices.lock() = devices.clone();
             self.emit(EngineEvent::Devices(devices.clone()));
         }
+        self.shared.devices_polled.store(true, Ordering::Release);
         let current_id = match &self.out {
             Out::Device(s) => Some(s.device_id.clone()),
             _ => None,

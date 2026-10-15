@@ -33,6 +33,11 @@ impl Http {
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(15)))
             .max_redirects(10)
+            // Keep idle connections (and with them TCP + TLS setup) for the next request: the
+            // next range of the same stream, or the next track from the same host a minute later.
+            // Pooled connections are checked for liveness before reuse.
+            .max_idle_age(Duration::from_secs(90))
+            .max_idle_connections_per_host(4)
             .build();
         Self { agent: ureq::Agent::new_with_config(config), user_agent: user_agent.to_string() }
     }

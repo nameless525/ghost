@@ -260,7 +260,7 @@ impl ShmReader {
     pub fn open(path: &Path) -> io::Result<ShmReader> {
         let file = OpenOptions::new().read(true).open(path)?;
         let len = file.metadata()?.len();
-        if len < PAYLOAD_END as u64 {
+        if len < FILE_LEN as u64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("analysis region too small ({len} bytes)"),

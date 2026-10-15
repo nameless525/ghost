@@ -43,7 +43,13 @@ pub struct WorkerParams {
 
 pub fn spawn(p: WorkerParams) {
     let shared = p.shared.clone();
-    let h = spawn_named("ghost-decode", move || run(p));
+    let (sh, ev) = (p.shared.clone(), p.events.clone());
+    let h = spawn_named("ghost-decode", move || {
+        // Decoders parse untrusted data; a panic must end in an error event, not a silent stall.
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(p))).is_err() {
+            fail(&sh, &ev, "decoder crashed (malformed stream)".into());
+        }
+    });
     *shared.thread.lock() = Some(h.thread().clone());
 }
 
@@ -346,37 +352,50 @@ fn run(p: WorkerParams) {
     }
 }
 
-/// Decode a whole source at its native rate, downmixed to at most 2 channels (analysis jobs).
+/// Longest stretch of a source the offline analysis decodes (a safety net against sources that
+/// never end; memory no longer grows with length, see `decode_chunks`).
+const MAX_ANALYSIS_SEC: u64 = 3 * 3600;
+
+/// Decode a whole source at its native rate, downmixed to at most 2 channels, in chunks
+/// (analysis jobs): `start(channels, rate)` makes the sink, `push` feeds it each chunk, so no
+/// whole-track buffer is held (a 6-minute track used to need ~130 MB, a 1-hour one ~1.3 GB).
 /// Looping formats play as `loops` would (Endless counts as the Album default), so the analysis
 /// matches what is heard.
-pub fn decode_all(
+pub fn decode_chunks<S>(
     spec: &SourceSpec,
     cache: &Arc<CacheManager>,
     cancel: Arc<std::sync::atomic::AtomicBool>,
     loops: (crate::LoopMode, u32, f32),
-) -> Result<(Vec<f32>, usize, u32), String> {
+    start: impl FnOnce(usize, u32) -> S,
+    mut push: impl FnMut(&mut S, &[f32]),
+) -> Result<S, String> {
     let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true };
     let raw = source::open(spec, &ctx).map_err(|e| e.message)?;
     let settings = Arc::new(LoopSettings::fixed(LoopSettings::finite(loops)));
     let mut src = LoopStage::new(raw, settings);
     let ch = src.channels().max(1);
     let rate = src.sample_rate();
-    let out_ch = ch.min(2);
-    let mut out = Vec::with_capacity(src.duration().map(|d| d as usize * out_ch).unwrap_or(rate as usize * 240 * out_ch).min(1 << 28));
+    let mut sink = start(ch.min(2), rate);
+    let max_frames = MAX_ANALYSIS_SEC * rate.max(1) as u64;
     let mut buf = vec![0.0f32; 4096 * ch];
+    let mut stereo: Vec<f32> = Vec::with_capacity(4096 * 2);
+    let mut frames = 0u64;
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Err("canceled".into());
         }
         let n = src.read(&mut buf).map_err(|e| e.message)?;
-        if n == 0 {
+        if n == 0 || frames >= max_frames {
             break;
         }
+        frames += n as u64;
         if ch <= 2 {
-            out.extend_from_slice(&buf[..n * ch]);
+            push(&mut sink, &buf[..n * ch]);
         } else {
-            source::to_stereo(&buf[..n * ch], ch, &mut out);
+            stereo.clear();
+            source::to_stereo(&buf[..n * ch], ch, &mut stereo);
+            push(&mut sink, &stereo);
         }
     }
-    Ok((out, out_ch, rate))
+    Ok(sink)
 }

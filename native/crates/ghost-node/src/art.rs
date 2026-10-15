@@ -3,6 +3,12 @@
 //! Work runs on a small dedicated pool (`ghost-art-N`, 2–3 threads), never on the JS thread or
 //! libuv's pool (which `fs` and DNS share). The pool starts lazily on the first call, so loading
 //! this addon in the renderer preload (for `AnalysisReader`) starts nothing.
+//!
+//! The JS thread does no per-byte work for the input: the pool reads the caller's Buffer in place
+//! through a napi reference (held until the promise settles; callers must not mutate or transfer
+//! it meanwhile, which `art-protocol.ts` never does), and a passthrough result hands that same
+//! Buffer back as `data`. Only re-encoded output is copied into a V8-owned Buffer (Electron's
+//! memory cage forbids external buffers).
 
 // Only reachable through the generated N-API registrations, which test builds don't have.
 #![cfg_attr(test, allow(dead_code))]
@@ -117,17 +123,27 @@ fn options(o: Option<JsArtOptions>) -> Result<ArtOptions> {
 }
 
 /// `{ data: Buffer, width, height, mime, accent: [r, g, b] | null, passthrough, sourceWidth,
-/// sourceHeight, sourceMime, ms }`
-pub struct JsArtResult(ArtOutput);
+/// sourceHeight, sourceMime, ms }`. Carries the input Buffer back to the JS thread: it is the
+/// `data` of a passthrough result, and released there (not via a hop from the pool) otherwise.
+pub struct JsArtResult {
+    out: ArtOutput,
+    input: Buffer,
+}
 
 impl ToNapiValue for JsArtResult {
     unsafe fn to_napi_value(raw_env: napi::sys::napi_env, val: Self) -> Result<napi::sys::napi_value> {
         let env = Env::from_raw(raw_env);
-        let a = val.0;
+        let JsArtResult { out: a, input } = val;
         let mut o = Object::new(&env)?;
-        // A V8-owned copy: Electron's memory cage forbids external buffers.
-        let data = BufferSlice::copy_from(&env, &a.data)?;
-        o.set("data", &data)?;
+        if a.passthrough {
+            // Unchanged bytes: the caller's own Buffer object, no copy.
+            o.set("data", input)?;
+        } else {
+            drop(input);
+            // A V8-owned copy: Electron's memory cage forbids external buffers.
+            let data = BufferSlice::copy_from(&env, &a.data)?;
+            o.set("data", &data)?;
+        }
         o.set("width", a.width)?;
         o.set("height", a.height)?;
         o.set("mime", a.mime)?;
@@ -142,28 +158,37 @@ impl ToNapiValue for JsArtResult {
     }
 }
 
-/// Accent result: `[r, g, b]` or `null`.
-pub struct JsAccent(Option<[u8; 3]>);
+/// Accent result: `[r, g, b]` or `null`. Carries the input Buffer so its reference is released
+/// on the JS thread.
+pub struct JsAccent(Option<[u8; 3]>, Buffer);
 
 impl ToNapiValue for JsAccent {
     unsafe fn to_napi_value(env: napi::sys::napi_env, val: Self) -> Result<napi::sys::napi_value> {
-        unsafe { ToNapiValue::to_napi_value(env, val.0.map(|c| c.map(u32::from).to_vec())) }
+        let JsAccent(accent, input) = val;
+        drop(input);
+        unsafe { ToNapiValue::to_napi_value(env, accent.map(|c| c.map(u32::from).to_vec())) }
     }
 }
 
 /// `processArt(bytes, opts?)`: decode (JPEG / PNG / WebP / GIF first frame), downscale to fit
 /// `maxWidth`/`maxHeight` (never upscales), re-encode (JPEG, or PNG for transparent images) and
 /// pick the accent colour, on the art pool. Rejects for corrupt or unsupported input.
+/// `bytes` is read in place on the pool: don't mutate it until the promise settles.
 #[napi(ts_return_type = "Promise<ArtResult>")]
-pub fn process_art<'env>(env: &'env Env, bytes: BufferSlice, opts: Option<JsArtOptions>) -> Result<Object<'env>> {
+pub fn process_art<'env>(env: &'env Env, bytes: Buffer, opts: Option<JsArtOptions>) -> Result<Object<'env>> {
     let opts = options(opts)?;
-    let input = bytes.to_vec();
-    spawn(env, move || ghost_art::process(&input, &opts).map(JsArtResult).map_err(|e| e.to_string()))
+    spawn(env, move || {
+        let r = ghost_art::process_keeping_input(&bytes, &opts);
+        r.map(|out| JsArtResult { out, input: bytes }).map_err(|e| e.to_string())
+    })
 }
 
 /// `artAccent(bytes)`: accent colour `[r, g, b]` (or `null` for greyscale art), on the art pool.
+/// `bytes` is read in place: don't mutate it until the promise settles.
 #[napi(ts_return_type = "Promise<[number, number, number] | null>")]
-pub fn art_accent<'env>(env: &'env Env, bytes: BufferSlice) -> Result<Object<'env>> {
-    let input = bytes.to_vec();
-    spawn(env, move || ghost_art::accent_of(&input).map(JsAccent).map_err(|e| e.to_string()))
+pub fn art_accent<'env>(env: &'env Env, bytes: Buffer) -> Result<Object<'env>> {
+    spawn(env, move || {
+        let r = ghost_art::accent_of(&bytes);
+        r.map(|a| JsAccent(a, bytes)).map_err(|e| e.to_string())
+    })
 }

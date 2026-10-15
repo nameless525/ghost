@@ -297,3 +297,61 @@ fn offline_readiness_waits_for_data() {
     assert!(m.is_active());
     assert!(!m.offline_ready(512), "only 100 frames buffered and not EOF");
 }
+
+/// Render cost of the RT path (perf audit): `cargo test --release -p ghost-engine --lib
+/// mixer_render_cost -- --ignored --nocapture`. Prints ns per frame and an output hash, so
+/// optimisations can be checked for bit-exactness.
+#[test]
+#[ignore]
+#[cfg(unix)]
+fn mixer_render_cost() {
+    let frames = RATE as usize * 30;
+    let mut x = 0x2545F4914F6CDD1Du64;
+    let sig: Vec<f32> = (0..frames)
+        .flat_map(|i| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let n = ((x >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.3;
+            let t = i as f32 / RATE as f32;
+            let v = (2.0 * std::f32::consts::PI * 220.0 * t).sin() * 0.45 + (2.0 * std::f32::consts::PI * 3_150.0 * t).sin() * 0.2 + n;
+            [v, v * 0.9 - n * 0.5]
+        })
+        .collect();
+    for (name, gain, overlay) in [("plain", 1.0f32, false), ("boosted +12 dB (limiting)", 3.98, false), ("overlay low-pass", 1.0, true), ("plain (again)", 1.0, false)] {
+        let (mut m, mut link, _) = mixer(false);
+        let mut v = voice(1, &sig, true);
+        v.gain = crate::dsp::Ramp::new(gain);
+        send(&mut link, MixerCmd::SetCurrent { voice: Some(v), fade_frames: 0 });
+        send(&mut link, MixerCmd::SetOverlay(overlay));
+        send(&mut link, MixerCmd::Play);
+        let mut out = vec![0.0f32; frames * 2];
+        let cpu = || {
+            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            // SAFETY: valid out-pointer.
+            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+            std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+        };
+        // Thread CPU time, best 1024-frame block of each 32 (robust against a busy machine).
+        let mut best = std::time::Duration::MAX;
+        let mut sum = std::time::Duration::ZERO;
+        let mut done = 0;
+        while done + 32 * 1024 <= frames {
+            let t = cpu();
+            for b in 0..32 {
+                let at = done + b * 1024;
+                m.render(&mut out[at * 2..(at + 1024) * 2], 0);
+            }
+            let dt = cpu() - t;
+            best = best.min(dt / 32);
+            sum += dt;
+            while link.garbage.pop().is_ok() {}
+            while link.events.pop().is_ok() {}
+            done += 32 * 1024;
+        }
+        let dt = best * (done / 1024) as u32;
+        let _ = sum;
+        let h = out[..done * 2].iter().fold(0xcbf29ce484222325u64, |h, s| (h ^ s.to_bits() as u64).wrapping_mul(0x100000001b3));
+        println!("{name:>28}: {:6.1} ns/frame ({:5.1} µs per 1024-frame callback) hash {h:016x}", dt.as_nanos() as f64 / done as f64, dt.as_secs_f64() * 1e6 / (done / 1024) as f64);
+    }
+}

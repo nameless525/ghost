@@ -104,9 +104,47 @@ fn vgm_timing(data: &[u8]) -> Option<(u64, Option<u64>)> {
     let total = u32_at(0x18);
     let loop_offset = u32_at(0x1C);
     let loop_samples = u32_at(0x20);
+    if total == 0 {
+        // A header without a length (broken rip): fall back to the default play time rather
+        // than a zero-length track.
+        return None;
+    }
     let looped = (loop_offset != 0 && loop_samples > 0 && loop_samples <= total).then_some(loop_samples);
     Some((total, looped))
 }
+
+/// Largest FM chip clock accepted in a VGM header. Real chips run at 3.58 (YM2413) and 7.67 MHz
+/// (YM2612); the cycle-accurate YM2612 core's cost grows with the clock.
+const MAX_VGM_FM_CLOCK: u32 = 16_000_000;
+
+/// Smallest SN76489 clock accepted in a VGM header (real chips: 3-4 MHz). Below ~30 Hz libgme's
+/// frames are zero clocks long and produce no samples.
+const MIN_VGM_PSG_CLOCK: u32 = 10_000;
+
+/// Reject VGM headers whose chip clocks libgme can't emulate: a YM2612 clock that is zero after
+/// the flag bits are masked off makes the Nuked core's resampler divide by zero (a hang on ARM,
+/// SIGFPE on x86), an absurd one runs it hundreds of times slower than realtime, and a PSG clock
+/// of a few Hz stalls the emulator. (0 means "chip absent", or the default clock for the PSG.)
+fn check_vgm_clocks(data: &[u8]) -> Result<(), SourceError> {
+    if data.len() < 0x30 || &data[..4] != b"Vgm " {
+        return Ok(());
+    }
+    let psg = u32::from_le_bytes(data[0x0C..0x10].try_into().unwrap());
+    if psg != 0 && psg < MIN_VGM_PSG_CLOCK {
+        return Err(SourceError::new(format!("vgm: implausible SN76489 clock ({psg} Hz)")));
+    }
+    for (offset, chip) in [(0x10, "YM2413"), (0x2C, "YM2612")] {
+        let raw = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+        let clock = raw & 0x3FFF_FFFF; // bit 30: dual chip, bit 31: chip variant
+        if raw != 0 && !(1_000_000..=MAX_VGM_FM_CLOCK).contains(&clock) {
+            return Err(SourceError::new(format!("vgm: implausible {chip} clock ({clock} Hz)")));
+        }
+    }
+    Ok(())
+}
+
+/// Furthest frame `gme_seek_samples` can reach (`2 * frame` must fit a C int).
+const MAX_SEEK_FRAME: u64 = (c_int::MAX / 2) as u64;
 
 pub struct GmeSource {
     emu: *mut MusicEmu,
@@ -135,6 +173,11 @@ impl Drop for GmeSource {
 impl GmeSource {
     pub fn open(data: Vec<u8>, name: &str, opts: &OpenOptions) -> Result<Self, SourceError> {
         let data = gunzip_if_needed(data)?;
+        check_vgm_clocks(&data)?;
+        // Some cores fill process-wide tables on first use without synchronisation (emu2413's
+        // `initializeTables`, Nuked OPN2's chip type): build emulators one at a time.
+        static OPEN: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+        let _one_at_a_time = OPEN.lock();
         let ext = extension_of(name).unwrap_or_default();
         let ext_c = CString::new(ext.as_str()).unwrap_or_default();
         let mut ty = unsafe { gme_identify_extension(ext_c.as_ptr()) };
@@ -263,9 +306,13 @@ impl AudioSource for GmeSource {
         if frames == 0 {
             return Ok(0);
         }
-        self.buf.resize(frames * 2, 0);
-        check(unsafe { gme_play(self.emu, (frames * 2) as c_int, self.buf.as_mut_ptr()) }, "libgme")?;
-        for (o, &s) in out.iter_mut().zip(&self.buf) {
+        // Grow-only scratch buffer: reads of varying size don't re-zero it each time.
+        if self.buf.len() < frames * 2 {
+            self.buf.resize(frames * 2, 0);
+        }
+        let buf = &mut self.buf[..frames * 2];
+        check(unsafe { gme_play(self.emu, buf.len() as c_int, buf.as_mut_ptr()) }, "libgme")?;
+        for (o, &s) in out.iter_mut().zip(buf.iter()) {
             *o = s as f32 * (1.0 / 32768.0);
         }
         self.pos += frames as u64;
@@ -283,8 +330,10 @@ impl AudioSource for GmeSource {
                 return Ok(frame);
             }
         }
-        let samples = (frame * 2).min(i32::MAX as u64) as c_int;
-        check(unsafe { gme_seek_samples(self.emu, samples) }, "libgme seek")?;
+        // libgme counts positions in (stereo) samples in a C int: clamp to the last whole frame
+        // it can address (an odd count would swap the channels).
+        let frame = frame.min(MAX_SEEK_FRAME);
+        check(unsafe { gme_seek_samples(self.emu, (frame * 2) as c_int) }, "libgme seek")?;
         self.apply_mask();
         self.pos = frame;
         self.ended = unsafe { gme_track_ended(self.emu) } != 0;

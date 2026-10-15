@@ -112,7 +112,7 @@ fn spawn_pump(rx: Receiver<EngineEvent>, sink: Arc<Mutex<Option<EventTsfn>>>) ->
 #[napi]
 impl GhostEngine {
     /// `new GhostEngine({ cacheDir, cacheMaxBytes, userAgent })`
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(config: JsEngineConfig) -> Result<Self> {
         let cfg = EngineConfig {
             cache_dir: config.cache_dir.into(),
@@ -155,7 +155,7 @@ impl GhostEngine {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_current(&self, track: JsEngineTrack, start_ms: f64, autoplay: bool) -> Result<()> {
         let track = track_from_js(track)?;
         if let Some(e) = self.live() {
@@ -164,7 +164,7 @@ impl GhostEngine {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_next(&self, track: Option<JsEngineTrack>) -> Result<()> {
         let track = track.map(track_from_js).transpose()?;
         if let Some(e) = self.live() {
@@ -173,49 +173,49 @@ impl GhostEngine {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn play(&self) {
         if let Some(e) = self.live() {
             e.play();
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn pause(&self) {
         if let Some(e) = self.live() {
             e.pause();
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn stop(&self) {
         if let Some(e) = self.live() {
             e.stop();
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn seek(&self, ms_: f64) {
         if let Some(e) = self.live() {
             e.seek(ms(ms_));
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_volume_db(&self, db: f64) {
         if let Some(e) = self.live() {
             e.set_volume_db(if db.is_finite() { db as f32 } else { -120.0 });
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_muted(&self, muted: bool) {
         if let Some(e) = self.live() {
             e.set_muted(muted);
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_loop(&self, mode: String, count: u32, fade_sec: f64) -> Result<()> {
         let mode = loop_mode(&mode)?;
         if let Some(e) = self.live() {
@@ -224,7 +224,7 @@ impl GhostEngine {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_normalization(&self, enabled: bool, target_lufs: f64, mode: String) -> Result<()> {
         let mode = normalization_mode(&mode)?;
         if let Some(e) = self.live() {
@@ -233,28 +233,28 @@ impl GhostEngine {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_gapless(&self, enabled: bool) {
         if let Some(e) = self.live() {
             e.set_gapless(enabled);
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_crossfade(&self, sec: f64) {
         if let Some(e) = self.live() {
             e.set_crossfade(sec.max(0.0) as f32);
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_overlay_filter(&self, active: bool) {
         if let Some(e) = self.live() {
             e.set_overlay_filter(active);
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn preview(&self, track: JsEngineTrack, start_ms: f64) -> Result<()> {
         let track = track_from_js(track)?;
         if let Some(e) = self.live() {
@@ -263,7 +263,7 @@ impl GhostEngine {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn stop_preview(&self) {
         if let Some(e) = self.live() {
             e.stop_preview();
@@ -271,7 +271,7 @@ impl GhostEngine {
     }
 
     /// `{ id, positionMs, durationMs, playing, at }`
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn position(&self) -> JsEnginePosition {
         match self.live() {
             Some(e) => e.position().into(),
@@ -285,7 +285,7 @@ impl GhostEngine {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn list_devices(&self) -> Vec<JsDeviceInfo> {
         match self.live() {
             Some(e) => e.list_devices().into_iter().map(Into::into).collect(),
@@ -293,14 +293,14 @@ impl GhostEngine {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_device(&self, id: Option<String>) {
         if let Some(e) = self.live() {
             e.set_device(id);
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn analyze(&self, id: String, source: JsEngineSource) -> Result<()> {
         let source = source_from_js(source)?;
         if let Some(e) = self.live() {
@@ -312,7 +312,7 @@ impl GhostEngine {
     /// `download(downloadId, source, destPath, tags, options?)`. Chip / tracker / game-engine
     /// formats and clips render to FLAC by default (`options.renderFlac` overrides); the `done`
     /// event's `path` is the final file (its extension may have become `.flac`).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn download(
         &self,
         download_id: String,
@@ -332,7 +332,7 @@ impl GhostEngine {
     /// `inspectArchive(source): Promise<{ entries: { path, size }[], playlists: { path, text }[] }>`.
     /// Fetches the archive through the stream cache on a background thread (never the JS thread
     /// or libuv's pool); rejects if it isn't a zip / 7z or can't be fetched.
-    #[napi(ts_return_type = "Promise<ArchiveListing>")]
+    #[napi(ts_return_type = "Promise<ArchiveListing>", catch_unwind)]
     pub fn inspect_archive<'env>(&self, env: &'env Env, source: JsEngineSource) -> Result<Object<'env>> {
         type Resolver = Box<dyn FnOnce(Env) -> Result<JsArchiveListing> + Send>;
         let source = source_from_js(source)?;
@@ -344,9 +344,11 @@ impl GhostEngine {
         let engine = self.engine.clone();
         std::thread::Builder::new()
             .name("ghost-node-inspect".into())
-            .spawn(move || match engine.inspect_archive(&source) {
-                Ok(listing) => deferred.resolve(Box::new(move |_| Ok(JsArchiveListing::from(listing)))),
-                Err(e) => deferred.reject(generic(e.0)),
+            // A panic (hostile archive) must still settle the promise.
+            .spawn(move || match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.inspect_archive(&source))) {
+                Ok(Ok(listing)) => deferred.resolve(Box::new(move |_| Ok(JsArchiveListing::from(listing)))),
+                Ok(Err(e)) => deferred.reject(generic(e.0)),
+                Err(_) => deferred.reject(generic("archive inspection crashed (malformed archive?)")),
             })
             .map_err(|e| generic(format!("failed to spawn inspect thread: {e}")))?;
         Ok(promise)
@@ -354,7 +356,7 @@ impl GhostEngine {
 
     /// Mute chip voices on the playing tracks: bit `i` mutes voice `i` (see the `trackInfo`
     /// event's `voiceNames`). Persists across tracks until changed; 0 unmutes everything.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_voice_mask(&self, mask: f64) {
         if let Some(e) = self.live() {
             let m = if mask.is_finite() && mask > 0.0 { mask.min(u64::MAX as f64) as u64 } else { 0 };
@@ -363,12 +365,12 @@ impl GhostEngine {
     }
 
     /// Mutable voices of the current track (0 when unsupported or idle).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn voice_count(&self) -> u32 {
         self.live().map_or(0, |e| e.voice_count())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn cancel_download(&self, download_id: String) {
         if let Some(e) = self.live() {
             e.cancel_download(&download_id);
@@ -379,20 +381,20 @@ impl GhostEngine {
     /// callbackMaxUs, callbackAvgUs, callbackPeriodUs, lowWaterMs, lowWaterEvents,
     /// threads: [{ name, count, cpuMs }] }`. Counters accumulate until read with `reset = true`.
     /// Cheap (atomics plus one kernel query per engine thread); callable from any JS thread.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn stats(&self, reset: Option<bool>) -> JsEngineStats {
         self.engine.stats(reset.unwrap_or(false)).into()
     }
 
     /// Absolute path of the memory-mapped analysis region (pass to `AnalysisReader`).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn analysis_shm_name(&self) -> String {
         self.shm_path.clone()
     }
 
     /// Register the event callback (replaces any previous one). Events emitted before the
     /// first registration are queued and delivered on registration.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn on_event(&self, cb: Function<JsEvent, ()>) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Ok(());
@@ -412,7 +414,7 @@ impl GhostEngine {
 
     /// Stop playback and all engine threads, delete the analysis region, release the event
     /// callback. Idempotent; every other method becomes a no-op afterwards.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn shutdown(&self) {
         self.close();
     }
@@ -512,7 +514,7 @@ pub struct AnalysisReader {
 #[napi]
 impl AnalysisReader {
     /// Map the region at `path` read-only. Throws if it doesn't exist (yet).
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(path: String) -> Result<Self> {
         let reader = ShmReader::open(std::path::Path::new(&path))
             .map_err(|e| generic(format!("cannot open analysis region {path}: {e}")))?;
@@ -521,14 +523,14 @@ impl AnalysisReader {
 
     /// True while a publisher is updating the region. False means it was orphaned (engine shut
     /// down or replaced): drop this reader and construct a new one on the same path.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn alive(&mut self) -> bool {
         self.reader.alive()
     }
 
     /// Latest consistent frame, or `null` when nothing is playing, the region is invalid, or
     /// the publisher has stopped updating it.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn read(&mut self) -> Option<JsAnalysisFrame> {
         let mut snap = Box::<Snapshot>::default();
         if self.reader.read(&mut snap) {
@@ -543,7 +545,7 @@ impl AnalysisReader {
 #[napi]
 impl GhostEngine {
     /// Test hook: push one of every `EngineEvent` variant through the real JS delivery path.
-    #[napi(js_name = "_debugEmitAllEvents")]
+    #[napi(js_name = "_debugEmitAllEvents", catch_unwind)]
     pub fn debug_emit_all_events(&self) {
         use ghost_engine::*;
         let analysis = OfflineAnalysis {

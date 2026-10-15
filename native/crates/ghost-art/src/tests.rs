@@ -1,3 +1,4 @@
+use std::io::Cursor;
 use std::time::Instant;
 
 use super::*;
@@ -314,4 +315,219 @@ fn fit_math() {
     assert_eq!(fit(10_000, 3, 128, 0), (128, 1));
     assert_eq!(OutFormat::parse("JPG"), Some(OutFormat::Jpeg));
     assert_eq!(OutFormat::parse("tiff"), None);
+}
+
+/// A GIF whose logical screen is `w`×`h` (no frames). Decoders accept the header alone.
+fn gif_header(w: u16, h: u16) -> Vec<u8> {
+    let mut v = b"GIF89a".to_vec();
+    v.extend_from_slice(&w.to_le_bytes());
+    v.extend_from_slice(&h.to_le_bytes());
+    v.extend_from_slice(&[0, 0, 0, 0x3b]);
+    v
+}
+
+#[test]
+fn zero_sized_images_error_instead_of_panicking() {
+    // Header-only fast path (no accent, passthrough allowed): used to reach `fit(2000, 0, ..)`,
+    // whose `clamp(1, 0)` panics.
+    let o = ArtOptions { max_width: 1600, passthrough_max_bytes: 1_000_000, ..Default::default() };
+    for (w, h) in [(2000u16, 0u16), (0, 2000), (0, 0)] {
+        let r = std::panic::catch_unwind(|| process(&gif_header(w, h), &o));
+        let r = r.unwrap_or_else(|_| panic!("{w}x{h} GIF panicked"));
+        assert!(r.is_err(), "{w}x{h} GIF must be rejected: {r:?}");
+        assert!(accent_of(&gif_header(w, h)).is_err());
+    }
+    assert_eq!(fit(2000, 0, 1600, 0), (1600, 1));
+    assert_eq!(fit(0, 0, 1600, 1600), (0, 0));
+}
+
+/// PNG header (IHDR) claiming `w`×`h` RGBA8 followed by a tiny IDAT: a decompression bomb's shape.
+fn png_claiming(w: u32, h: u32) -> Vec<u8> {
+    fn chunk(out: &mut Vec<u8>, ty: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let start = out.len();
+        out.extend_from_slice(ty);
+        out.extend_from_slice(data);
+        // CRC-32 (PNG polynomial).
+        let mut crc = !0u32;
+        for &b in &out[start..] {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { 0xedb8_8320 ^ (crc >> 1) } else { crc >> 1 };
+            }
+        }
+        out.extend_from_slice(&(!crc).to_be_bytes());
+    }
+    let mut v = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&w.to_be_bytes());
+    ihdr.extend_from_slice(&h.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    chunk(&mut v, b"IHDR", &ihdr);
+    chunk(&mut v, b"IDAT", &[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    chunk(&mut v, b"IEND", &[]);
+    v
+}
+
+#[test]
+fn absurd_dimensions_are_rejected_before_allocating() {
+    // 16000² RGBA would be a 1 GiB buffer per call (3 GiB with three pool threads) from a 70-byte
+    // file. Anything over MAX_PIXELS is refused from the header.
+    for (w, h) in [(16_000u32, 16_000u32), (12_000, 12_000), (16_384, 8193)] {
+        let src = png_claiming(w, h);
+        for accent in [false, true] {
+            let r = process(&src, &ArtOptions { max_width: 512, accent, ..Default::default() });
+            assert_eq!(r.unwrap_err(), ArtError::TooLarge(w, h), "{w}x{h}");
+        }
+        assert_eq!(accent_of(&src).unwrap_err(), ArtError::TooLarge(w, h));
+    }
+    // Over MAX_DIMENSION on one side.
+    assert!(process(&png_claiming(20_000, 10), &opts(512)).is_err());
+    // A plausible big scan's header is accepted (the truncated body then fails to decode).
+    assert!(matches!(process(&png_claiming(6000, 6000), &opts(512)), Err(ArtError::Decode(_))));
+}
+
+/// Minimal ICC header: 128 bytes with the data colour space at 16..20 and the `acsp` signature.
+fn icc(space: &[u8; 4]) -> Vec<u8> {
+    let mut v = vec![0u8; 128];
+    v[..4].copy_from_slice(&128u32.to_be_bytes());
+    v[12..16].copy_from_slice(b"mntr");
+    v[16..20].copy_from_slice(space);
+    v[20..24].copy_from_slice(b"XYZ ");
+    v[36..40].copy_from_slice(b"acsp");
+    v
+}
+
+fn icc_of(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut d = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().unwrap().into_decoder().unwrap();
+    d.icc_profile().unwrap()
+}
+
+#[test]
+fn only_matching_icc_profiles_are_copied() {
+    let (w, h) = (600u32, 400u32);
+    let rgb = photo(w, h);
+    let with_icc = |p: &[u8]| {
+        let mut out = Vec::new();
+        let mut e = jpeg_encoder::Encoder::new(&mut out, 90);
+        e.add_icc_profile(p).unwrap();
+        e.encode(&rgb, w as u16, h as u16, jpeg_encoder::ColorType::Rgb).unwrap();
+        out
+    };
+    // An RGB profile survives the re-encode.
+    let out = process(&with_icc(&icc(b"RGB ")), &opts(300)).unwrap();
+    assert_eq!(icc_of(&out.data).as_deref().map(|p| &p[16..20]), Some(&b"RGB "[..]));
+    // A CMYK profile (print scans; often 0.5–3 MB) describes the source, not our RGB output: it
+    // used to be copied into every resized variant, even 128 px thumbnails.
+    let out = process(&with_icc(&icc(b"CMYK")), &opts(300)).unwrap();
+    assert_eq!(icc_of(&out.data), None);
+}
+
+fn exif_orientation(o: u8) -> [u8; 26] {
+    [b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, o, 0, 0, 0, 0, 0, 0, 0]
+}
+
+#[test]
+fn every_exif_orientation_matches_rotate_then_resize() {
+    // Asymmetric content: a gradient plus a bright block near the top-left corner.
+    let (w, h) = (360u32, 240u32);
+    let src_rgb = fill(w, h, |x, y| if x < 60 && y < 40 { [250, 250, 250] } else { [(x * 255 / w) as u8, (y * 255 / h) as u8, 90] });
+    for o in 1..=8u8 {
+        let src = jpeg(w, h, &src_rgb, Some(&exif_orientation(o)));
+        // Reference: decode, orient the full image, then resize (the old order).
+        let mut reference = image::load_from_memory(&src).unwrap();
+        let orientation = Orientation::from_exif(o).unwrap();
+        reference.apply_orientation(orientation);
+        let (rw, rh) = (reference.width(), reference.height());
+        let (tw, th) = fit(rw, rh, 120, 0);
+        let reference = reference.resize_exact(tw, th, image::imageops::FilterType::Lanczos3).to_rgb8();
+
+        let out = process(&src, &opts(120)).unwrap();
+        assert_eq!((out.width, out.height), (tw, th), "orientation {o}");
+        let got = redecode(&out.data).to_rgb8();
+        assert_eq!(got.dimensions(), (tw, th), "orientation {o}");
+        let se: f64 = got.as_raw().iter().zip(reference.as_raw()).map(|(a, b)| (*a as f64 - *b as f64).powi(2)).sum();
+        let psnr = 10.0 * (255.0f64.powi(2) / (se / got.as_raw().len() as f64)).log10();
+        assert!(psnr > 30.0, "orientation {o}: PSNR {psnr:.1} dB against rotate-then-resize");
+
+        // Passthrough (with accent): reports the display size, keeps the bytes (and the EXIF tag).
+        let pt = process(&src, &ArtOptions { max_width: 1600, passthrough_max_bytes: 1 << 20, accent: true, ..Default::default() }).unwrap();
+        assert!(pt.passthrough);
+        assert_eq!((pt.width, pt.height), (rw, rh), "orientation {o}");
+        assert_eq!(pt.data, src);
+    }
+}
+
+#[test]
+fn greyscale_stays_one_channel() {
+    let (w, h) = (500u32, 300u32);
+    let grey: Vec<u8> = (0..w * h).map(|i| ((i % w) * 255 / w) as u8).collect();
+    let mut src = Vec::new();
+    jpeg_encoder::Encoder::new(&mut src, 90).encode(&grey, w as u16, h as u16, jpeg_encoder::ColorType::Luma).unwrap();
+    let out = process(&src, &ArtOptions { max_width: 250, accent: true, ..Default::default() }).unwrap();
+    assert_eq!((out.width, out.height, out.mime), (250, 150, "image/jpeg"));
+    assert_eq!(out.accent, None);
+    let back = redecode(&out.data);
+    assert_eq!(back.color(), image::ColorType::L8, "a greyscale JPEG comes back greyscale");
+    let l = back.to_luma8();
+    assert!((l.get_pixel(125, 75)[0] as i32 - 127).abs() < 6, "{}", l.get_pixel(125, 75)[0]);
+    assert!(l.get_pixel(240, 75)[0] > 235 && l.get_pixel(5, 75)[0] < 15);
+    assert_eq!(accent_of(&src).unwrap(), None);
+    // Lossless outputs too.
+    let png = process(&src, &ArtOptions { max_width: 250, format: OutFormat::Png, ..Default::default() }).unwrap();
+    assert_eq!(redecode(&png.data).color(), image::ColorType::L8);
+    let webp = process(&src, &ArtOptions { max_width: 250, format: OutFormat::Webp, ..Default::default() }).unwrap();
+    assert_eq!(redecode(&webp.data).to_luma8().get_pixel(240, 75)[0], png_pixel(&png.data, 240, 75));
+}
+
+fn png_pixel(bytes: &[u8], x: u32, y: u32) -> u8 {
+    redecode(bytes).to_luma8().get_pixel(x, y)[0]
+}
+
+#[test]
+fn opaque_rgba_is_encoded_without_an_rgb_copy() {
+    // GIFs always decode to RGBA; an opaque one must come out as an ordinary JPEG / RGB PNG.
+    let (w, h) = (300u32, 200u32);
+    let frame = image::RgbaImage::from_fn(w, h, |x, _| if x < w / 2 { image::Rgba([220, 30, 40, 255]) } else { image::Rgba([30, 60, 220, 255]) });
+    let mut gif = Vec::new();
+    image::codecs::gif::GifEncoder::new(&mut gif).encode_frame(image::Frame::new(frame)).unwrap();
+    let out = process(&gif, &ArtOptions { max_width: 150, accent: true, ..Default::default() }).unwrap();
+    assert_eq!((out.width, out.height, out.mime), (150, 100, "image/jpeg"));
+    let back = redecode(&out.data).to_rgb8();
+    let close = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).all(|(x, y)| (*x as i32 - y as i32).abs() < 12);
+    assert!(close(back.get_pixel(20, 50).0, [220, 30, 40]), "{:?}", back.get_pixel(20, 50));
+    assert!(close(back.get_pixel(130, 50).0, [30, 60, 220]), "{:?}", back.get_pixel(130, 50));
+    assert!(out.accent.is_some());
+    let png = process(&gif, &ArtOptions { max_width: 150, format: OutFormat::Png, ..Default::default() }).unwrap();
+    let back = redecode(&png.data);
+    assert_eq!(back.color(), image::ColorType::Rgb8, "no constant alpha channel in the PNG");
+    assert_eq!(back.to_rgb8().get_pixel(20, 50).0, [220, 30, 40]);
+}
+
+#[test]
+fn keeping_input_skips_the_passthrough_copy() {
+    let src = jpeg(300, 300, &photo(300, 300), None);
+    let o = ArtOptions { max_width: 1600, passthrough_max_bytes: 1 << 20, accent: true, ..Default::default() };
+    let a = process(&src, &o).unwrap();
+    let b = process_keeping_input(&src, &o).unwrap();
+    assert!(a.passthrough && b.passthrough);
+    assert_eq!(a.data, src);
+    assert!(b.data.is_empty());
+    assert_eq!((a.width, a.height, a.accent), (b.width, b.height, b.accent));
+    // Not a passthrough: identical outputs.
+    let o = ArtOptions { max_width: 128, ..o };
+    assert_eq!(process(&src, &o).unwrap().data, process_keeping_input(&src, &o).unwrap().data);
+}
+
+#[test]
+fn accent_of_agrees_with_process_on_large_images() {
+    // accent_of used to box-filter large images to ≤ 512 px and then to 48 px, so the colour it
+    // stored for older cache entries could differ from what processArt computes for new ones.
+    let (w, h) = (1200u32, 900u32);
+    let img = fill(w, h, |x, y| if (x / 37 + y / 23) % 5 == 0 { [40 + (x % 200) as u8, 180, 60] } else { [20 + (y % 30) as u8, 16, 24] });
+    let src = jpeg(w, h, &img, None);
+    let p = process(&src, &ArtOptions { max_width: 1600, passthrough_max_bytes: 1 << 22, accent: true, ..Default::default() }).unwrap();
+    assert!(p.passthrough);
+    assert!(p.accent.is_some());
+    assert_eq!(accent_of(&src).unwrap(), p.accent);
 }

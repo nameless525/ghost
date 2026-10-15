@@ -20,6 +20,7 @@
 
 pub mod archive_cache;
 pub mod clip;
+pub mod frag;
 pub mod loop_stage;
 pub mod symphonia_src;
 

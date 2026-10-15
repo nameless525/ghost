@@ -33,8 +33,12 @@ struct LibStreamfile {
     close: Option<unsafe extern "C" fn(*mut LibStreamfile)>,
 }
 
+const SFMT_PCM16: c_int = 1;
 const SFMT_PCM24: c_int = 2;
+const SFMT_PCM32: c_int = 3;
 const SFMT_FLOAT: c_int = 4;
+/// Largest output sample vgmstream writes (float / 32-bit PCM).
+const MAX_SAMPLE_SIZE: usize = 4;
 
 #[repr(C)]
 struct Format {
@@ -377,14 +381,23 @@ unsafe extern "C" fn sf_close(libsf: *mut LibStreamfile) {
     }
     let b = unsafe { Box::from_raw(libsf) };
     if !b.user_data.is_null() {
-        drop(unsafe { Box::from_raw(b.user_data as *mut Sf) });
+        // Drops the caller's ByteSource (e.g. a cache reader): a panic must not unwind into C.
+        let sf = unsafe { Box::from_raw(b.user_data as *mut Sf) };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(sf)));
     }
 }
 
 // ------------------------------------------------------------------------------------------- source
 
+/// vgmstream's Relic codec runs its FFT in file-scope static scratch variables
+/// (`coding/libs/relic_mixfft.c`): two Relic streams decoding at once on different threads would
+/// corrupt each other (and index arrays with the other's indices). Their decoding is serialised.
+static RELIC: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 pub struct VgmstreamSource {
     lib: *mut Lib,
+    /// Holds [`RELIC`] while decoding.
+    relic: bool,
     rate: u32,
     channels: usize,
     sfmt: c_int,
@@ -437,6 +450,10 @@ impl VgmstreamSource {
             return Err(SourceError::new(format!("vgmstream: unsupported or corrupt file ({})", file_name_of(name))));
         }
         let f = unsafe { &*(*lib).format };
+        if !matches!(f.sample_format, SFMT_PCM16 | SFMT_PCM24 | SFMT_PCM32 | SFMT_FLOAT) || !(1..=MAX_SAMPLE_SIZE as c_int).contains(&f.sample_size) {
+            unsafe { libvgmstream_free(lib) };
+            return Err(SourceError::new(format!("vgmstream: unsupported sample format {}", f.sample_format)));
+        }
         let rate = f.sample_rate.max(1) as u32;
         let channels = f.channels.max(1) as usize;
         let stream = f.stream_samples.max(0) as u64;
@@ -458,8 +475,9 @@ impl VgmstreamSource {
             return Err(SourceError::new(format!("sub-song {} out of range (file has {})", opts.subsong.unwrap(), f.subsong_count.max(1))));
         }
         let duration = Some(loop_info.map_or(stream, |l| stream.max(l.end)));
-        let sample_size = f.sample_size.clamp(1, 4) as usize;
-        Ok(Self { lib, rate, channels, sfmt: f.sample_format, sample_size, pos: 0, loop_info, duration, meta, raw: Vec::new(), ended: false })
+        let sample_size = f.sample_size as usize;
+        let relic = c_text(&f.codec_name).is_some_and(|c| c.starts_with("Relic"));
+        Ok(Self { lib, relic, rate, channels, sfmt: f.sample_format, sample_size, pos: 0, loop_info, duration, meta, raw: Vec::new(), ended: false })
     }
 }
 
@@ -481,7 +499,12 @@ impl AudioSource for VgmstreamSource {
             return Ok(0);
         }
         let ss = self.sample_size;
-        self.raw.resize(frames * ch * ss, 0);
+        // Room for the widest sample vgmstream writes, whatever the format claims (grow-only, so
+        // reads of varying size don't re-zero it each time).
+        if self.raw.len() < frames * ch * MAX_SAMPLE_SIZE {
+            self.raw.resize(frames * ch * MAX_SAMPLE_SIZE, 0);
+        }
+        let _relic = self.relic.then(|| RELIC.lock());
         let r = unsafe { libvgmstream_fill(self.lib, self.raw.as_mut_ptr() as *mut c_void, frames as c_int) };
         if r < 0 {
             return Err(SourceError::new("vgmstream: decode error"));
@@ -532,6 +555,8 @@ impl AudioSource for VgmstreamSource {
                 return Ok(frame);
             }
         }
+        let frame = frame.min(i64::MAX as u64);
+        let _relic = self.relic.then(|| RELIC.lock());
         unsafe { libvgmstream_seek(self.lib, frame as i64) };
         self.pos = frame;
         self.ended = self.loop_info.is_none() && self.duration.is_some_and(|d| frame >= d);

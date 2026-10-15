@@ -132,3 +132,29 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod perf {
+    use super::*;
+
+    /// `cargo test --release -p ghost-engine --lib resampler_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn resampler_cost() {
+        for (from, to) in [(44_100u32, 48_000u32), (32_000, 48_000), (48_000, 44_100), (96_000, 48_000)] {
+            let n = from as usize * 20;
+            let input: Vec<f32> = (0..n).flat_map(|i| {
+                let v = (i as f32 * 0.0123).sin() * 0.5;
+                [v, -v]
+            }).collect();
+            let mut rs = StreamResampler::new(from, to).unwrap();
+            let mut out = Vec::with_capacity(n * 3);
+            let t = std::time::Instant::now();
+            for c in input.chunks(2048) {
+                rs.push(c, &mut out).unwrap();
+            }
+            let dt = t.elapsed();
+            println!("{from} -> {to}: {:.2} ms CPU per second of audio ({:.0}x realtime)", dt.as_secs_f64() * 1000.0 / 20.0, 20.0 / dt.as_secs_f64());
+        }
+    }
+}

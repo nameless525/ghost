@@ -5,8 +5,9 @@ version.workspace = true
 
 [dependencies]
 realfft = "3.5"
-ebur128 = "0.1"
 rayon = "1.10"
 
 [dev-dependencies]
+# Reference implementation: offline loudness reproduces it bit for bit (src/offline/loudness.rs).
+ebur128 = "0.1"
 symphonia = { version = "0.5", features = ["all"] }
