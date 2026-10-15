@@ -4,7 +4,8 @@
 
 ### Open source
 - GHOST is now on GitHub under the MIT License. Every release comes with installers for macOS (Apple Silicon), Windows and Linux.
-- The Windows and Linux builds are new and haven't had much real-world testing yet. If something doesn't work, please [open an issue](https://github.com/nameless525/ghost/issues).
+- Every release runs the full test suite on macOS, Windows and Linux first, then opens each freshly built app on its own system to check that its window, catalog and audio engine come up. Nothing is published unless all of that passes.
+- The Windows and Linux builds are new and haven't had much real-world use yet. If something doesn't work, please [open an issue](https://github.com/nameless525/ghost/issues).
 - The requests GHOST sends to music sites now name the project page, so site owners can see what it is.
 
 ### Fixes
