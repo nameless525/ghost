@@ -3,7 +3,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  /* clip (not hidden): never scrolled by focusing something in the sliding drawer */
+  overflow: clip;
   border-radius: var(--radius-lg);
 }
 
@@ -207,7 +208,7 @@
 }
 .np-drawer__clip {
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
 }
 .np-drawer__inner {
   padding-top: 12px;

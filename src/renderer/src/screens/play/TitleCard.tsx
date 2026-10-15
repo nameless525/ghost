@@ -71,7 +71,7 @@ export const TitleCard = forwardRef<HTMLDivElement, TitleCardProps>(function Tit
             </div>
           )}
           <div className="pl-card__stats" data-fade>
-            <IntensityBadge value={intensity} size="lg" glow />
+            {intensity != null && <IntensityBadge value={intensity} size="lg" glow />}
             {bpm ? <span className="pl-stat tnum">{Math.round(bpm)} BPM</span> : null}
             {durationMs ? <span className="pl-stat tnum">{formatTime(durationMs)}</span> : null}
             {track.source && <SourceBadge source={track.source} />}

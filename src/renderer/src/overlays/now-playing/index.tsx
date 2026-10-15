@@ -1,7 +1,9 @@
 // Now playing: GHOST's music controller (the osu! Now Playing overlay analogue). Drops from the
 // toolbar chip on any screen: the game's art with cover + marquee title over it, a live seek bar
 // along the art's bottom edge, transport, shuffle/repeat/loop toggles, like/playlist/download,
-// volume, and a drawer that slides out with the queue (Up next · History · All).
+// volume, and a drawer that slides out with the queue (Up next · History · All, searchable).
+// While open, the keys its tooltips show act on the playing track: Q queue, L like, M mute,
+// Mod+S add to playlist, Mod+D download (over Browse they'd otherwise act on its selection).
 import { Compass, LibraryBig, ListMusic, Maximize2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { ghost } from '../../ghost'
@@ -13,23 +15,28 @@ import type { OverlayProps } from '../../shell/types'
 import { sfx } from '../../sound'
 import { livePositionMs, usePlayer } from '../../state/player'
 import { useUI } from '../../state/ui'
-import { Button, CoverArt, GhostMark, IconButton, IntensityBadge, Marquee, ProgressBar, Slider, SourceBadge, formatTime } from '../../ui'
+import { Button, CoverArt, GhostMark, IconButton, Marquee, ProgressBar, Slider, SourceBadge, formatTime } from '../../ui'
 import { cx } from '../../ui/util'
 import {
   AddToPlaylistButton,
   DownloadButton,
+  downloadCurrent,
+  Intensity,
   LikeButton,
   LiveTime,
   LoopModeButton,
   NextButton,
+  openPlaylistMenu,
   PlayPauseButton,
   PrevButton,
   RepeatButton,
   ShuffleButton,
+  toggleLikeCurrent,
   VolumeControl
 } from './controls'
 import { QueueList } from './QueueList'
 import { useCurrentTrack } from './store'
+import { volume } from './volume'
 import './now-playing.css'
 
 /** Props: open, phase ('entering' | 'open' | 'exiting' | 'closed'), close(), hue. */
@@ -53,8 +60,10 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
   const upNext = usePlayer((s) => Math.max(0, s.queue.length - s.queueIndex - 1))
   const bpm = usePlayer((s) => s.currentAnalysis?.bpm ?? s.current?.analysis?.bpm ?? null)
   const intensity = usePlayer((s) => s.currentAnalysis?.intensity ?? s.current?.analysis?.intensity ?? null)
+  const onPlay = useUI((s) => s.screen === 'play')
   const [drawer, setDrawer] = useState(false)
   const glow = useRef<HTMLDivElement>(null)
+  const root = useRef<HTMLDivElement>(null)
   const playing = status === 'playing'
 
   usePulse(glow, { mode: 'var', enabled: open && playing })
@@ -63,7 +72,12 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
     sfx.play(drawer ? 'collapse' : 'expand')
     setDrawer((d) => !d)
   }
-  useKeybinding('Q', toggleDrawer, { repeat: false, enabled: open && !!current })
+  const live = open && !!current
+  useKeybinding('Q', toggleDrawer, { repeat: false, enabled: live })
+  useKeybinding('L', () => toggleLikeCurrent(), { repeat: false, enabled: live })
+  useKeybinding('M', () => volume.toggleMute(), { repeat: false, enabled: live })
+  useKeybinding('Mod+S', () => openPlaylistMenu(usePlayer.getState().current, root.current?.querySelector('.np-actions .np-add-playlist')), { repeat: false, enabled: live })
+  useKeybinding('Mod+D', () => downloadCurrent(usePlayer.getState().current), { repeat: false, enabled: live })
 
   if (!current) {
     return (
@@ -104,7 +118,7 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
   const ctx = context && context.title.trim().toLowerCase() !== album.trim().toLowerCase() ? context.title : null
 
   return (
-    <div className="np-root">
+    <div ref={root} className="np-root">
       <section className="np-hero">
         <div className="np-hero__art" aria-hidden>
           {art && <img key={art} src={art} alt="" decoding="async" draggable={false} />}
@@ -126,23 +140,26 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
               {sub}
             </Marquee>
             <div className="np-hero__chips">
-              <IntensityBadge value={intensity} size="sm" />
+              <Intensity value={intensity} size="sm" />
               {bpm ? <span className="np-chip tnum">{Math.round(bpm)} BPM</span> : null}
               {current.source && <SourceBadge source={current.source} />}
             </div>
           </div>
-          <IconButton
-            className="np-hero__open"
-            size="sm"
-            variant="subtle"
-            label="Open the player"
-            icon={<Maximize2 />}
-            sound="confirm"
-            onClick={() => {
-              close()
-              navigate('play')
-            }}
-          />
+          {/* on the Play screen already it only closed the panel */}
+          {!onPlay && (
+            <IconButton
+              className="np-hero__open"
+              size="sm"
+              variant="subtle"
+              label="Open the player"
+              icon={<Maximize2 />}
+              sound="confirm"
+              onClick={() => {
+                close()
+                navigate('play')
+              }}
+            />
+          )}
         </div>
         <div className="np-seek">
           {loading && <ProgressBar className="np-load" size="thin" caption progress={loading} waitKey={loading.wait} />}
@@ -188,7 +205,7 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
       <div className={cx('np-drawer', drawer && 'np-drawer--open')} aria-hidden={!drawer}>
         <div className="np-drawer__clip">
           <div className="np-drawer__inner" inert={!drawer || undefined}>
-            <QueueList active={open && drawer} compact fit={{ min: 230, max: Math.max(260, Math.min(460, window.innerHeight - 420)) }} />
+            <QueueList active={open && drawer} compact fit={{ min: 280, max: Math.max(300, Math.min(500, window.innerHeight - 420)) }} />
           </div>
         </div>
       </div>

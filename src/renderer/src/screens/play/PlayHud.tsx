@@ -7,11 +7,12 @@ import type { TrackView } from '@shared/types'
 import type { VisualizerMode } from '../../gfx/visualizers'
 import { goBack } from '../../shell/navigation'
 import { usePlayer } from '../../state/player'
-import { CoverArt, IconButton, IntensityBadge, SegmentedControl, ShearButton } from '../../ui'
+import { CoverArt, IconButton, Kbd, SegmentedControl, ShearButton } from '../../ui'
 import { cx } from '../../ui/util'
 import {
   AddToPlaylistButton,
   DownloadButton,
+  Intensity,
   LikeButton,
   LoopModeButton,
   NextButton,
@@ -44,7 +45,7 @@ export const MetaBlock = forwardRef<HTMLDivElement, { track: TrackView; intensit
           {track.gameName ?? track.albumTitle}
         </div>
         <div className="pl-meta__chips" data-meta-fade>
-          <IntensityBadge value={intensity} size="sm" />
+          <Intensity value={intensity} size="sm" />
           {bpm ? <span className="pl-stat pl-stat--sm tnum">{Math.round(bpm)} BPM</span> : null}
           <span className="pl-meta__album g-ellipsis">{track.albumTitle}</span>
         </div>
@@ -92,7 +93,7 @@ export function PlayHud({ track, intensity, bpm, queueOpen, onToggleQueue, activ
             <span className="pl-actions__sep" />
             <VolumeControl width={104} />
             <IconButton
-              label={queueOpen ? 'Hide queue' : 'Queue'}
+              label={queueOpen ? 'Hide queue' : 'Show queue'}
               shortcut="Q"
               active={queueOpen}
               sound={false}
@@ -119,7 +120,10 @@ export const PlayTopBar = forwardRef<HTMLDivElement, { mode: VisualizerMode; onM
         <ShearButton icon={<ChevronLeft />} label="Back" hint="Esc" size="sm" sound={false} onClick={() => goBack()} />
       </div>
       <div className="pl-top__vis">
-        <span className="pl-top__vis-label g-caps">Visualizer</span>
+        {/* the key cycles them, like Esc on the Back button */}
+        <span className="pl-top__vis-label g-caps">
+          Visualizer <Kbd combo="V" size="sm" />
+        </span>
         <SegmentedControl<VisualizerMode>
           value={mode}
           onChange={onMode}

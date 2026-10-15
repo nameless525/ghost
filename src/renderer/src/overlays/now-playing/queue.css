@@ -11,6 +11,25 @@
   gap: 8px;
   padding: 0 14px 0 16px;
 }
+/* search: a compact field above the tabs (it filters every tab) */
+.np-queue__search {
+  padding: 0 14px 10px 16px;
+}
+.np-queue__search .g-search {
+  --search-h: 34px;
+}
+.np-queue__search .g-search__icon {
+  width: 16px;
+  height: 16px;
+  margin: 0 7px 0 10px;
+}
+.np-queue__search .g-search__input {
+  font-size: var(--fs-sm);
+}
+.np-queue__search-key {
+  margin-right: 2px;
+  opacity: 0.8;
+}
 .np-queue__spacer {
   flex: 1;
 }
@@ -35,6 +54,14 @@
   padding: 6px 18px 6px;
   font-size: var(--fs-xs);
   color: var(--fg-3);
+}
+.np-queue__summary strong {
+  font-weight: var(--fw-semibold);
+  color: var(--fg-1);
+  font-variant-numeric: tabular-nums;
+}
+.np-queue__hint {
+  color: var(--fg-4);
 }
 .np-queue__now {
   position: relative;
@@ -83,6 +110,19 @@
   height: 22px;
   transform: skewX(var(--unshear));
 }
+.np-queue__empty strong {
+  overflow-wrap: anywhere;
+}
+.np-queue__empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.np-queue--compact .np-queue__empty {
+  padding: 20px 24px;
+}
 
 /* ---- rows ---- */
 .np-q-row {
@@ -127,6 +167,23 @@
     rgb(255 255 255 / 0.03);
 }
 .np-q-row--current .np-q-row__title {
+  color: var(--fg-0);
+}
+/* picked with ↑/↓ from the search field: Enter plays it */
+.np-q-row--picked {
+  background: rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 0 0 1.5px rgb(var(--accent-rgb) / 0.7);
+}
+.np-q-row--current.np-q-row--picked {
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 0 0 1.5px rgb(var(--accent-rgb) / 0.7);
+}
+/* search matches */
+.np-q-mark {
+  border-radius: 3px;
+  background: rgb(var(--accent-rgb) / 0.3);
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.2);
   color: var(--fg-0);
 }
 .np-q-row--dragging {
@@ -203,6 +260,10 @@
 }
 .np-q-row:hover .np-q-row__grip {
   opacity: 1;
+}
+/* no reordering among search results */
+.np-queue--searching .np-q-row__grip {
+  visibility: hidden;
 }
 
 /* ---- tiny equaliser ---- */

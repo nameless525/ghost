@@ -207,3 +207,9 @@
   text-align: center;
   pointer-events: none;
 }
+
+/* ---- intensity stars (wrapper for the tooltip) ---- */
+.np-intensity {
+  display: inline-flex;
+  flex: none;
+}

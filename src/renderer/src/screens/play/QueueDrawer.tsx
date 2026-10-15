@@ -1,6 +1,6 @@
 // Play screen queue drawer (Q): slides in from the right over the visualizer.
 import { ListMusic, X } from 'lucide-react'
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { tween } from '../../motion/tween'
 import { QueueList } from '../../overlays/now-playing/QueueList'
 import { IconButton, OverlayHeader } from '../../ui'
@@ -10,6 +10,7 @@ export function QueueDrawer({ open, onClose, drawerRef }: { open: boolean; onClo
   const openRef = useRef(open)
   openRef.current = open
   const first = useRef(true)
+  const [searching, setSearching] = useState(false)
 
   useLayoutEffect(() => {
     const n = el.current
@@ -54,11 +55,11 @@ export function QueueDrawer({ open, onClose, drawerRef }: { open: boolean; onClo
       <OverlayHeader
         icon={<ListMusic />}
         title="Queue"
-        description="Drag to reorder · Enter to jump · Del to remove"
-        actions={<IconButton label="Close" shortcut="Q" icon={<X />} sound="back" onClick={onClose} />}
+        description={searching ? 'Enter to play · Clear the search to reorder' : 'Click to play · Drag to reorder · Del to remove'}
+        actions={<IconButton label="Close queue" shortcut="Q" icon={<X />} sound="back" onClick={onClose} />}
       />
       <div className="pl-drawer__body">
-        <QueueList active={open} />
+        <QueueList active={open} onSearchingChange={setSearching} />
       </div>
     </aside>
   )

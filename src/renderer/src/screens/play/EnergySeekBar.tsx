@@ -213,7 +213,8 @@ export function EnergySeekBar({ active, className }: { active: boolean; classNam
             {loading.label}…{loading.detail ? <span className="pl-seek__loading-detail"> {loading.detail}</span> : null}
           </span>
         ) : !hasEnergy && duration ? (
-          <span className="pl-seek__analysing g-caps">Analysing…</span>
+          // the graph (and the highlights) arrive once the track is analysed, usually within seconds
+          <span className="pl-seek__analysing">Analysing the track…</span>
         ) : null}
         <LiveTime kind="remaining" active={active} className="pl-seek__remaining" />
       </div>
@@ -233,7 +234,7 @@ export function EnergySeekBar({ active, className }: { active: boolean; classNam
             sfx.play('tick', { volume: 0.6 })
             void ghost().player.seek(ms)
           }}
-          format={(ms) => (inKiai(ms) ? `${formatTime(ms)} · kiai` : formatTime(ms))}
+          format={(ms) => (inKiai(ms) ? `${formatTime(ms)} · high energy` : formatTime(ms))}
           wheelStep={0.015}
           background={graph}
           aria-label="Seek"

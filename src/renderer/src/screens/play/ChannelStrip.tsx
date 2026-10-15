@@ -10,6 +10,7 @@ import { stagger, tween } from '../../motion/tween'
 import { useKeybinding } from '../../shell/keys'
 import { sfx } from '../../sound'
 import { usePlayer } from '../../state/player'
+import { isMac } from '../../theme'
 import { Tooltip } from '../../ui'
 import { cx } from '../../ui/util'
 
@@ -19,6 +20,9 @@ export interface ChannelStripProps {
   /** On-screen confirmation for keyboard changes (the Play screen's OSD). */
   onAnnounce?: (o: { icon: ReactNode; label: string; value: string }) => void
 }
+
+/** "⌥-click" on macOS, "Alt+click" elsewhere. */
+const ALT_CLICK = isMac ? '⌥-click' : 'Alt+click'
 
 const allMask = (n: number) => (n >= 31 ? 0x7fffffff : (1 << n) - 1)
 const bit = (i: number) => 1 << i
@@ -117,7 +121,11 @@ export function ChannelStrip({ onAnnounce }: ChannelStripProps) {
               }}
               className="pl-ch__slot"
             >
-              <Tooltip content={isSolo ? 'Solo · ⌥-click to bring the others back' : off ? 'Muted · click to unmute, ⌥-click to solo' : 'Click to mute · ⌥-click to solo'} shortcut={i < MAX_KEYS ? String(i + 1) : undefined} side="top">
+              <Tooltip
+                content={isSolo ? `Solo · ${ALT_CLICK} to bring the others back` : off ? `Muted · click to unmute, ${ALT_CLICK} to solo` : `Click to mute · ${ALT_CLICK} to solo`}
+                shortcut={i < MAX_KEYS ? String(i + 1) : undefined}
+                side="top"
+              >
                 <button
                   type="button"
                   className={cx('pl-ch__pill', off && 'pl-ch__pill--off', isSolo && 'pl-ch__pill--solo')}

@@ -7,7 +7,8 @@
 //  · GPU visualizer (radial / skyline / scope; V cycles) with osu!-style kiai time
 //  · energy-graph seek bar, auto-hiding controls (2 s idle; the cursor hides too), queue drawer
 //  · chiptunes: a "Channels" strip of sound-chip voices (click mute, ⌥-click solo; 1–9 / ⌥1–9 / 0)
-//  · keys: Space · ←/→ ±5 s (Shift ±15 s) · ↑/↓ volume · L like · V visualizer · Q queue · M mute · Esc back
+//  · keys: Space · ←/→ ±5 s (Shift ±15 s) · ↑/↓ volume · L like · V visualizer · Q queue · M mute ·
+//    Mod+S add to playlist · Mod+D download · Esc back (closes the queue first)
 import { FastForward, Rewind } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { ghost } from '../../ghost'
@@ -16,7 +17,7 @@ import { trackArt } from '../../hooks'
 import { useIdle } from '../../hooks/useIdle'
 import { usePulse, useKiai } from '../../motion/hooks'
 import { stagger, tween } from '../../motion/tween'
-import { downloadCurrent, toggleLikeCurrent } from '../../overlays/now-playing/controls'
+import { downloadCurrent, openPlaylistMenu, toggleLikeCurrent } from '../../overlays/now-playing/controls'
 import { useCurrentTrack } from '../../overlays/now-playing/store'
 import { volume } from '../../overlays/now-playing/volume'
 import { useKeybinding } from '../../shell/keys'
@@ -27,7 +28,7 @@ import { sfx } from '../../sound'
 import { livePositionMs, usePlayer } from '../../state/player'
 import { updateSettings, useSettings } from '../../state/settings'
 import { DEFAULT_ACCENT, useUI } from '../../state/ui'
-import { CoverArt, formatTime } from '../../ui'
+import { CoverArt, Tooltip, formatTime } from '../../ui'
 import { cx, uiZoom } from '../../ui/util'
 import { EmptyState, ErrorNotice, FallbackBanner, Osd, PausePop, type OsdHandle } from './Feedback'
 import { PlayHud, PlayTopBar, VIS_ICONS } from './PlayHud'
@@ -44,7 +45,8 @@ const HOLD_MS = 1200
 /** The card (and its loading progress) stays at most this long for a slow start; the HUD's seek bar shows the rest. */
 const MAX_HOLD_MS = 8000
 const GLIDE_MS = 860
-const IDLE_MS = 2000
+/** Controls (and the cursor) hide after this long without input while playing. */
+const IDLE_MS = 3000
 
 /** Background treatment: Play shows the art far less blurred/dimmed than Browse. */
 const BG_CARD = { dim: 0.58, blur: 0.5 }
@@ -176,19 +178,23 @@ export default function PlayScreen(props: PlayScreenProps) {
   const geo = radialGeometry(size.w, size.h)
   const coverSize = coverSizeFor(size.w, size.h)
 
-  // the skyline stands on the HUD
+  // the skyline stands on the HUD, and on a chiptune's channel strip above it (its bars hid the
+  // strip's "Channels · All on" line)
+  const hasVoices = usePlayer((s) => !!s.voices?.names.length)
   useEffect(() => {
     const hud = root.current?.querySelector<HTMLElement>('.pl-hud')
     if (!hud) return
+    const strip = hud.querySelector<HTMLElement>('.pl-ch')
     const apply = () => {
-      stage.setBottomInset(hud.offsetHeight)
+      stage.setBottomInset(hud.offsetHeight + (strip ? strip.offsetHeight + 4 : 0))
       root.current?.style.setProperty('--hud-h', `${hud.offsetHeight}px`)
     }
     const ro = new ResizeObserver(apply)
     ro.observe(hud)
+    if (strip) ro.observe(strip)
     apply()
     return () => ro.disconnect()
-  }, [stage, !!current]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stage, !!current, hasVoices]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ------------------------------------------------------------------ HUD visibility helpers
   const hudParts = () => [top.current, row.current, seek.current].filter(Boolean) as HTMLElement[]
@@ -408,6 +414,11 @@ export default function PlayScreen(props: PlayScreenProps) {
   useKeybinding('Q', toggleQueue, { repeat: false })
   useKeybinding('M', () => volume.toggleMute(), { repeat: false })
   useKeybinding('Mod+D', () => downloadCurrent(usePlayer.getState().current), { repeat: false, enabled: hasTrack })
+  // the HUD's "Add to playlist" tooltip promised it; the menu opens above that button
+  useKeybinding('Mod+S', () => openPlaylistMenu(usePlayer.getState().current, root.current?.querySelector('.pl-actions .np-add-playlist')), {
+    repeat: false,
+    enabled: hasTrack
+  })
   useKeybinding('Escape', () => {
     if (queueOpen) {
       sfx.play('back', { volume: 0.6 })
@@ -462,21 +473,23 @@ export default function PlayScreen(props: PlayScreenProps) {
       <div className="pl-scrim" aria-hidden />
 
       {current && (
-        <div ref={disc} className="pl-disc" aria-hidden={!discShown}>
+        <div ref={disc} className={cx('pl-disc', discShown && 'pl-disc--on')} aria-hidden={!discShown}>
           <div className="pl-disc__pulse">
             <div ref={discGlow} className="pl-disc__glow" />
-            <button
-              type="button"
-              className="pl-disc__cover"
-              tabIndex={-1}
-              aria-label={playing ? 'Pause' : 'Play'}
-              onClick={() => {
-                sfx.play(playing ? 'toggleOff' : 'toggleOn', { volume: 0.6 })
-                void ghost().player.toggle()
-              }}
-            >
-              <CoverArt src={current.cover} size={geo.radius * 2} radius={geo.radius} hue={current.accent} ring={false} />
-            </button>
+            <Tooltip content={playing ? 'Pause' : 'Play'} shortcut="Space" disabled={!discShown}>
+              <button
+                type="button"
+                className="pl-disc__cover"
+                tabIndex={-1}
+                aria-label={playing ? 'Pause' : 'Play'}
+                onClick={() => {
+                  sfx.play(playing ? 'toggleOff' : 'toggleOn', { volume: 0.6 })
+                  void ghost().player.toggle()
+                }}
+              >
+                <CoverArt src={current.cover} size={geo.radius * 2} radius={geo.radius} hue={current.accent} ring={false} />
+              </button>
+            </Tooltip>
           </div>
         </div>
       )}

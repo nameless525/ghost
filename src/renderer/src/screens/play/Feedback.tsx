@@ -80,6 +80,7 @@ export function PausePop({ enabled }: { enabled: boolean }) {
 
 export function ErrorNotice({ message }: { message: string | null }) {
   const el = useRef<HTMLDivElement>(null)
+  const canSkip = usePlayer((s) => s.queueIndex >= 0 && (s.queueIndex < s.queue.length - 1 || s.repeat === 'all'))
   useEffect(() => {
     if (el.current) tween(el.current).set({ opacity: 0, y: 16, scale: 0.97 }).fadeIn(240, 'outQuad').moveToY(0, 520, 'outQuint').scaleTo(1, 520, 'outQuint')
   }, [])
@@ -91,11 +92,11 @@ export function ErrorNotice({ message }: { message: string | null }) {
       <div className="pl-error__title">Couldn’t play this track</div>
       <div className="pl-error__body">{message ?? 'Every source for it failed. It may be region-locked, removed, or the network is down.'}</div>
       <div className="pl-error__actions">
-        <Button variant="primary" icon={<SkipForward size={16} />} onClick={() => void ghost().player.next()}>
+        <Button variant={canSkip ? 'primary' : 'soft'} icon={<SkipForward size={16} />} disabled={!canSkip} onClick={() => void ghost().player.next()}>
           Skip to next
         </Button>
-        <Button variant="soft" icon={<RotateCcw size={16} />} onClick={() => void ghost().player.play()}>
-          Retry
+        <Button variant={canSkip ? 'soft' : 'primary'} icon={<RotateCcw size={16} />} onClick={() => void ghost().player.play()}>
+          Try again
         </Button>
         <Button variant="ghost" icon={<Compass size={16} />} onClick={() => navigate('browse')}>
           Browse

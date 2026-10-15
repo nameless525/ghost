@@ -4,7 +4,9 @@
   --hud-h: 170px;
   position: absolute;
   inset: 0;
-  overflow: hidden;
+  /* clip, not hidden: a hidden box is still scrollable, and focusing the queue's search field
+     while the drawer slid in scrolled the whole screen sideways */
+  overflow: clip;
   user-select: none;
 }
 .pl-root--idle,
@@ -56,6 +58,11 @@
   height: calc(var(--disc-r) * 2);
   opacity: 0;
   will-change: transform, opacity;
+  /* hidden (other visualizers, the title card) it must not be an invisible play/pause button */
+  pointer-events: none;
+}
+.pl-disc--on {
+  pointer-events: auto;
 }
 .pl-disc__pulse {
   position: relative;
@@ -351,6 +358,9 @@
   display: none;
 }
 .pl-top__vis-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-2xs);
   color: var(--fg-3);
 }
@@ -522,6 +532,7 @@
 }
 .pl-seek__analysing {
   font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
   color: var(--fg-3);
   animation: pl-blink 1.6s ease-in-out infinite;
 }
@@ -757,7 +768,7 @@
     rgb(var(--bg-2-rgb) / 0.93);
   box-shadow: var(--shadow-pop);
   backdrop-filter: blur(20px) saturate(1.2);
-  overflow: hidden;
+  overflow: clip;
   will-change: transform;
 }
 .pl-drawer__edge {

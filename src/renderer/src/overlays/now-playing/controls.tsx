@@ -25,8 +25,10 @@ import { tween } from '../../motion/tween'
 import { notify } from '../../shell/notifications'
 import { sfx } from '../../sound'
 import { livePositionMs, usePlayer } from '../../state/player'
+import { IntensityBadge, type IntensityBadgeProps } from '../../ui/Badges'
 import { IconButton, type IconButtonProps } from '../../ui/IconButton'
 import { openContextMenu } from '../../ui/ContextMenu'
+import { Tooltip } from '../../ui/Tooltip'
 import { Slider } from '../../ui/Slider'
 import { formatTime } from '../../ui/format'
 import { cx } from '../../ui/util'
@@ -134,14 +136,20 @@ export function RepeatButton({ size }: { size?: Size }) {
 
 const LOOP_NEXT: Record<LoopMode, LoopMode> = { album: 'endless', endless: 'custom', custom: 'album' }
 const LOOP_LABEL: Record<LoopMode, string> = {
-  album: 'Game loops: as released (loop + fade)',
-  endless: 'Game loops: endless',
-  custom: 'Game loops: custom count (Settings › Audio)'
+  album: 'Looping: as released (2 loops, then a fade)',
+  endless: 'Looping: endless (until you skip)',
+  custom: 'Looping: your loop count (Settings › Audio)'
 }
 
+/**
+ * How looping game music (chiptunes and other files with loop points) ends. Shown only while such
+ * a track plays: for everything else the button did nothing, and its disc icon meant nothing.
+ */
 export function LoopModeButton({ size }: { size?: Size }) {
   const mode = usePlayer((s) => s.loopMode)
+  const loops = usePlayer((s) => s.current?.source?.format === 'chip' || !!s.voices)
   const Icon = mode === 'endless' ? InfinityIcon : mode === 'custom' ? IterationCw : Disc3
+  if (!loops) return null
   return (
     <IconButton
       size={size}
@@ -219,6 +227,13 @@ export function LikeButton({ track, size }: { track: TrackView | null; size?: Si
   )
 }
 
+/** The "Add to playlist" menu for `track`, at `anchor` (the button; Mod+S passes it too). */
+export function openPlaylistMenu(track: TrackView | null, anchor: Element | null | undefined): void {
+  if (!track) return
+  const r = anchor?.getBoundingClientRect()
+  openContextMenu(r ? { x: r.left, y: r.top - 6 } : { x: window.innerWidth / 2, y: window.innerHeight / 2 }, [{ heading: 'Add to playlist' }, ...playlistSubmenu([track.id])])
+}
+
 export function AddToPlaylistButton({ track, size }: { track: TrackView | null; size?: Size }) {
   return (
     <IconButton
@@ -227,11 +242,10 @@ export function AddToPlaylistButton({ track, size }: { track: TrackView | null; 
       shortcut="Mod+S"
       disabled={!track}
       icon={<ListPlus />}
-      onClick={(e) => {
-        if (!track) return
-        const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-        openContextMenu({ x: r.left, y: r.top - 6 }, [{ heading: 'Add to playlist' }, ...playlistSubmenu([track.id])])
-      }}
+      className="np-add-playlist"
+      // the menu plays its own open cue
+      sound={false}
+      onClick={(e) => openPlaylistMenu(track, e.currentTarget)}
     />
   )
 }
@@ -257,6 +271,24 @@ export function DownloadButton({ track, size }: { track: TrackView | null; size?
       sound={done ? false : 'confirm'}
       onClick={() => downloadCurrent(track)}
     />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// track info
+
+/**
+ * The intensity stars with a tooltip saying what they are. Nothing until the track is analysed:
+ * a bare "★ –" read as a broken rating.
+ */
+export function Intensity({ value, size, glow }: Pick<IntensityBadgeProps, 'value' | 'size' | 'glow'>) {
+  if (value == null || Number.isNaN(value)) return null
+  return (
+    <Tooltip content={`Intensity ${value.toFixed(2)} of 10: how energetic this track is`}>
+      <span className="np-intensity">
+        <IntensityBadge value={value} size={size} glow={glow} />
+      </span>
+    </Tooltip>
   )
 }
 
