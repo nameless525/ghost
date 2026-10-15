@@ -39,8 +39,8 @@ jobs:
             display: xvfb-run -a
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -59,7 +59,7 @@ jobs:
       - name: Launch check
         shell: bash
         run: ${{ matrix.display }} node scripts/smoke/launch.mjs release/*/${{ matrix.app }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.name }}
           if-no-files-found: error
@@ -77,8 +77,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -95,6 +95,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          # The artifacts keep their release/<version>/ folders: upload the installers themselves.
+          files=()
+          while IFS= read -r f; do files+=("$f"); done < <(find dist -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) | sort)
+          if [ "${#files[@]}" -ne 4 ]; then
+            echo "expected 4 installers, found ${#files[@]}: ${files[*]}"
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+            --verify-tag \
             --title "GHOST ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md
