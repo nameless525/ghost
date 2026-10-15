@@ -300,7 +300,92 @@ mod sys {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+mod sys {
+    use std::ffi::c_void;
+    use std::sync::Arc;
+
+    type Raw = *mut c_void;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> Raw;
+        fn GetCurrentThread() -> Raw;
+        fn GetCurrentThreadId() -> u32;
+        fn DuplicateHandle(src_process: Raw, src: Raw, dst_process: Raw, dst: *mut Raw, access: u32, inherit: i32, options: u32) -> i32;
+        fn GetThreadTimes(thread: Raw, creation: *mut FileTime, exit: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+        fn GetExitCodeThread(thread: Raw, code: *mut u32) -> i32;
+        fn CloseHandle(h: Raw) -> i32;
+    }
+    const DUPLICATE_SAME_ACCESS: u32 = 2;
+    const STILL_ACTIVE: u32 = 259;
+
+    /// A real (duplicated) thread handle, closed when the last clone of its `Handle` goes.
+    struct Owned(Raw);
+    // SAFETY: a kernel handle value; the calls made with it are thread-safe.
+    unsafe impl Send for Owned {}
+    unsafe impl Sync for Owned {}
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            // SAFETY: this handle is ours and closed once.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct Handle {
+        h: Arc<Owned>,
+        tid: u32,
+    }
+
+    /// User + kernel time of a thread in ns (FILETIME counts 100 ns).
+    fn times_ns(h: Raw) -> Option<u64> {
+        let (mut c, mut e, mut k, mut u) = (FileTime::default(), FileTime::default(), FileTime::default(), FileTime::default());
+        // SAFETY: a valid thread handle and out-pointers.
+        if unsafe { GetThreadTimes(h, &mut c, &mut e, &mut k, &mut u) } == 0 {
+            return None;
+        }
+        let ns = |t: &FileTime| ((t.high as u64) << 32 | t.low as u64) * 100;
+        Some(ns(&k) + ns(&u))
+    }
+
+    impl Handle {
+        pub fn same(&self, o: &Handle) -> bool {
+            self.tid == o.tid
+        }
+        pub fn cpu_ns(&self) -> Option<u64> {
+            // As on the other platforms, an exited thread reads as gone (its handle would still answer).
+            let mut code = 0u32;
+            // SAFETY: a valid thread handle and out-pointer.
+            if unsafe { GetExitCodeThread(self.h.0, &mut code) } == 0 || code != STILL_ACTIVE {
+                return None;
+            }
+            times_ns(self.h.0)
+        }
+    }
+
+    pub fn current() -> Option<Handle> {
+        let mut h: Raw = std::ptr::null_mut();
+        // SAFETY: turns the calling thread's pseudo-handle into a real one that we own.
+        let ok = unsafe { DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &mut h, 0, 0, DUPLICATE_SAME_ACCESS) } != 0;
+        // SAFETY: no preconditions.
+        ok.then(|| Handle { h: Arc::new(Owned(h)), tid: unsafe { GetCurrentThreadId() } })
+    }
+
+    pub fn self_cpu_ns() -> Option<u64> {
+        // SAFETY: the calling thread's pseudo-handle is always valid.
+        times_ns(unsafe { GetCurrentThread() })
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 mod sys {
     #[derive(Clone)]
     pub struct Handle;
@@ -334,9 +419,10 @@ mod tests {
             }
             std::hint::black_box(x);
         };
+        // 60 ms of work: Windows counts thread time in ~15.6 ms scheduler ticks.
         std::thread::spawn(move || {
             let _g = register_thread("test-exited");
-            busy(30);
+            busy(60);
         })
         .join()
         .unwrap();
@@ -344,7 +430,7 @@ mod tests {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
         let h = std::thread::spawn(move || {
             let _g = register_thread("test-live");
-            busy(30);
+            busy(60);
             ready_tx.send(()).unwrap();
             let _ = rx.recv();
         });

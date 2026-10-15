@@ -62,5 +62,6 @@ jobs:
       - name: Install ALSA headers
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - run: cargo test --workspace
+      # Every test binary runs even if an earlier one fails, so one pass shows all failures.
+      - run: cargo test --workspace --no-fail-fast
         working-directory: native
