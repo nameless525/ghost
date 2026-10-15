@@ -283,6 +283,74 @@ describe('resolver: more providers plug in by priority', () => {
   })
 })
 
+describe('streams resolved ahead of a likely play', () => {
+  const TRACK = `${KH}/game-soundtracks/album/${BIRD}/A%2520Bird%2520Story%2520%2528Piano%2529.mp3`
+  async function setup(prefetchDwellMs?: number) {
+    const settings: Settings = defaultSettings('/tmp/x')
+    const http = fakeHttp({ [`${KH}/game-soundtracks/album/${BIRD}`]: fx('album-a-bird-story-gamerip.html'), [TRACK]: fx('track-a-bird-story.html') })
+    const db = memoryDb()
+    const svc = createCatalogService(
+      { db, broadcast: (() => {}) as never, getSettings: () => settings },
+      { registry: new ProviderRegistry().register(new KhinsiderProvider(http)), disableEnrichment: true, prefetchDwellMs, log: () => {} }
+    )
+    const { CatalogRepo } = await import('./repo')
+    const repo = new CatalogRepo(db)
+    const ids = repo.upsertHits([{ provider: 'khinsider', ref: BIRD, title: 'A Bird Story', titleFromRef: false, platforms: [], kind: 'gamerip', typeLabel: 'Gamerip', year: 2014, thumb: null, cover: null, catalogNo: null, addedAt: null }], { initial: true })
+    repo.assignGames(ids)
+    return { svc, http, albumId: String(ids[0]) }
+  }
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  it('resting on an album resolves its first track once; the play that follows needs no request', async () => {
+    const { svc, http, albumId } = await setup(30)
+    const d = await svc.album(albumId)
+    await svc.album(albumId) // a refresh of the same album: still one prefetch
+    expect(http.requests).not.toContain(TRACK)
+    await until(() => http.requests.includes(TRACK))
+    await sleep(60)
+    expect(http.requests.filter((u) => u === TRACK)).toHaveLength(1)
+    const n = http.requests.length
+    const list = await svc.resolveSources(d.tracks[0].id)
+    expect(list[0]).toMatchObject({ provider: 'khinsider', format: 'mp3' })
+    expect(http.requests.length).toBe(n)
+    svc.stop()
+  })
+
+  it('a play from the album before the dwell is up makes the prefetch moot', async () => {
+    const { svc, http, albumId } = await setup(40)
+    const d = await svc.album(albumId)
+    await svc.resolveSources(d.tracks[2].id).catch(() => {}) // e.g. playAlbum(albumId, 2) right away
+    await sleep(100)
+    expect(http.requests).not.toContain(TRACK) // the first track wasn't fetched behind it
+    svc.stop()
+  })
+
+  it('stopping cancels a pending prefetch; without prefetchDwellMs there is none', async () => {
+    const { svc, http, albumId } = await setup(40)
+    await svc.album(albumId)
+    svc.stop() // stopping cancels a pending prefetch too
+    await sleep(80)
+    expect(http.requests).not.toContain(TRACK)
+    const off = await setup(undefined)
+    await off.svc.album(off.albumId)
+    await sleep(80)
+    expect(off.http.requests).not.toContain(TRACK)
+  })
+
+  it('warmSources resolves tracks that need a request, once, and skips cached ones', async () => {
+    const { svc, http, albumId } = await setup(undefined)
+    const d = await svc.album(albumId)
+    svc.warmSources([d.tracks[0].id, 'nope'])
+    await until(() => http.requests.includes(TRACK))
+    const n = http.requests.length
+    svc.warmSources([d.tracks[0].id]) // cached now
+    await sleep(30)
+    expect(http.requests.length).toBe(n)
+    await svc.resolveSources(d.tracks[0].id)
+    expect(http.requests.length).toBe(n)
+  })
+})
+
 describe('several index sources', () => {
   /** A tiny IndexProvider: one section with `pages` pages of two albums each. */
   function fakeIndex(id: string, titles: string[][], calls: string[]): Provider & { indexSections(): { key: string; label: string }[]; fetchIndexPage(k: string, p: number): Promise<import('../providers/types').IndexPage> } {

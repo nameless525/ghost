@@ -27,7 +27,7 @@
 // of the vgmrips pack page ('vgmrips.net/packs/pack/<slug>').
 // Track locators: '<archive url>#e=<entry>&s=<sub-song>' (see `chipLocator`).
 
-import { load } from 'cheerio'
+import { loadHtml } from './html'
 import { foldText } from '../../shared/search'
 import type { ArchiveListing, EngineSource } from '../engine/types'
 import { NetError } from '../net/errors'
@@ -408,7 +408,7 @@ export function vgmripsTitles(raw: string): string[] {
     .filter(Boolean)
 }
 
-function textOf($: ReturnType<typeof load>, el: Parameters<ReturnType<typeof load>>[0]): string {
+function textOf($: ReturnType<typeof loadHtml>, el: Parameters<ReturnType<typeof loadHtml>>[0]): string {
   return $(el).text().replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
@@ -437,7 +437,7 @@ export interface VgmripsListing {
 
 /** One page of /packs/latest (or any pack listing with the same `div.result` rows). */
 export function parseVgmripsListing(html: string): VgmripsListing {
-  const $ = load(html)
+  const $ = loadHtml(html)
   const packs: VgmripsListing['packs'] = []
   $('div.result').each((_, row) => {
     const r = $(row)
@@ -536,7 +536,7 @@ export function parseVgmTime(s: string): { totalMs: number; loopMs: number | nul
 }
 
 export function parseVgmripsPack(html: string): VgmPack {
-  const $ = load(html)
+  const $ = loadHtml(html)
   const h1 = textOf($, $('h1').first())
   if (!h1) throw new NetError('parse', 'no title on vgmrips pack page')
   const names = vgmripsTitles(h1)

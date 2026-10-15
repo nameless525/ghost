@@ -15,6 +15,7 @@
 import { ACCESS_DENIED } from '../net/errors'
 import type { AudioFormat, ID, Settings } from '../../shared/types'
 import type { EngineSource } from '../engine/types'
+import type { Priority } from '../net/limiter'
 import type { ProviderRegistry } from '../providers'
 import type { CanonicalTrack, Provider, StreamInfo } from '../providers/types'
 import type { ResolvedSource } from './index'
@@ -29,6 +30,8 @@ const EMPTY_SEARCH_TTL_MS = 6 * 3600_000
 const FAILED_SEARCH_TTL_MS = 10 * 60_000
 /** A cached candidate that failed this often is searched for again instead of re-resolved. */
 const MAX_REUSE_FAILURES = 2
+/** Prefetches go ahead of index crawls (2) but behind anything the user is waiting for (0). */
+const PREFETCH_PRIORITY: Priority = 1
 
 interface SourceRow {
   id: number
@@ -60,6 +63,8 @@ export interface StoredStream {
   info: StreamInfo
   locator: string
   confidence: number
+  /** Re-stored as it was (a candidate over the failure limit), not freshly resolved. */
+  kept?: boolean
 }
 
 export function sourceKey(s: EngineSource): string {
@@ -217,17 +222,40 @@ export class SourceResolver {
         }
       }
       for (const [key, r] of existing) if (!keep.has(key)) repo.run(`DELETE FROM sources WHERE id = ?`, r.id)
+      // Tracks sharing one expiring stream (the chapters of a full-OST video: one cache key, clipped
+      // differently) get the fresh URL too, instead of each paying for its own re-resolve.
+      const shared = new Set<string>()
+      for (const { info, kept } of items) {
+        if (kept || info.source.kind !== 'http' || info.expiresAt == null) continue
+        const key = info.source.cacheKey
+        if (shared.has(key)) continue
+        shared.add(key)
+        repo.run(
+          `UPDATE sources SET url = ?, headers = ?, expires_at = ?, verified_at = ?, needs_refresh = 0
+           WHERE provider = ? AND cache_key = ? AND expires_at IS NOT NULL AND track_id != ? AND path IS NULL`,
+          info.source.url,
+          info.source.headers ? JSON.stringify(info.source.headers) : null,
+          info.expiresAt,
+          now,
+          provider,
+          key,
+          trackId
+        )
+      }
     })
   }
 
-  /** `force`: a stored URL failed, so skip provider-side caches (a memoised YouTube URL is the stale one). */
-  private async refreshProvider(p: Provider, t: CanonicalTrack, trackId: number, force = false): Promise<void> {
+  /**
+   * `force`: a stored URL failed, so skip provider-side caches (a memoised YouTube URL is the stale
+   * one). `priority`: the album provider's request priority (a prefetch asks below interactive work).
+   */
+  private async refreshProvider(p: Provider, t: CanonicalTrack, trackId: number, force = false, priority: Priority = 0): Promise<void> {
     const flightKey = `${trackId}\u0000${p.id}`
     const existing = this.inflight.get(flightKey)
     if (existing) return existing
     const run = (async () => {
       if (p.id === t.albumProvider) {
-        const infos = await p.resolveStream(t.locator, { priority: 0, force })
+        const infos = await p.resolveStream(t.locator, { priority, force })
         this.store(trackId, p.id, infos.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
       } else if (p.findTrack) {
         const now = this.now()
@@ -267,7 +295,7 @@ export class SourceResolver {
   /** Rows over the failure limit, re-stored as-is so `store` doesn't drop the memory of them. */
   private keepFailed(rows: SourceRow[], items: StoredStream[]): StoredStream[] {
     const kept = new Set(items.map((i) => sourceKey(i.info.source)))
-    return rows.filter((r) => r.failures >= MAX_REUSE_FAILURES && !kept.has(r.cache_key)).map((r) => ({ info: { ...toStream(r) }, locator: r.locator, confidence: r.confidence }))
+    return rows.filter((r) => r.failures >= MAX_REUSE_FAILURES && !kept.has(r.cache_key)).map((r) => ({ info: { ...toStream(r) }, locator: r.locator, confidence: r.confidence, kept: true }))
   }
 
   private async refreshIfNeeded(p: Provider, t: CanonicalTrack, trackId: number, now: number): Promise<unknown> {
@@ -329,6 +357,14 @@ export class SourceResolver {
       if (!isFallback(p)) continue
       const healthy = ranked.some((x) => !x.recentFail)
       if (healthy && !stale(p)) continue
+      // A healthy, current source of another provider plays first: the player only reaches these
+      // URLs if it fails, so refresh them in the background instead of holding up playback (a yt-dlp
+      // run takes seconds).
+      const top = ranked[0]
+      if (healthy && top && !top.recentFail && top.r.needs_refresh !== 1 && top.r.provider !== p.id) {
+        void this.refreshIfNeeded(p, t, trackId, now)
+        continue
+      }
       const e = await this.refreshIfNeeded(p, t, trackId, now)
       firstError ??= e
       ranked = rank()
@@ -336,6 +372,23 @@ export class SourceResolver {
     const out = ranked.map(({ r }) => toResolved(r))
     if (!out.length && firstError) throw firstError
     return out
+  }
+
+  /**
+   * Resolve a track's own stream ahead of a likely play (the album the user is looking at), when its
+   * provider's resolve is a polite page request (`prefetchStreams`) and nothing usable is cached.
+   * Background priority, never a search; a play arriving meanwhile joins the request in flight.
+   * Returns whether a request was made.
+   */
+  async prefetch(trackId: number): Promise<boolean> {
+    const t = this.canonical(trackId)
+    if (!t) return false
+    const p = this.deps.registry.ordered(this.deps.getSettings().sources).find((x) => x.id === t.albumProvider)
+    if (!p?.prefetchStreams) return false
+    const rows = this.rows(trackId, p.id)
+    if (!this.needsRefresh(rows, this.now())) return false
+    await this.refreshProvider(p, t, trackId, rows.some((r) => r.needs_refresh === 1), PREFETCH_PRIORITY)
+    return true
   }
 
   markFailed(trackIdStr: ID, cacheKey: string, reason: string): void {

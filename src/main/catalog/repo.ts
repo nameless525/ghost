@@ -48,8 +48,6 @@ export function j<T>(s: unknown, fallback: T): T {
   }
 }
 
-const rand31 = () => Math.floor(Math.random() * 0x7fffffff)
-
 /** Preference ladders: earlier = better. */
 export const FORMAT_LADDER: Record<Quality, AudioFormat[]> = {
   lossless: ['chip', 'flac', 'wav', 'm4a', 'mp3', 'aac', 'ogg', 'opus', 'unknown'],
@@ -148,6 +146,28 @@ export const TRACK_VIEW_FROM = `
 export const ALBUM_COLUMNS = `a.id, a.game_id, a.title, a.title_original, a.kind, a.year, a.platforms, a.catalog_no, a.composers, a.cover,
   a.track_count, a.total_ms, a.formats, a.provider, a.provider_ref, a.added_at, g.name AS game_name, g.cover AS game_cover`
 
+/** The album columns a listing upsert reads to tell what changed. */
+interface ExistingAlbum {
+  id: number
+  title: string
+  title_from_ref: number
+  sort_title: string
+  kind: AlbumKind
+  kind_rank: number
+  type_label: string | null
+  year: number | null
+  sort_year: number
+  platforms: string
+  catalog_no: string | null
+  cover: string | null
+  thumb: string | null
+  added_at: number | null
+  sort_added: number
+  detail_at: number | null
+  gone: number
+  game_id: number | null
+}
+
 export interface AlbumRowLite {
   id: number
   game_id: number | null
@@ -225,6 +245,10 @@ function unf32(u: unknown): number[] {
 export const writerPause = (): Promise<void> => new Promise((r) => setTimeout(r, 8))
 /** Rows per write transaction in background work. */
 export const BACKGROUND_TX_ROWS = 100
+/** Prepared statements kept per connection (see CatalogRepo.st). */
+const STATEMENT_CACHE_MAX = 300
+/** An FTS index this many times its size after its last merge is merged again (see compactFts). */
+export const FTS_REGROWTH = 1.3
 
 /** Call `yieldFn` once `sliceMs` of synchronous work has passed since the last yield. */
 export function timeSlicer(yieldFn: () => Promise<void>, sliceMs = 8): () => Promise<void> {
@@ -256,8 +280,12 @@ function noteTx(ms: number): void {
 
 export class CatalogRepo {
   private stmts = new Map<string, StatementSync>()
-  private gameIdByKey: Map<string, number> | null = null
-  private primaryKeys: Set<string> | null = null
+  /**
+   * norm_key → game id snapshots held by long passes (a full re-cluster), kept valid as games are
+   * deleted. Everything else looks games up by their indexed norm_key: no resident ~100k-key maps
+   * (and no ~0.25 s synchronous load before the first write after start-up).
+   */
+  private liveGameCaches = new Set<Map<string, number>>()
   /** Bumped whenever data the UI shows changes (drives 'catalog:status' refreshes). */
   revision = 0
 
@@ -271,12 +299,21 @@ export class CatalogRepo {
   // ---------------------------------------------------------------------------
   // plumbing
 
+  /**
+   * A prepared statement for this SQL, from a bounded cache (most recently used kept). Unbounded,
+   * the cache grew with every IN-list length (1…500 ids, a few KB to ~40 KB of native memory each:
+   * 1,200 such statements held ~50 MB). An evicted statement stays valid for whoever holds it.
+   */
   st(sql: string): StatementSync {
     let s = this.stmts.get(sql)
-    if (!s) {
-      s = this.db.prepare(sql)
+    if (s) {
+      this.stmts.delete(sql)
       this.stmts.set(sql, s)
+      return s
     }
+    s = this.db.prepare(sql)
+    this.stmts.set(sql, s)
+    if (this.stmts.size > STATEMENT_CACHE_MAX) this.stmts.delete(this.stmts.keys().next().value!)
     return s
   }
 
@@ -330,6 +367,11 @@ export class CatalogRepo {
     return out
   }
 
+  /** Albums per source (maintained by triggers too). */
+  albumsPerSource(): Map<string, number> {
+    return new Map(this.all<{ k: string; n: number }>(`SELECT substr(k, 8) AS k, n FROM catalog_counts WHERE k LIKE 'albums:%' AND n > 0`).map((r) => [r.k, r.n]))
+  }
+
   /** Recompute the maintained counts from the tables (one full count). */
   recount(): void {
     this.tx(() => recountCatalog(this.db))
@@ -350,15 +392,19 @@ export class CatalogRepo {
   /**
    * Upsert albums seen in a provider listing. New albums get `added_at` = now unless this is the
    * initial crawl (then unknown until the album page or the "latest" feed tells us).
-   * Returns the album ids (in input order).
+   * Returns the album ids (in input order). `changed` collects the ids whose clustering or search
+   * text may have moved (new, edited or never clustered albums): a refresh crawl re-reads ~135k
+   * listing rows that are nearly all unchanged, and those only get their last_seen stamped.
    */
-  upsertHits(hits: AlbumHit[], opts: { initial: boolean }): number[] {
+  upsertHits(hits: AlbumHit[], opts: { initial: boolean }, changed?: number[]): number[] {
     const now = this.now()
     const ids: number[] = []
     this.tx(() => {
       for (const h of hits) {
-        const ex = this.get<{ id: number; title: string; title_from_ref: number; detail_at: number | null; cover: string | null; platforms: string; added_at: number | null; catalog_no: string | null }>(
-          `SELECT id, title, title_from_ref, detail_at, cover, platforms, added_at, catalog_no FROM albums WHERE provider = ? AND provider_ref = ?`,
+        const ex = this.get<ExistingAlbum>(
+          `SELECT id, title, title_from_ref, sort_title, kind, kind_rank, type_label, year, sort_year, platforms, catalog_no, cover, thumb, added_at,
+                  sort_added, detail_at, gone, game_id
+           FROM albums WHERE provider = ? AND provider_ref = ?`,
           h.provider,
           h.ref
         )
@@ -367,8 +413,8 @@ export class CatalogRepo {
           const addedAt = h.addedAt ?? (opts.initial ? null : now)
           const r = this.st(
             `INSERT INTO albums (provider, provider_ref, title, title_from_ref, sort_title, kind, kind_rank, type_label, year, sort_year, platforms,
-               catalog_no, cover, thumb, added_at, sort_added, first_seen, last_seen, rnd)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+               catalog_no, cover, thumb, added_at, sort_added, first_seen, last_seen)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             h.provider,
             h.ref,
@@ -387,53 +433,74 @@ export class CatalogRepo {
             addedAt,
             addedAt ?? 0,
             now,
-            now,
-            rand31()
+            now
           )
           const id = Number(r.lastInsertRowid)
           this.writePlatforms(id, h.platforms)
           ids.push(id)
+          changed?.push(id)
           continue
         }
         const keepTitle = ex.detail_at != null || (h.titleFromRef && !ex.title_from_ref)
         const title = keepTitle ? ex.title : h.title
         const addedAt = h.addedAt ?? ex.added_at
-        this.run(
-          `UPDATE albums SET title = ?, title_from_ref = ?, sort_title = ?, kind = ?, kind_rank = ?, type_label = ?, year = COALESCE(?, year),
-             sort_year = COALESCE(?, year, ${UNKNOWN_YEAR}), platforms = ?, catalog_no = COALESCE(?, catalog_no),
-             cover = CASE WHEN detail_at IS NOT NULL AND cover IS NOT NULL THEN cover ELSE COALESCE(?, cover) END,
-             thumb = COALESCE(thumb, ?), added_at = ?, sort_added = ?, last_seen = ?, gone = 0
-           WHERE id = ?`,
+        // The row as the update below would leave it.
+        const next = {
           title,
-          keepTitle ? ex.title_from_ref : h.titleFromRef ? 1 : 0,
-          sortKey(title),
-          h.kind,
-          kindRank(h.kind),
-          h.typeLabel,
-          h.year,
-          h.year,
-          platformNames,
-          h.catalogNo,
-          h.cover,
-          h.thumb,
-          addedAt,
-          addedAt ?? 0,
+          title_from_ref: keepTitle ? ex.title_from_ref : h.titleFromRef ? 1 : 0,
+          sort_title: sortKey(title),
+          kind: h.kind,
+          kind_rank: kindRank(h.kind),
+          type_label: h.typeLabel,
+          year: h.year ?? ex.year,
+          sort_year: h.year ?? ex.year ?? UNKNOWN_YEAR,
+          platforms: platformNames,
+          catalog_no: h.catalogNo ?? ex.catalog_no,
+          cover: ex.detail_at != null && ex.cover != null ? ex.cover : (h.cover ?? ex.cover),
+          thumb: ex.thumb ?? h.thumb,
+          added_at: addedAt,
+          sort_added: addedAt ?? 0
+        }
+        ids.push(ex.id)
+        if (ex.gone === 0 && (Object.keys(next) as (keyof typeof next)[]).every((k) => next[k] === ex[k])) {
+          this.run(`UPDATE albums SET last_seen = ? WHERE id = ?`, now, ex.id)
+          if (ex.game_id == null) changed?.push(ex.id)
+          continue
+        }
+        this.run(
+          `UPDATE albums SET title = ?, title_from_ref = ?, sort_title = ?, kind = ?, kind_rank = ?, type_label = ?, year = ?, sort_year = ?, platforms = ?,
+             catalog_no = ?, cover = ?, thumb = ?, added_at = ?, sort_added = ?, last_seen = ?, gone = 0
+           WHERE id = ?`,
+          next.title,
+          next.title_from_ref,
+          next.sort_title,
+          next.kind,
+          next.kind_rank,
+          next.type_label,
+          next.year,
+          next.sort_year,
+          next.platforms,
+          next.catalog_no,
+          next.cover,
+          next.thumb,
+          next.added_at,
+          next.sort_added,
           now,
           ex.id
         )
         if (ex.platforms !== platformNames) this.writePlatforms(ex.id, h.platforms)
-        ids.push(ex.id)
+        changed?.push(ex.id)
       }
     })
     return ids
   }
 
   /** upsertHits in small transactions with pauses between them (background crawls). */
-  async upsertHitsPaced(hits: AlbumHit[], opts: { initial: boolean }, pause: () => Promise<void> = writerPause): Promise<number[]> {
+  async upsertHitsPaced(hits: AlbumHit[], opts: { initial: boolean }, pause: () => Promise<void> = writerPause, changed?: number[]): Promise<number[]> {
     const ids: number[] = []
     for (let i = 0; i < hits.length; i += BACKGROUND_TX_ROWS) {
       if (i) await pause()
-      for (const id of this.upsertHits(hits.slice(i, i + BACKGROUND_TX_ROWS), opts)) ids.push(id)
+      for (const id of this.upsertHits(hits.slice(i, i + BACKGROUND_TX_ROWS), opts, changed)) ids.push(id)
     }
     return ids
   }
@@ -449,7 +516,10 @@ export class CatalogRepo {
   private writePlatforms(albumId: number, platforms: PlatformRef[]): void {
     this.run(`DELETE FROM album_platforms WHERE album_id = ?`, albumId)
     for (const p of platforms) {
-      this.run(`INSERT OR IGNORE INTO album_platforms(album_id, slug, name, name_fold) VALUES (?, ?, ?, ?)`, albumId, p.slug, p.name, foldText(p.name))
+      const fold = foldText(p.name)
+      this.run(`INSERT OR IGNORE INTO album_platforms(album_id, slug, name, name_fold) VALUES (?, ?, ?, ?)`, albumId, p.slug, p.name, fold)
+      // Platform filters resolve names against this short list, not a scan of every album's platforms.
+      this.run(`INSERT OR IGNORE INTO platform_names(slug, name_fold) VALUES (?, ?)`, p.slug, fold)
     }
   }
 
@@ -466,92 +536,98 @@ export class CatalogRepo {
   // album detail
 
   applyAlbumDetail(albumId: number, d: ProviderAlbum): void {
+    // One transaction for the album, its tracks, its game and both search documents (one commit on
+    // the album-open path, and never a half-applied album).
+    this.tx(() => {
+      this.writeAlbumDetail(albumId, d)
+      this.assignGames([albumId])
+      this.updateTrackFts(albumId)
+    })
+    this.revision++
+  }
+
+  private writeAlbumDetail(albumId: number, d: ProviderAlbum): void {
     const now = this.now()
     const totalMs = d.tracks.reduce((s, t) => s + (t.durationMs ?? 0), 0) || null
-    this.tx(() => {
-      const prev = this.get<{ platforms: string; cover: string | null; year: number | null; added_at: number | null }>(`SELECT platforms, cover, year, added_at FROM albums WHERE id = ?`, albumId)
-      if (!prev) throw new Error(`album ${albumId} vanished`)
-      const platforms = d.platforms.length ? d.platforms : null
-      const year = d.year ?? prev.year
-      const addedAt = d.addedAt ?? prev.added_at
-      this.run(
-        `UPDATE albums SET title = ?, title_from_ref = 0, sort_title = ?, title_original = ?, alt_titles = ?, kind = ?, kind_rank = ?, type_label = ?,
-           year = ?, sort_year = ?, platforms = COALESCE(?, platforms), catalog_no = COALESCE(?, catalog_no), developers = ?, publishers = ?,
-           composers = ?, cover = COALESCE(?, cover), thumb = COALESCE(?, thumb), images = ?, formats = ?, sizes = ?, track_count = ?,
-           total_ms = ?, sort_len = ?, description = ?, ext_id = ?, added_at = ?, sort_added = ?, detail_at = ?, detail_error = NULL,
-           art_checked_at = ?, gone = 0
-         WHERE id = ?`,
-        d.title,
-        sortKey(d.title),
-        d.titleOriginal,
-        JSON.stringify(d.altTitles),
-        d.kind,
-        kindRank(d.kind),
-        d.typeLabel,
-        year,
-        year ?? UNKNOWN_YEAR,
-        platforms ? JSON.stringify(platforms.map((p) => p.name)) : null,
-        d.catalogNo,
-        JSON.stringify(d.developers),
-        JSON.stringify(d.publishers),
-        JSON.stringify(d.composers),
-        d.cover,
-        d.thumb,
-        JSON.stringify(d.images),
-        JSON.stringify(d.formats),
-        JSON.stringify(d.totalSizes),
-        d.tracks.length,
-        totalMs,
-        totalMs ?? UNKNOWN_LEN,
-        d.description,
-        d.externalId,
-        addedAt,
-        addedAt ?? 0,
-        now,
-        now,
-        albumId
-      )
-      if (platforms) this.writePlatforms(albumId, platforms)
-      this.writeComposers(albumId, d.composers)
+    const prev = this.get<{ platforms: string; cover: string | null; year: number | null; added_at: number | null }>(`SELECT platforms, cover, year, added_at FROM albums WHERE id = ?`, albumId)
+    if (!prev) throw new Error(`album ${albumId} vanished`)
+    const platforms = d.platforms.length ? d.platforms : null
+    const year = d.year ?? prev.year
+    const addedAt = d.addedAt ?? prev.added_at
+    this.run(
+      `UPDATE albums SET title = ?, title_from_ref = 0, sort_title = ?, title_original = ?, alt_titles = ?, kind = ?, kind_rank = ?, type_label = ?,
+         year = ?, sort_year = ?, platforms = COALESCE(?, platforms), catalog_no = COALESCE(?, catalog_no), developers = ?, publishers = ?,
+         composers = ?, cover = COALESCE(?, cover), thumb = COALESCE(?, thumb), images = ?, formats = ?, sizes = ?, track_count = ?,
+         total_ms = ?, sort_len = ?, description = ?, ext_id = ?, added_at = ?, sort_added = ?, detail_at = ?, detail_error = NULL,
+         art_checked_at = ?, gone = 0
+       WHERE id = ?`,
+      d.title,
+      sortKey(d.title),
+      d.titleOriginal,
+      JSON.stringify(d.altTitles),
+      d.kind,
+      kindRank(d.kind),
+      d.typeLabel,
+      year,
+      year ?? UNKNOWN_YEAR,
+      platforms ? JSON.stringify(platforms.map((p) => p.name)) : null,
+      d.catalogNo,
+      JSON.stringify(d.developers),
+      JSON.stringify(d.publishers),
+      JSON.stringify(d.composers),
+      d.cover,
+      d.thumb,
+      JSON.stringify(d.images),
+      JSON.stringify(d.formats),
+      JSON.stringify(d.totalSizes),
+      d.tracks.length,
+      totalMs,
+      totalMs ?? UNKNOWN_LEN,
+      d.description,
+      d.externalId,
+      addedAt,
+      addedAt ?? 0,
+      now,
+      now,
+      albumId
+    )
+    if (platforms) this.writePlatforms(albumId, platforms)
+    this.writeComposers(albumId, d.composers)
 
-      const existing = new Map(this.all<{ id: number; locator: string }>(`SELECT id, locator FROM tracks WHERE album_id = ?`, albumId).map((r) => [r.locator, r.id]))
-      const seen = new Set<string>()
-      d.tracks.forEach((t, i) => {
-        seen.add(t.locator)
-        const files = JSON.stringify(t.files)
-        const id = existing.get(t.locator)
-        if (id != null) {
-          this.run(
-            `UPDATE tracks SET disc = ?, number = ?, position = ?, title = ?, duration_ms = COALESCE(?, duration_ms), composers = ?, files = ?, removed = 0 WHERE id = ?`,
-            t.disc,
-            t.number,
-            i,
-            t.title,
-            t.durationMs,
-            JSON.stringify(t.composers),
-            files,
-            id
-          )
-        } else {
-          this.run(
-            `INSERT INTO tracks (album_id, disc, number, position, title, duration_ms, composers, locator, files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            albumId,
-            t.disc,
-            t.number,
-            i,
-            t.title,
-            t.durationMs,
-            JSON.stringify(t.composers),
-            t.locator,
-            files
-          )
-        }
-      })
-      for (const [loc, id] of existing) if (!seen.has(loc)) this.run(`UPDATE tracks SET removed = 1 WHERE id = ?`, id)
+    const existing = new Map(this.all<{ id: number; locator: string }>(`SELECT id, locator FROM tracks WHERE album_id = ?`, albumId).map((r) => [r.locator, r.id]))
+    const seen = new Set<string>()
+    d.tracks.forEach((t, i) => {
+      seen.add(t.locator)
+      const files = JSON.stringify(t.files)
+      const id = existing.get(t.locator)
+      if (id != null) {
+        this.run(
+          `UPDATE tracks SET disc = ?, number = ?, position = ?, title = ?, duration_ms = COALESCE(?, duration_ms), composers = ?, files = ?, removed = 0 WHERE id = ?`,
+          t.disc,
+          t.number,
+          i,
+          t.title,
+          t.durationMs,
+          JSON.stringify(t.composers),
+          files,
+          id
+        )
+      } else {
+        this.run(
+          `INSERT INTO tracks (album_id, disc, number, position, title, duration_ms, composers, locator, files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          albumId,
+          t.disc,
+          t.number,
+          i,
+          t.title,
+          t.durationMs,
+          JSON.stringify(t.composers),
+          t.locator,
+          files
+        )
+      }
     })
-    this.assignGames([albumId])
-    this.updateTrackFts(albumId)
-    this.revision++
+    for (const [loc, id] of existing) if (!seen.has(loc)) this.run(`UPDATE tracks SET removed = 1 WHERE id = ?`, id)
   }
 
   markAlbumError(albumId: number, error: string, gone = false): void {
@@ -566,51 +642,18 @@ export class CatalogRepo {
   // ---------------------------------------------------------------------------
   // clustering
 
-  private loadGameMaps(): void {
-    if (this.gameIdByKey && this.primaryKeys) return
-    this.gameIdByKey = new Map()
-    this.primaryKeys = new Set()
-    for (const r of this.all<{ id: number; norm_key: string; has_primary: number }>(`SELECT id, norm_key, has_primary FROM games`)) {
-      this.gameIdByKey.set(r.norm_key, r.id)
-      if (r.has_primary) this.primaryKeys.add(r.norm_key)
-    }
-  }
-
-  /**
-   * Build the game-key maps ahead of the first clustering, in pages with yields (the synchronous
-   * load reads every game at once). Discarded if a synchronous load happened meanwhile: every write
-   * that changes them goes through loadGameMaps() first.
-   */
-  async preloadGameMaps(yieldFn: () => Promise<void> = () => new Promise((r) => setImmediate(r))): Promise<void> {
-    if (this.gameIdByKey) return
-    const byKey = new Map<string, number>()
-    const primary = new Set<string>()
-    for (let after = 0; ; ) {
-      const page = this.all<{ id: number; norm_key: string; has_primary: number }>(`SELECT id, norm_key, has_primary FROM games WHERE id > ? ORDER BY id LIMIT 5000`, after)
-      for (const r of page) {
-        byKey.set(r.norm_key, r.id)
-        if (r.has_primary) primary.add(r.norm_key)
-      }
-      if (page.length < 5000) break
-      after = page[page.length - 1].id
-      await yieldFn()
-      if (this.gameIdByKey) return
-    }
-    if (this.gameIdByKey) return
-    this.gameIdByKey = byKey
-    this.primaryKeys = primary
-  }
-
-  private gameIdFor(key: string, seedTitle: string): number {
-    this.loadGameMaps()
-    const id = this.gameIdByKey!.get(key)
+  /** The id of the game with this key, creating it (named after `seedTitle`) when there is none. */
+  private gameIdFor(key: string, seedTitle: string, cache?: Map<string, number>): number {
+    const id = cache?.get(key) ?? this.get<{ id: number }>(`SELECT id FROM games WHERE norm_key = ?`, key)?.id
     if (id != null) return id
     const name = baseTitle(seedTitle) || seedTitle
-    const r = this.st(`INSERT INTO games (norm_key, name, sort_name, rnd) VALUES (?, ?, ?, ?)`).run(key, name, sortKey(name), rand31())
-    const nid = Number(r.lastInsertRowid)
-    this.gameIdByKey!.set(key, nid)
+    const nid = Number(this.st(`INSERT INTO games (norm_key, name, sort_name) VALUES (?, ?, ?)`).run(key, name, sortKey(name)).lastInsertRowid)
+    cache?.set(key, nid)
     return nid
   }
+
+  /** Keys of games that have an OST or gamerip (mergeable albums fold into those). */
+  private readonly primaryGames = { has: (key: string): boolean => !!this.get(`SELECT 1 AS x FROM games WHERE norm_key = ? AND has_primary = 1`, key) }
 
   /**
    * The norm_key of an existing game called `name` (its key, display name or an alternative name),
@@ -644,8 +687,7 @@ export class CatalogRepo {
     const key = this.findGameKey(name) ?? (gameKey(name) || keyOf(name) || foldText(name))
     let gid = 0
     this.tx(() => {
-      this.loadGameMaps()
-      const existed = this.gameIdByKey!.has(key)
+      const existed = !!this.get(`SELECT 1 AS x FROM games WHERE norm_key = ?`, key)
       gid = this.gameIdFor(key, name)
       if (!existed) this.run(`UPDATE games SET name = ?, sort_name = ? WHERE id = ?`, name, sortKey(name), gid)
       this.run(`UPDATE albums SET game_key = ? WHERE id = ?`, key, albumId)
@@ -657,7 +699,6 @@ export class CatalogRepo {
   /** Incrementally (re)assign games for these albums, refresh the affected games and FTS docs. */
   assignGames(albumIds: number[]): void {
     if (!albumIds.length) return
-    this.loadGameMaps()
     const touched = new Set<number>()
     const ftsDirty = new Set<number>(albumIds)
     this.tx(() => {
@@ -668,8 +709,9 @@ export class CatalogRepo {
           ...chunk
         )
         // Primary (non-mergeable) albums in this batch count before the mergeable ones look for a head.
-        for (const r of rows) if (!MERGEABLE_KINDS.has(r.kind)) this.primaryKeys!.add(r.game_key ?? gameKey(r.title))
-        const keys = clusterKeys(rows, this.primaryKeys!)
+        const batchPrimary = new Set<string>()
+        for (const r of rows) if (!MERGEABLE_KINDS.has(r.kind)) batchPrimary.add(r.game_key ?? gameKey(r.title))
+        const keys = clusterKeys(rows, { has: (k) => batchPrimary.has(k) || this.primaryGames.has(k) })
         // Imported albums are pinned to the game they were imported into.
         for (const r of rows) if (r.game_key) keys.set(r.id, r.game_key)
         for (const r of rows) {
@@ -695,7 +737,6 @@ export class CatalogRepo {
     const ftsDirty: number[] = []
     const renamed: number[] = []
     if (!gameIds.length) return ftsDirty
-    this.loadGameMaps()
     this.tx(() => {
       for (let i = 0; i < gameIds.length; i += 400) {
         const chunk = gameIds.slice(i, i + 400)
@@ -731,8 +772,7 @@ export class CatalogRepo {
           const as = byGame.get(id) ?? []
           if (!as.length) {
             this.run(`DELETE FROM games WHERE id = ?`, id)
-            this.gameIdByKey!.delete(g.norm_key)
-            this.primaryKeys!.delete(g.norm_key)
+            for (const c of this.liveGameCaches) c.delete(g.norm_key)
             continue
           }
           const igdb = j<IgdbData | null>(g.igdb_json, null)
@@ -809,8 +849,6 @@ export class CatalogRepo {
             intensity ?? UNKNOWN_INTENSITY,
             id
           )
-          if (hasPrimary) this.primaryKeys!.add(g.norm_key)
-          else this.primaryKeys!.delete(g.norm_key)
         }
       }
       // Track search documents carry the game name too.
@@ -861,24 +899,48 @@ export class CatalogRepo {
       if (h && primary.has(h)) keys.set(r.id, h)
     }
     await yieldFn()
+    // Every game by key, read in pages (kept in step with deletions while it lives, see refreshGames).
+    const idByKey = new Map<string, number>()
+    const allGames: number[] = []
+    this.liveGameCaches.add(idByKey)
     const moved: number[] = []
     const touched = new Set<number>()
-    for (let i = 0; i < rows.length; i += 1000) {
-      this.tx(() => {
-        for (const r of rows.slice(i, i + 1000)) {
-          const gid = this.gameIdFor(keys.get(r.id)!, r.title)
-          if (r.game_id !== gid) {
-            this.run(`UPDATE albums SET game_id = ? WHERE id = ?`, gid, r.id)
-            moved.push(r.id)
-            if (r.game_id != null) touched.add(r.game_id)
-            touched.add(gid)
-          }
+    const used = new Set<number>()
+    try {
+      for (let after = 0; ; ) {
+        const page = this.all<{ id: number; norm_key: string }>(`SELECT id, norm_key FROM games WHERE id > ? ORDER BY id LIMIT 5000`, after)
+        for (const g of page) {
+          idByKey.set(g.norm_key, g.id)
+          allGames.push(g.id)
         }
-      })
-      await yieldFn()
+        if (page.length < 5000) break
+        after = page[page.length - 1].id
+        await slice()
+      }
+      for (let i = 0; i < rows.length; i += 1000) {
+        this.tx(() => {
+          for (const r of rows.slice(i, i + 1000)) {
+            const gid = this.gameIdFor(keys.get(r.id)!, r.title, idByKey)
+            used.add(gid)
+            if (r.game_id !== gid) {
+              this.run(`UPDATE albums SET game_id = ? WHERE id = ?`, gid, r.id)
+              moved.push(r.id)
+              if (r.game_id != null) touched.add(r.game_id)
+              touched.add(gid)
+            }
+          }
+        })
+        await yieldFn()
+      }
+    } finally {
+      this.liveGameCaches.delete(idByKey)
     }
-    // Orphans (games whose albums all moved away) are deleted by refreshGames.
-    for (const r of this.all<{ id: number }>(`SELECT g.id FROM games g WHERE NOT EXISTS (SELECT 1 FROM albums a WHERE a.game_id = g.id AND a.gone = 0)`)) touched.add(r.id)
+    // Orphans (games whose albums all moved away, or that were left empty) are deleted by
+    // refreshGames, which checks each candidate's albums itself (a crawl may have added some meanwhile).
+    for (let i = 0; i < allGames.length; i++) {
+      if (!used.has(allGames[i])) touched.add(allGames[i])
+      if ((i & 4095) === 4095) await slice()
+    }
     await yieldFn()
     const t = [...touched]
     const dirty = new Set<number>(moved)
@@ -894,6 +956,7 @@ export class CatalogRepo {
     }
     this.setMeta('cluster_version', String(CLUSTER_VERSION))
     this.revision++
+    await this.compactFts(yieldFn)
   }
 
   /** Heuristic franchises: a shared head ("Final Fantasy" from "Final Fantasy VI") across ≥2 games. */
@@ -1049,6 +1112,38 @@ export class CatalogRepo {
     for (const r of this.all<{ id: number }>(`SELECT id FROM albums WHERE game_id = ? AND detail_at IS NOT NULL`, gameId)) this.updateTrackFts(r.id)
   }
 
+  /**
+   * Merge each FTS index into one segment, a little at a time (FTS5 'merge' steps of `pages` pages,
+   * one short write transaction each, `pause` between them), when it has grown well past its size
+   * after the last merge. Bulk rewrites (crawls, re-clusters, a search-index rebuild) leave segments
+   * full of superseded entries that FTS5's automerge never folds away: on a 135k-album catalog a
+   * merge shrinks album_fts from ~95 MB to ~53 MB and makes typical searches 2-5x faster (25x on a
+   * cold cache). A merge rewrites the whole index (~50 MB, ~1-2 s of background work), so it waits
+   * until the index (its %_idx rows, a cheap proxy for its pages) is FTS_REGROWTH times its merged
+   * size, unless `force`. Returns the merge steps taken; `stop()` interrupts (the next run carries on).
+   */
+  async compactFts(pause: () => Promise<void> = writerPause, stop: () => boolean = () => false, opts: { force?: boolean; pages?: number } = {}): Promise<number> {
+    let steps = 0
+    const changes = this.st(`SELECT total_changes() AS n`)
+    for (const table of ['album_fts', 'track_fts']) {
+      const size = () => this.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}_idx`)!.n
+      const merged = Number(this.meta(`${table}:merged_size`) ?? 0)
+      // (+16: an index of a few pages may double from one small write.)
+      if (!opts.force && merged > 0 && size() <= merged * FTS_REGROWTH + 16) continue
+      for (;;) {
+        if (stop()) return steps
+        const before = (changes.get() as { n: number }).n
+        this.tx(() => this.run(`INSERT INTO ${table}(${table}, rank) VALUES ('merge', ?)`, -(opts.pages ?? 100)))
+        steps++
+        // Fewer than two rows changed: nothing was left to merge (the FTS5 documentation's test).
+        if ((changes.get() as { n: number }).n - before < 2) break
+        await pause()
+      }
+      this.setMeta(`${table}:merged_size`, String(Math.max(1, size())))
+    }
+    return steps
+  }
+
   /** True when the FTS documents were written by an older search-text format (see FTS_VERSION). */
   ftsStale(): boolean {
     return this.meta('fts_version') !== String(FTS_VERSION)
@@ -1076,6 +1171,7 @@ export class CatalogRepo {
       if (i % 20 === 19) await pause()
     }
     this.setMeta('fts_version', String(FTS_VERSION))
+    await this.compactFts(pause, stop, { force: true })
     return true
   }
 

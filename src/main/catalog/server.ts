@@ -10,7 +10,8 @@
 // and yt-dlp runs as a child process of the worker.
 
 import { join } from 'node:path'
-import { monitorEventLoopDelay } from 'node:perf_hooks'
+import { monitorEventLoopDelay, type ELDHistogram } from 'node:perf_hooks'
+import { getHeapStatistics } from 'node:v8'
 import { DatabaseSync } from 'node:sqlite'
 import type { Settings } from '../../shared/types'
 import type { ArchiveListing, EngineSource } from '../engine/types'
@@ -21,7 +22,7 @@ import { remoteFetch, type WireRequest, type WireResponse } from '../net/rpc-fet
 import { setSharedYtDlp, YtDlp } from '../tools/ytdlp'
 import type { CatalogService } from './index'
 import { txStats } from './repo'
-import { createCatalogService, type CatalogInternals } from './service'
+import { createCatalogService, PREFETCH_DWELL_MS, type CatalogInternals } from './service'
 
 export interface CatalogWorkerData {
   /** The app database (shared with the main process' library tables; WAL mode). */
@@ -43,11 +44,16 @@ export interface ServeOptions {
 const BUCKET_STALE_MS = 15_000
 const CHECKPOINT_MS = 5 * 60_000
 
-/** Open the worker's connection: WAL, a busy timeout (main writes its library tables concurrently), a bigger page cache. */
+/**
+ * Open the worker's connection: WAL, a busy timeout (main writes its library tables concurrently), a
+ * bigger page cache, and a cap on the WAL file kept after a checkpoint (it otherwise stays as big as
+ * the largest burst of writes ever made, e.g. an index rebuild).
+ */
 export function openWorkerDb(file: string): DatabaseSync {
   const db = new DatabaseSync(file)
   db.exec('PRAGMA busy_timeout = 5000;')
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -65536;')
+  db.exec('PRAGMA journal_size_limit = 33554432;')
   return db
 }
 
@@ -72,17 +78,32 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
   })
   ready.catch(() => {})
 
-  // Debug stats ('__perf'): this thread's event-loop delay and how long each method ran here.
-  const loop = monitorEventLoopDelay({ resolution: 10 })
-  loop.enable()
+  // Debug stats ('__perf'): this thread's event-loop delay and how long each method ran here. The
+  // delay histogram samples every 10 ms (a timer waking this thread 100 times a second), so it only
+  // runs from the first '__perf' call on (or from the start with GHOST_PERF_LOG).
+  let loop: ELDHistogram | null = null
+  const startLoop = () => {
+    if (loop) return
+    loop = monitorEventLoopDelay({ resolution: 10 })
+    loop.enable()
+  }
+  if (process.env.GHOST_PERF_LOG) startLoop()
   const timings = new Map<string, { calls: number; totalMs: number; maxMs: number; over10: number }>()
   const perf = (reset: boolean) => {
     const ms = (ns: number) => Math.round(ns / 1e4) / 100
     const methods: Record<string, { calls: number; avgMs: number; maxMs: number; over10: number }> = {}
     for (const [m, t] of timings) methods[m] = { calls: t.calls, avgMs: Math.round((t.totalMs / t.calls) * 100) / 100, maxMs: Math.round(t.maxMs * 10) / 10, over10: t.over10 }
-    const out = { loop: { p50: ms(loop.percentile(50)), p99: ms(loop.percentile(99)), max: ms(loop.max) }, methods, tx: { ...txStats } }
+    const h = getHeapStatistics()
+    const out = {
+      // null until sampling started (this call starts it).
+      loop: loop ? { p50: ms(loop.percentile(50)), p99: ms(loop.percentile(99)), max: ms(loop.max) } : null,
+      methods,
+      tx: { ...txStats },
+      heapMB: { used: Math.round(h.used_heap_size / 1048576), total: Math.round(h.total_heap_size / 1048576) }
+    }
+    startLoop()
     if (reset) {
-      loop.reset()
+      loop!.reset()
       timings.clear()
       Object.assign(txStats, { count: 0, totalMs: 0, maxMs: 0, over20: 0, over50: 0, slowest: '' })
     }
@@ -131,7 +152,7 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
     if (closed) return
     closed = true
     if (checkpointTimer) clearInterval(checkpointTimer)
-    loop.disable()
+    loop?.disable()
     try {
       service?.stop()
     } catch (e) {
@@ -177,6 +198,7 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
           // The main process trims the art cache (it owns it).
           trimArtCache: async () => {},
           bucketStaleMs: BUCKET_STALE_MS,
+          prefetchDwellMs: PREFETCH_DWELL_MS,
           sourcesCacheDir: join(data.dataDir, 'ghost-cache', 'sources'),
           log,
           ...opts.internals

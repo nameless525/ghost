@@ -139,6 +139,12 @@ export interface Provider {
    * 'fallback' (a network search: only once the album's own sources all failed or were excluded).
    */
   findTrackMode?: 'always' | 'fallback'
+  /**
+   * resolveStream costs one polite page request (KHInsider's track page): worth doing ahead of a
+   * likely play, at a lower priority. Unset for providers whose streams are free (known at album
+   * time) or expensive (a yt-dlp run).
+   */
+  prefetchStreams?: boolean
   /** Album-like results for "import from YouTube / Internet Archive / Bandcamp". */
   searchExternal?(q: string, opts?: ProviderCallOptions): Promise<ExternalAlbumHit[]>
   /** Turn a locator into playable stream(s), one per available format. */

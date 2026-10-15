@@ -11,6 +11,9 @@ function exact(repo: CatalogRepo) {
   const r = repo.get<{ g: number; a: number; t: number }>(
     `SELECT (SELECT COUNT(*) FROM games) AS g, (SELECT COUNT(*) FROM albums WHERE gone = 0) AS a, (SELECT COUNT(*) FROM tracks WHERE removed = 0) AS t`
   )!
+  // Albums per source are maintained alongside.
+  const perSource = new Map(repo.all<{ p: string; n: number }>(`SELECT provider AS p, COUNT(*) AS n FROM albums WHERE gone = 0 GROUP BY provider`).map((x) => [x.p, x.n]))
+  expect(repo.albumsPerSource()).toEqual(perSource)
   return { games: r.g, albums: r.a, tracks: r.t }
 }
 

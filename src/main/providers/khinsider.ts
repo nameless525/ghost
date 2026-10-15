@@ -13,7 +13,8 @@
 //  - Track page /game-soundtracks/album/<slug>/<file>.mp3: `a > span.songDownloadLink` per format
 //    pointing at *.vgmtreasurechest.com (any HTTP client, supports Range).
 
-import { load, type CheerioAPI } from 'cheerio'
+import type { CheerioAPI } from 'cheerio'
+import { childElements, findAll, findFirst, fragmentText, linkWithHref, loadHtml, tag, textOf, type DomNode } from './html'
 import type { AlbumKind, AudioFormat } from '../../shared/types'
 import { NetError } from '../net/errors'
 import { TTL, type HttpClient } from '../net/http'
@@ -264,15 +265,27 @@ function parsePlatformLinks($: CheerioAPI, el: Parameters<CheerioAPI>[0]): Platf
   return out
 }
 
-function parseAlbumListTable($: CheerioAPI, table: Parameters<CheerioAPI>[0], addedAt: number | null): AlbumHit[] {
-  const rows = $(table).find('tr').toArray()
+/** Platform links in a listing cell (the tree-walking twin of parsePlatformLinks). */
+function platformLinks(cell: DomNode | undefined): PlatformRef[] {
+  const out: PlatformRef[] = []
+  for (const a of findAll(cell, linkWithHref)) {
+    const m = /^\/game-soundtracks\/([a-z0-9-]+)\/?$/i.exec(a.attribs?.href ?? '')
+    if (!m || NON_PLATFORM_SLUGS.has(m[1])) continue
+    const name = cleanText(textOf(a))
+    if (name && !out.some((p) => p.slug === m[1])) out.push({ slug: m[1].toLowerCase(), name })
+  }
+  return out
+}
+
+const albumLink = (e: DomNode) => e.name === 'a' && (e.attribs?.href ?? '').includes('/game-soundtracks/album/')
+
+// Walks the parsed tree directly (see html.ts): ~500 rows per letter page.
+function parseAlbumListTable(table: DomNode, addedAt: number | null): AlbumHit[] {
+  const rows = findAll(table, tag('tr'))
   let col = { title: 1, platform: 2, type: 3, year: 4 }
-  const header = rows.find((r) => $(r).children('th').length > 0)
+  const header = rows.find((r) => childElements(r, 'th').length > 0)
   if (header) {
-    const labels = $(header)
-      .children('th')
-      .toArray()
-      .map((th) => cleanText($(th).text()).toLowerCase())
+    const labels = childElements(header, 'th').map((th) => cleanText(textOf(th)).toLowerCase())
     const find = (re: RegExp, d: number) => {
       const i = labels.findIndex((l) => re.test(l))
       return i >= 0 ? i : d
@@ -281,28 +294,27 @@ function parseAlbumListTable($: CheerioAPI, table: Parameters<CheerioAPI>[0], ad
   }
   const out: AlbumHit[] = []
   for (const r of rows) {
-    const tds = $(r).children('td').toArray()
+    const tds = childElements(r, 'td')
     if (tds.length < 3) continue
     let slug: string | null = null
-    $(r)
-      .find('a[href]')
-      .each((_, a) => {
-        slug ??= slugFromHref($(a).attr('href'))
-      })
+    for (const a of findAll(r, linkWithHref)) {
+      slug = slugFromHref(a.attribs?.href)
+      if (slug) break
+    }
     if (!slug) continue
-    const titleCell = $(tds[col.title])
-    const catalog = /\[([^\]]+)\]/.exec(cleanText(titleCell.find('span').text()))
-    const titleText = cleanText(titleCell.find(`a[href*="/game-soundtracks/album/"]`).first().text())
-    const thumb = absUrl($(tds[0]).find('img').attr('src')) ?? null
-    const typeLabel = cleanText($(tds[col.type] ?? '').text()) || null
-    const yearM = /\b(\d{4})\b/.exec(cleanText($(tds[col.year] ?? '').text()))
+    const titleCell = tds[col.title]
+    const catalog = /\[([^\]]+)\]/.exec(cleanText(findAll(titleCell, tag('span')).map(textOf).join('')))
+    const titleText = cleanText(textOf(findFirst(titleCell, albumLink)))
+    const thumb = absUrl(findFirst(tds[0], tag('img'))?.attribs?.src) ?? null
+    const typeLabel = cleanText(textOf(tds[col.type])) || null
+    const yearM = /\b(\d{4})\b/.exec(cleanText(textOf(tds[col.year])))
     const title = titleText || titleFromSlug(slug)
     out.push({
       provider: KH_ID,
       ref: slug,
       title,
       titleFromRef: !titleText,
-      platforms: parsePlatformLinks($, tds[col.platform]),
+      platforms: platformLinks(tds[col.platform]),
       kind: mapKhType(typeLabel, `${title} ${slug}`),
       typeLabel,
       year: yearM ? Number(yearM[1]) : null,
@@ -332,11 +344,11 @@ function assertNotBlockedLooking($: CheerioAPI): void {
 
 /** Letter index page (and any other plain album listing). */
 export function parseBrowsePage(html: string): IndexPage {
-  const $ = load(html)
+  const $ = loadHtml(html)
   assertNotBlockedLooking($)
   const items: AlbumHit[] = []
   $('table.albumList').each((_, t) => {
-    items.push(...parseAlbumListTable($, t, null))
+    items.push(...parseAlbumListTable(t as DomNode, null))
   })
   const p = parsePagination($)
   return { items: dedupeHits(items), ...p }
@@ -344,7 +356,7 @@ export function parseBrowsePage(html: string): IndexPage {
 
 /** Home page "Latest Soundtracks": rows carry the date they were added. */
 export function parseLatestPage(html: string): IndexPage {
-  const $ = load(html)
+  const $ = loadHtml(html)
   assertNotBlockedLooking($)
   const items: AlbumHit[] = []
   let current: number | null = null
@@ -352,7 +364,7 @@ export function parseLatestPage(html: string): IndexPage {
     .find('h3.latestSoundtrackHeading, table.albumList')
     .each((_, el) => {
       if ($(el).is('h3')) current = parseKhDate($(el).text())
-      else items.push(...parseAlbumListTable($, el, current))
+      else items.push(...parseAlbumListTable(el as DomNode, current))
     })
   const p = parsePagination($)
   return { items: dedupeHits(items), ...p }
@@ -376,11 +388,11 @@ function htmlLines($: CheerioAPI, el: Parameters<CheerioAPI>[0]): string[] {
 }
 
 function textOfFragment(frag: string): string {
-  return cleanText(load(`<div>${frag}</div>`)('div').text())
+  return cleanText(fragmentText(frag))
 }
 
 export function parseAlbumPage(html: string, slug: string): ProviderAlbum {
-  const $ = load(html)
+  const $ = loadHtml(html)
   const content = $('#pageContent')
   if (!content.length) throw new NetError('parse', 'unexpected KHInsider album page layout (no #pageContent)')
   const h2 = cleanText(content.find('h2').first().text())
@@ -418,7 +430,7 @@ export function parseAlbumPage(html: string, slug: string): ProviderAlbum {
     if (!m) continue
     const label = m[1].toLowerCase()
     const value = m[2].trim()
-    const $f = load(`<div>${frag}</div>`)
+    const $f = loadHtml(`<div>${frag}</div>`)
     const links = $f('a')
       .toArray()
       .map((a) => cleanText($f(a).text()))
@@ -499,20 +511,21 @@ export function parseAlbumPage(html: string, slug: string): ProviderAlbum {
   }
 }
 
+const hasClass = (e: DomNode, c: string) => (e.attribs?.class ?? '').split(/\s+/).includes(c)
+
+// Walks the parsed tree directly (see html.ts): up to a few hundred rows.
 function parseSongList($: CheerioAPI, slug: string): ProviderTrack[] {
-  const table = $('#songlist')
-  if (!table.length) return []
+  const tables = $('#songlist').toArray() as DomNode[]
+  if (!tables.length) return []
+  const rows = tables.flatMap((t) => findAll(t, tag('tr')))
   // Expand header colspans into one label per cell.
   const labels: string[] = []
-  table
-    .find('tr#songlist_header')
-    .first()
-    .children('th')
-    .each((_, th) => {
-      const span = Math.max(1, Number($(th).attr('colspan') ?? 1) || 1)
-      const l = cleanText($(th).text()).toLowerCase()
-      for (let i = 0; i < span; i++) labels.push(l)
-    })
+  const header = rows.find((r) => r.attribs?.id === 'songlist_header')
+  for (const th of childElements(header, 'th')) {
+    const span = Math.max(1, Number(th.attribs?.colspan ?? 1) || 1)
+    const l = cleanText(textOf(th)).toLowerCase()
+    for (let i = 0; i < span; i++) labels.push(l)
+  }
   const discCol = labels.indexOf('cd')
   const numCol = labels.indexOf('#')
   const nameCol = labels.indexOf('song name')
@@ -522,32 +535,33 @@ function parseSongList($: CheerioAPI, slug: string): ProviderTrack[] {
     if (f !== 'unknown') formatCols.push({ index: i, format: f })
   })
 
+  const own = new RegExp(`/game-soundtracks/album/${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(.+)$`)
   const out: ProviderTrack[] = []
   const perDisc = new Map<number, number>()
-  table.find('tr').each((_, tr) => {
-    const id = $(tr).attr('id')
-    if (id === 'songlist_header' || id === 'songlist_footer') return
-    const tds = $(tr).children('td').toArray()
-    if (!tds.length) return
+  for (const tr of rows) {
+    const id = tr.attribs?.id
+    if (id === 'songlist_header' || id === 'songlist_footer') continue
+    const tds = childElements(tr, 'td')
+    if (!tds.length) continue
     // Title cell: the first clickable cell linking to a track page.
     let titleIdx = nameCol >= 0 && nameCol < tds.length ? nameCol : -1
-    if (titleIdx < 0 || !$(tds[titleIdx]).find('a[href]').length) {
-      titleIdx = tds.findIndex((td) => $(td).hasClass('clickable-row') && $(td).find('a[href]').length > 0)
+    if (titleIdx < 0 || !findFirst(tds[titleIdx], linkWithHref)) {
+      titleIdx = tds.findIndex((td) => hasClass(td, 'clickable-row') && !!findFirst(td, linkWithHref))
     }
-    if (titleIdx < 0) return
-    const a = $(tds[titleIdx]).find('a[href]').first()
-    const href = a.attr('href') ?? ''
-    const m = new RegExp(`/game-soundtracks/album/${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(.+)$`).exec(href) ?? /\/game-soundtracks\/album\/[^/]+\/(.+)$/.exec(href)
-    if (!m) return
-    const title = cleanText(a.text())
-    const durationMs = parseClock($(tds[titleIdx + 1]).text())
-    const disc = discCol >= 0 ? Number(cleanText($(tds[discCol]).text())) || 1 : 1
-    const n = numCol >= 0 ? parseInt(cleanText($(tds[numCol]).text()), 10) : NaN
+    if (titleIdx < 0) continue
+    const a = findFirst(tds[titleIdx], linkWithHref)!
+    const href = a.attribs?.href ?? ''
+    const m = own.exec(href) ?? /\/game-soundtracks\/album\/[^/]+\/(.+)$/.exec(href)
+    if (!m) continue
+    const title = cleanText(textOf(a))
+    const durationMs = parseClock(textOf(tds[titleIdx + 1]))
+    const disc = discCol >= 0 ? Number(cleanText(textOf(tds[discCol]))) || 1 : 1
+    const n = numCol >= 0 ? parseInt(cleanText(textOf(tds[numCol])), 10) : NaN
     const seq = (perDisc.get(disc) ?? 0) + 1
     perDisc.set(disc, seq)
     const files: ProviderTrackFile[] = formatCols.length
-      ? formatCols.map((c) => ({ format: c.format, sizeBytes: parseSize($(tds[c.index]).text()) }))
-      : [{ format: formatFromUrl(href), sizeBytes: parseSize($(tds[titleIdx + 2]).text()) }]
+      ? formatCols.map((c) => ({ format: c.format, sizeBytes: parseSize(textOf(tds[c.index])) }))
+      : [{ format: formatFromUrl(href), sizeBytes: parseSize(textOf(tds[titleIdx + 2])) }]
     out.push({
       disc,
       number: Number.isFinite(n) && n > 0 ? n : seq,
@@ -557,7 +571,7 @@ function parseSongList($: CheerioAPI, slug: string): ProviderTrack[] {
       files,
       composers: []
     })
-  })
+  }
   return out
 }
 
@@ -571,7 +585,7 @@ export interface TrackPageFile {
 }
 
 export function parseTrackPage(html: string): TrackPageFile[] {
-  const $ = load(html)
+  const $ = loadHtml(html)
   const out: TrackPageFile[] = []
   $('a[href]').each((_, a) => {
     if (!$(a).find('.songDownloadLink').length) return
@@ -600,6 +614,9 @@ export function parseTrackPage(html: string): TrackPageFile[] {
 export class KhinsiderProvider implements IndexProvider {
   readonly id = KH_ID
   readonly name = 'KHInsider'
+
+  /** A stream is one track-page request away: resolved ahead of a likely play (see SourceResolver.prefetch). */
+  readonly prefetchStreams = true
 
   constructor(private http: HttpClient) {}
 

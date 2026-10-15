@@ -41,6 +41,12 @@ export const YT_PLAYLIST_FILTER = 'EgIQAw%253D%253D'
 export const FULL_OST_MIN_SEC = 15 * 60
 const SEARCH_TTL_MS = 3600_000
 const STREAM_MARGIN_MS = 10 * 60_000
+/**
+ * A forced re-resolve (the stored URL failed) still reuses an extraction this recent: the chapters of
+ * one full-OST video share its URL, and each of them being refreshed after one invalidation must not
+ * cost a yt-dlp run apiece.
+ */
+export const FORCE_REUSE_MS = 2 * 60_000
 
 // ---------------------------------------------------------------------------
 // yt-dlp JSON shapes (only the fields we read)
@@ -480,8 +486,11 @@ export class YouTubeProvider implements Provider {
   private readonly now: () => number
   private readonly log: (msg: string) => void
   private searches = new Map<string, { at: number; value: Promise<YtEntry[]> }>()
-  /** Resolved videos, reused until `validUntil` (shortly before the stream URL expires). */
-  private videos = new Map<string, { validUntil: number; value: Promise<YtVideo> }>()
+  /**
+   * Resolved videos, reused until `validUntil` (shortly before the stream URL expires); `fetchedAt`
+   * is when the extraction started (in flight) or finished.
+   */
+  private videos = new Map<string, { validUntil: number; fetchedAt: number; value: Promise<YtVideo> }>()
   private pending: { waiters: Map<string, Waiter[]>; timer: ReturnType<typeof setTimeout>; priority: 0 | 1 | 2 } | null = null
 
   constructor(
@@ -516,16 +525,22 @@ export class YouTubeProvider implements Provider {
       .map(({ provider, locator, title, durationMs, confidence }) => ({ provider, locator, title, durationMs, confidence }))
   }
 
-  /** Full -J for one video. Memoised until shortly before its URL expires; calls arriving together share one yt-dlp run. */
+  /**
+   * Full -J for one video. Memoised until shortly before its URL expires; calls arriving together
+   * share one yt-dlp run. `force` skips the memo unless it is in flight or under FORCE_REUSE_MS old.
+   */
   video(id: string, opts: ProviderCallOptions = {}): Promise<YtVideo> {
     const m = this.videos.get(id)
-    if (m && !opts.force && this.now() < m.validUntil) return m.value
+    const now = this.now()
+    if (m && (opts.force ? now - m.fetchedAt < FORCE_REUSE_MS : now < m.validUntil)) return m.value
     const value = new Promise<YtVideo>((resolve, reject) => this.enqueue(id, { resolve, reject }, opts.priority ?? 0))
-    const entry = { validUntil: this.now() + 60_000, value }
+    const entry = { validUntil: now + 60_000, fetchedAt: now, value }
+    this.videos.delete(id)
     this.videos.set(id, entry)
     value.then(
       (v) => {
         const exp = v.url ? expiryFromUrl(v.url) : null
+        entry.fetchedAt = this.now()
         entry.validUntil = exp != null ? exp - STREAM_MARGIN_MS : this.now() + 30 * 60_000
       },
       () => {

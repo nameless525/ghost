@@ -27,6 +27,12 @@ const ART_QUEUE_MAX = 60
 const EXTERNAL_SEARCH_TIMEOUT_MS = 60_000
 const EXTERNAL_HITS_MAX = 40
 const LOCAL_FOLDERS_POLL_MS = 4000
+/** Rest this long on an album (no other album opened) before its first track's stream is resolved ahead. */
+export const PREFETCH_DWELL_MS = 600
+/** Site searches remembered (one per distinct query, while a source's first crawl is incomplete). */
+const SEARCHED_MAX = 500
+/** warmSources resolves at most this many tracks per call. */
+const WARM_MAX = 3
 
 /** Test / smoke-script seams. Production uses the defaults. */
 export interface CatalogInternals {
@@ -61,6 +67,11 @@ export interface CatalogInternals {
   sourcesCacheDir?: string
   /** Don't scan settings.sources.localFolders. */
   disableLocalScan?: boolean
+  /**
+   * Resolve the first track's stream of an album opened and rested on for this long (ms), ahead of
+   * a likely play; unset = never (the worker sets PREFETCH_DWELL_MS).
+   */
+  prefetchDwellMs?: number
   /** Chiptune rip index (joshw.info / vgmrips.net): `false` = never crawl; otherwise options. */
   chip?: false | Pick<ChipIndexerDeps, 'hosts' | 'vgmrips' | 'maxPages' | 'pageDelayMs' | 'pages'>
   log?: (msg: string) => void
@@ -165,7 +176,6 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     prewarmTimer = setTimeout(async () => {
       prewarmTimer = null
       // In small chunks (the catalog keeps answering Browse meanwhile).
-      await repo.preloadGameMaps().catch((e) => log(`prewarm games: ${(e as Error).message}`))
       for (const group of ['platform', 'year', 'composer', 'franchise'] as const) {
         if (stopped || anyCrawling()) return
         try {
@@ -467,10 +477,36 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   function storeProviderStreams(albumId: number, album: ProviderAlbum): void {
     if (!album.tracks.some((t) => t.streams?.length)) return
     const byLocator = new Map(repo.all<{ id: number; locator: string }>(`SELECT id, locator FROM tracks WHERE album_id = ? AND removed = 0`, albumId).map((r) => [r.locator, r.id]))
-    for (const t of album.tracks) {
-      const id = byLocator.get(t.locator)
-      if (id != null && t.streams?.length) resolver.storeStreams(id, album.provider, t.streams.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
-    }
+    // One transaction for the whole album (a Zophar or Internet Archive album stores every track's stream).
+    repo.tx(() => {
+      for (const t of album.tracks) {
+        const id = byLocator.get(t.locator)
+        if (id != null && t.streams?.length) resolver.storeStreams(id, album.provider, t.streams.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
+      }
+    })
+  }
+
+  // The album the user rests on: its first track's stream is resolved ahead of a likely "play"
+  // (one polite request, only for providers whose resolve is a page fetch; see SourceResolver.prefetch).
+  // A play from that album before the dwell is up (playAlbum, a preview) makes it moot.
+  let dwellTimer: ReturnType<typeof setTimeout> | null = null
+  let dwellAlbum: number | null = null
+  function prefetchAfterDwell(albumId: number, trackId: string | undefined): void {
+    const dwell = internals.prefetchDwellMs
+    if (dwell == null) return
+    cancelDwell()
+    if (!trackId || stopped) return
+    dwellAlbum = albumId
+    dwellTimer = setTimeout(() => {
+      dwellTimer = null
+      dwellAlbum = null
+      void resolver.prefetch(Number(trackId)).catch((e) => log(`prefetch of track ${trackId}: ${(e as Error).message}`))
+    }, dwell)
+  }
+  function cancelDwell(): void {
+    if (dwellTimer) clearTimeout(dwellTimer)
+    dwellTimer = null
+    dwellAlbum = null
   }
 
   // Low-priority album-page fetches so groups without art fill in progressively.
@@ -545,6 +581,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       searchTimer = null
       pendingSearch = null
       searched.set(terms, now())
+      if (searched.size > SEARCHED_MAX) searched.delete(searched.keys().next().value!)
       for (const p of providers) {
         const complete = crawlerFor(p).lastFinished() != null
         p.searchAlbums!(terms, { priority: 0 })
@@ -659,6 +696,10 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
           notify()
         } else if (!anyCrawling()) repo.setMeta('cluster_version', String(CLUSTER_VERSION))
       }
+      // Search indexes left fragmented by earlier bulk writes (nothing to do unless they regrew since their last merge).
+      const t0 = now()
+      const steps = await repo.compactFts(writerPause, () => stopped)
+      if (steps > 2) log(`search index compacted in ${Math.round((now() - t0) / 100) / 10} s (${steps} steps)`)
     } catch (e) {
       log(`index upgrade failed: ${(e as Error).message}`)
     }
@@ -727,6 +768,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       pending = null
       if (prewarmTimer) clearTimeout(prewarmTimer)
       prewarmTimer = null
+      cancelDwell()
       if (searchTimer) clearTimeout(searchTimer)
       searchTimer = null
       if (localPoll) clearInterval(localPoll)
@@ -749,6 +791,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     },
 
     async browse(q: BrowseQuery) {
+      await qe.prepare(q)
       const page = qe.browse(q)
       afterBrowse(page)
       if (q.text) maybeSiteSearch(q.text)
@@ -760,7 +803,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     },
 
     async sources() {
-      const albums = new Map(repo.all<{ provider: string; n: number }>(`SELECT provider, COUNT(*) AS n FROM albums WHERE gone = 0 GROUP BY provider`).map((r) => [r.provider, r.n]))
+      const albums = repo.albumsPerSource()
       const ids = new Set([...getRegistry().all().map((p) => p.id), ...albums.keys()])
       return [...ids].map((id) => {
         const p = getRegistry().get(id)
@@ -793,6 +836,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       if (!album) throw new NetError('not_found', `no album ${albumId}`)
       const game = album.gameId ? repo.game(Number(album.gameId)) : null
       const tracks = repo.toTrackViews(repo.trackRows('t.album_id = ? AND t.removed = 0', [id], 'ORDER BY t.position'), quality())
+      prefetchAfterDwell(id, tracks[0]?.id)
       if (game && !internals.disableEnrichment) {
         enricher.want([Number(game.id)])
         accent.want([{ gameId: Number(game.id), cover: game.cover, accent: game.accent }])
@@ -833,11 +877,23 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     },
 
     resolveSources(trackId, opts) {
+      if (dwellAlbum != null && repo.get<{ a: number }>(`SELECT album_id AS a FROM tracks WHERE id = ?`, Number(trackId))?.a === dwellAlbum) cancelDwell()
       return resolver.resolve(trackId, opts)
     },
 
     markSourceFailed(trackId, cacheKey, reason) {
       resolver.markFailed(trackId, cacheKey, reason)
+    },
+
+    warmSources(trackIds) {
+      // A few tracks at most, one after another (each may be a page request to the source).
+      const ids = trackIds.slice(0, WARM_MAX).map(Number).filter(Number.isFinite)
+      void (async () => {
+        for (const id of ids) {
+          if (stopped) return
+          await resolver.prefetch(id).catch((e) => log(`warming track ${id}: ${(e as Error).message}`))
+        }
+      })()
     },
 
     async albumOf(trackId) {

@@ -8,6 +8,7 @@ import {
   batchErrorFor,
   bestThumb,
   expiryFromUrl,
+  FORCE_REUSE_MS,
   makeLocator,
   parseJsonLines,
   parseLocator,
@@ -256,6 +257,29 @@ describe('youtube: provider over a fake yt-dlp', () => {
     // memoised
     await p.resolveStream('7xkM8mWC4Kk')
     expect(y.calls).toHaveLength(1)
+  })
+
+  it('a forced resolve reuses an extraction under two minutes old (chapters of one video refresh with one run)', async () => {
+    let t = now()
+    const y = fakeYtDlp((args) => {
+      const ids = args.filter((a) => a.startsWith('https://www.youtube.com/watch?v=')).map((a) => a.slice(-11))
+      return { stdout: ids.map((id) => JSON.stringify(id === full.id ? full : { ...hornet, id })).join('\n'), stderr: '', code: 0 }
+    })
+    const p = new YouTubeProvider(async () => y, { now: () => t })
+    await p.resolveStream('CbaFAQbCkdc#4065000-4188000')
+    expect(y.calls).toHaveLength(1)
+    t += 30 * 60_000
+    // A stored URL failed: the first forced resolve extracts again…
+    await p.resolveStream('CbaFAQbCkdc#4065000-4188000', { force: true })
+    expect(y.calls).toHaveLength(2)
+    // …and the video's other chapters, refreshed right after, reuse that extraction.
+    t += 60_000
+    await Promise.all([p.resolveStream('CbaFAQbCkdc#4188000-4307000', { force: true }), p.resolveStream('CbaFAQbCkdc#0-120000', { force: true })])
+    expect(y.calls).toHaveLength(2)
+    // Two minutes on, forcing extracts again.
+    t += FORCE_REUSE_MS
+    await p.resolveStream('CbaFAQbCkdc#4188000-4307000', { force: true })
+    expect(y.calls).toHaveLength(3)
   })
 
   it('findTrack runs one flat search and returns scored candidates', async () => {

@@ -134,6 +134,8 @@ export interface QueryEngineOptions {
 export class QueryEngine {
   private platformCache: { rev: number; at: number; rows: { slug: string; name_fold: string }[] } | null = null
   private bucketCache = new Map<string, BucketEntry>()
+  /** Chunked bucket computations in progress, by cache key (callers share them). */
+  private bucketJobs = new Map<string, Promise<void>>()
   private readonly now: () => number
 
   constructor(
@@ -157,7 +159,7 @@ export class QueryEngine {
       this.platformCache = {
         rev: this.repo.revision,
         at: now,
-        rows: this.repo.all<{ slug: string; name_fold: string }>(`SELECT DISTINCT slug, name_fold FROM album_platforms`)
+        rows: this.repo.all<{ slug: string; name_fold: string }>(`SELECT slug, name_fold FROM platform_names`)
       }
     }
     const wanted = new Set([value, ...(PLATFORM_ALIASES[value] ?? [])])
@@ -456,7 +458,7 @@ export class QueryEngine {
     if (hit && (hit.rev === this.repo.revision || stale > 0)) {
       if (hit.rev !== this.repo.revision && this.now() - hit.at >= stale && !hit.refreshing) {
         hit.refreshing = true
-        void this.computeBucketsChunked(cacheKey, group, c).catch(() => {
+        void this.bucketJob(cacheKey, group, c, () => new Promise((r) => setTimeout(r, 0))).catch(() => {
           hit.refreshing = false
         })
       }
@@ -467,7 +469,30 @@ export class QueryEngine {
 
   /** Compute (and cache) a grouping in the background: id-range chunks with a yield after each. */
   async warmBuckets(group: GroupBy, text = '', yieldFn: () => Promise<void> = () => new Promise((r) => setTimeout(r, 0))): Promise<void> {
-    await this.computeBucketsChunked(`${group}\u0000${text}`, group, this.compile(parseSearch(text), 'album'), yieldFn)
+    await this.bucketJob(`${group}\u0000${text}`, group, this.compile(parseSearch(text), 'album'), yieldFn)
+  }
+
+  /**
+   * Before browse(): an unfiltered bucket grouping that isn't cached yet (first switch to it, before
+   * the start-up prewarm got there or while a crawl postponed it) is aggregated in chunks with
+   * yields, instead of one 100-450 ms pass that would hold up every other catalog request.
+   */
+  async prepare(q: BrowseQuery): Promise<void> {
+    if (q.group === 'game' || q.group === 'album') return
+    const key = `${q.group}\u0000${q.text}`
+    if (this.bucketCache.has(key)) return
+    const c = this.compile(parseSearch(q.text), 'album')
+    if (!c.empty) return // filtered groupings aggregate only their matches (a few ms)
+    await this.bucketJob(key, q.group, c, () => new Promise((r) => setImmediate(r)))
+  }
+
+  private bucketJob(cacheKey: string, group: GroupBy, c: Compiled, yieldFn: () => Promise<void>): Promise<void> {
+    let job = this.bucketJobs.get(cacheKey)
+    if (!job) {
+      job = this.computeBucketsChunked(cacheKey, group, c, yieldFn).finally(() => this.bucketJobs.delete(cacheKey))
+      this.bucketJobs.set(cacheKey, job)
+    }
+    return job
   }
 
   private async computeBucketsChunked(cacheKey: string, group: GroupBy, c: Compiled, yieldFn: () => Promise<void> = () => new Promise((r) => setTimeout(r, 0))): Promise<void> {

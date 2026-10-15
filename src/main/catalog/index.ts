@@ -42,6 +42,13 @@ export interface CatalogService extends CatalogAPI {
   resolveSources(trackId: ID, opts?: { quality?: Settings['sources']['quality']; exclude?: string[] }): Promise<ResolvedSource[]>
   /** Demote a source the engine failed to play. Fire-and-forget. */
   markSourceFailed(trackId: ID, cacheKey: string, reason: string): void
+  /**
+   * Hint: these tracks are likely to play soon (the selected track, the next ones in a queue).
+   * Resolves the first few whose source needs a page request (KHInsider) at background priority, so
+   * play starts without that round-trip; a play arriving meanwhile joins it. Never searches.
+   * Fire-and-forget.
+   */
+  warmSources(trackIds: ID[]): void
   /** Album + game for a track (tagging, album gain, notifications). */
   albumOf(trackId: ID): Promise<{ album: Album; game: Game | null } | null>
   /** Evaluate a search query (same syntax as Browse) to track ids, e.g. for smart playlists. */

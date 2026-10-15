@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS games (
   sort_len        INTEGER NOT NULL DEFAULT ${UNKNOWN_LEN},
   intensity       REAL,
   sort_intensity  REAL NOT NULL DEFAULT ${UNKNOWN_INTENSITY},
+  -- Unused since 'random' sort is computed (see query.ts shuffleKey); kept for existing catalogs.
   rnd             INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS games_sort_name ON games(sort_name);
@@ -63,7 +64,6 @@ CREATE INDEX IF NOT EXISTS games_sort_year ON games(sort_year, sort_name);
 CREATE INDEX IF NOT EXISTS games_added ON games(added_at DESC, sort_name);
 CREATE INDEX IF NOT EXISTS games_sort_len ON games(sort_len, sort_name);
 CREATE INDEX IF NOT EXISTS games_sort_intensity ON games(sort_intensity, sort_name);
-CREATE INDEX IF NOT EXISTS games_rnd ON games(rnd);
 CREATE INDEX IF NOT EXISTS games_cover ON games(cover);
 CREATE INDEX IF NOT EXISTS games_franchise ON games(franchise);
 CREATE INDEX IF NOT EXISTS games_igdb_todo ON games(igdb_checked_at, album_count DESC);
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS albums (
   detail_error   TEXT,
   art_checked_at INTEGER,
   gone           INTEGER NOT NULL DEFAULT 0,
-  rnd            INTEGER NOT NULL DEFAULT 0,
+  rnd            INTEGER NOT NULL DEFAULT 0, -- unused (see games.rnd)
   UNIQUE(provider, provider_ref)
 );
 CREATE INDEX IF NOT EXISTS albums_game ON albums(game_id, kind_rank, sort_year);
@@ -117,7 +117,6 @@ CREATE INDEX IF NOT EXISTS albums_sort_year ON albums(sort_year, sort_title);
 CREATE INDEX IF NOT EXISTS albums_added ON albums(sort_added DESC, sort_title);
 CREATE INDEX IF NOT EXISTS albums_sort_len ON albums(sort_len, sort_title);
 CREATE INDEX IF NOT EXISTS albums_sort_intensity ON albums(sort_intensity, sort_title);
-CREATE INDEX IF NOT EXISTS albums_rnd ON albums(rnd);
 CREATE INDEX IF NOT EXISTS albums_kind ON albums(kind);
 CREATE INDEX IF NOT EXISTS albums_year ON albums(year);
 -- Narrow copy of the columns Browse aggregates and shuffles over (bucket groupings, 'random' sort),
@@ -133,6 +132,13 @@ CREATE TABLE IF NOT EXISTS album_platforms (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS album_platforms_slug ON album_platforms(slug, album_id);
 CREATE INDEX IF NOT EXISTS album_platforms_name ON album_platforms(name_fold, album_id);
+-- Every (slug, folded name) pair album_platforms has held: what platform filters match against
+-- (a DISTINCT over album_platforms reads ~200k rows, 150-350 ms).
+CREATE TABLE IF NOT EXISTS platform_names (
+  slug      TEXT NOT NULL,
+  name_fold TEXT NOT NULL,
+  PRIMARY KEY (slug, name_fold)
+) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS album_composers (
   album_id  INTEGER NOT NULL,
@@ -184,6 +190,9 @@ CREATE TABLE IF NOT EXISTS sources (
   UNIQUE(track_id, cache_key)
 );
 CREATE INDEX IF NOT EXISTS sources_track ON sources(track_id, provider);
+-- Expiring URLs (YouTube, SoundCloud, Bandcamp) by provider and key: a 403 marks a provider's URLs
+-- for refresh, and a refreshed URL is shared by every track using that stream (video chapters).
+CREATE INDEX IF NOT EXISTS sources_expiring ON sources(provider, cache_key) WHERE expires_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS analysis (
   track_id       INTEGER PRIMARY KEY,
@@ -236,7 +245,8 @@ CREATE TABLE IF NOT EXISTS crawl_pages (
 
 /**
  * Row counts for the status line, kept by triggers so 'catalog:status' never needs a COUNT(*) over
- * the whole catalog (~20 ms warm, ~350 ms cold on a 100k-album catalog).
+ * the whole catalog (~20 ms warm, ~350 ms cold on a 100k-album catalog). Albums are also counted per
+ * source ('albums:<provider>'), for Settings → Sources (a GROUP BY over every album: 50-100 ms).
  */
 export const COUNTS_TRIGGERS_DDL = `
 CREATE TRIGGER IF NOT EXISTS games_count_ins AFTER INSERT ON games
@@ -255,6 +265,13 @@ CREATE TRIGGER IF NOT EXISTS tracks_count_del AFTER DELETE ON tracks WHEN OLD.re
   BEGIN UPDATE catalog_counts SET n = n - 1 WHERE k = 'tracks'; END;
 CREATE TRIGGER IF NOT EXISTS tracks_count_upd AFTER UPDATE OF removed ON tracks WHEN (OLD.removed = 0) <> (NEW.removed = 0)
   BEGIN UPDATE catalog_counts SET n = n + CASE WHEN NEW.removed = 0 THEN 1 ELSE -1 END WHERE k = 'tracks'; END;
+CREATE TRIGGER IF NOT EXISTS albums_source_ins AFTER INSERT ON albums WHEN NEW.gone = 0
+  BEGIN INSERT INTO catalog_counts(k, n) VALUES ('albums:' || NEW.provider, 1) ON CONFLICT(k) DO UPDATE SET n = n + 1; END;
+CREATE TRIGGER IF NOT EXISTS albums_source_del AFTER DELETE ON albums WHEN OLD.gone = 0
+  BEGIN UPDATE catalog_counts SET n = n - 1 WHERE k = 'albums:' || OLD.provider; END;
+CREATE TRIGGER IF NOT EXISTS albums_source_upd AFTER UPDATE OF gone ON albums WHEN (OLD.gone = 0) <> (NEW.gone = 0)
+  BEGIN INSERT INTO catalog_counts(k, n) VALUES ('albums:' || NEW.provider, CASE WHEN NEW.gone = 0 THEN 1 ELSE -1 END)
+    ON CONFLICT(k) DO UPDATE SET n = n + excluded.n; END;
 `
 
 const COUNT_KEYS = ['games', 'albums', 'tracks']
@@ -267,7 +284,8 @@ export function recountCatalog(db: DB): void {
     `INSERT INTO catalog_counts(k, n)
        SELECT 'games', COUNT(*) FROM games
        UNION ALL SELECT 'albums', COUNT(*) FROM albums WHERE gone = 0
-       UNION ALL SELECT 'tracks', COUNT(*) FROM tracks WHERE removed = 0`
+       UNION ALL SELECT 'tracks', COUNT(*) FROM tracks WHERE removed = 0
+       UNION ALL SELECT 'albums:' || provider, COUNT(*) FROM albums WHERE gone = 0 GROUP BY provider`
   )
 }
 
@@ -303,11 +321,19 @@ const ADDED_COLUMNS: [string, string, string][] = [
   ['sources', 'subsong', 'INTEGER']
 ]
 
+/** Indexes that shipped and are no longer used (the old stored shuffle order: 'random' sort is computed). */
+const DROPPED_INDEXES = ['games_rnd', 'albums_rnd']
+
 export function ensureCatalogSchema(db: DB): void {
   db.exec(CATALOG_DDL)
   for (const [table, col, def] of ADDED_COLUMNS) {
     const cols = db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table) as { name: string }[]
     if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+  }
+  for (const name of DROPPED_INDEXES) db.exec(`DROP INDEX IF EXISTS ${name}`)
+  // Catalogs from before platform_names: fill it once.
+  if (!db.prepare(`SELECT 1 AS x FROM platform_names LIMIT 1`).get() && db.prepare(`SELECT 1 AS x FROM album_platforms LIMIT 1`).get()) {
+    db.exec(`INSERT OR IGNORE INTO platform_names(slug, name_fold) SELECT DISTINCT slug, name_fold FROM album_platforms`)
   }
   ensureCounts(db)
   db.prepare(`INSERT INTO catalog_meta(key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(CATALOG_SCHEMA_VERSION))

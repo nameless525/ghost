@@ -12,7 +12,7 @@
 // All HTML goes through the Chromium-stack pageFetch with the polite per-host limiter.
 // Locators: '<album or track URL>#<track_id>'.
 
-import { load } from 'cheerio'
+import { loadHtml } from './html'
 import type { ExternalAlbumHit } from '../../shared/types'
 import { baseTitle } from '../catalog/normalize'
 import { NetError } from '../net/errors'
@@ -24,6 +24,8 @@ import { scoreAlbumTitle } from './youtube'
 export const BC_ID = 'bandcamp'
 export const BC_SEARCH_TTL_MS = 3600_000
 const PAGE_TTL_MS = 3600_000
+/** A forced re-read accepts a page fetched this recently. */
+const FRESH_REUSE_MS = 2 * 60_000
 const BLOCK_BACKOFF_MS = 30 * 60_000
 
 export function searchUrl(q: string): string {
@@ -76,7 +78,7 @@ export function parseLength(s: string): { tracks: number | null; ms: number | nu
 
 export function parseSearchPage(html: string, query: string): ExternalAlbumHit[] {
   if (isChallengePage(html)) throw new NetError('blocked', 'bandcamp.com answered the search with a bot check (Client Challenge). Try again later, or paste a Bandcamp album link.')
-  const $ = load(html)
+  const $ = loadHtml(html)
   const out: ExternalAlbumHit[] = []
   $('li.searchresult').each((_, el) => {
     const r = $(el)
@@ -149,7 +151,7 @@ export function parseLocator(loc: string): { url: string; trackId: string } {
 /** Album (or single-track) page → ProviderAlbum with ready mp3-128 streams. */
 export function parseAlbumPage(html: string, pageUrl: string): ProviderAlbum {
   if (isChallengePage(html)) throw new NetError('blocked', 'bandcamp.com answered with a bot check (Client Challenge)')
-  const $ = load(html)
+  const $ = loadHtml(html)
   const raw = $('[data-tralbum]').first().attr('data-tralbum')
   if (!raw) throw new NetError('parse', `no track data on ${pageUrl}`)
   let d: Tralbum
@@ -264,7 +266,10 @@ export class BandcampProvider implements Provider {
   }
 
   private async page(url: string, opts: ProviderCallOptions, fresh = false): Promise<ProviderAlbum> {
-    const r = await this.http.pageFetch(url, { ttlMs: fresh ? 0 : PAGE_TTL_MS, cache: true, priority: opts.priority ?? 0, signal: opts.signal, force: opts.force || fresh, allowStale: !fresh })
+    // A fresh read (stored URLs failed or are about to expire) still takes a copy fetched moments
+    // ago: after one failure every track of the album refreshes from the same page.
+    const reread = fresh || !!opts.force
+    const r = await this.http.pageFetch(url, { ttlMs: reread ? FRESH_REUSE_MS : PAGE_TTL_MS, cache: true, priority: opts.priority ?? 0, signal: opts.signal, allowStale: !reread })
     try {
       return parseAlbumPage(r.html, url)
     } catch (e) {

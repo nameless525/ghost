@@ -494,7 +494,7 @@ describe('zophar: provider with a fake HTTP client', () => {
     expect(sections.every((s) => s.maxPages === undefined)).toBe(true)
     // Crawl politeness for the catalog crawler.
     expect(z.indexRefreshMs).toBe(14 * 24 * 3600_000)
-    expect(z.indexPageDelayMs).toBe(1500)
+    expect(z.indexPageDelayMs).toBe(1000)
   })
 
   it('fetchIndexPage: background priority and the browse TTL', async () => {

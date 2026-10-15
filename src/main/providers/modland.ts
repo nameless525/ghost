@@ -47,6 +47,8 @@ export const MODLAND_FILES_BASE = `${MODLAND_BASE}/pub/modules/`
 export const MODLAND_INDEX_URL = `${MODLAND_BASE}/allmods.zip`
 /** The index file is regenerated daily but changes slowly: reuse a downloaded copy this long. */
 export const MODLAND_INDEX_MAX_AGE_MS = 3 * 24 * 3600_000
+/** The parsed index (~11 MB of heap) is dropped after this long unused; the disk copy reloads in ~0.1 s. */
+export const MODLAND_INDEX_IDLE_MS = 10 * 60_000
 /** Albums per index page. */
 export const MODLAND_PAGE_SIZE = 500
 /** After a failed refresh, keep serving the old index this long before trying again. */
@@ -962,6 +964,8 @@ export class ModlandProvider implements IndexProvider {
   private loading: Promise<ModlandIndex> | null = null
   private cacheLoading: Promise<ModlandIndex | null> | null = null
   private retryAt = 0
+  private lastUsed = 0
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
   private headers = new Map<string, Promise<ChipFileInfo>>()
   private readonly now: () => number
   private readonly log: (msg: string) => void
@@ -980,6 +984,7 @@ export class ModlandProvider implements IndexProvider {
    * a download. `allowStale`: any index in memory or on disk will do (album lookups, search).
    */
   async loadIndex(opts: { force?: boolean; priority?: ProviderCallOptions['priority']; allowStale?: boolean } = {}): Promise<ModlandIndex> {
+    this.touch()
     if (!opts.force) {
       const idx = opts.allowStale ? await this.fromCache() : this.index
       if (idx && (opts.allowStale || this.fresh(idx) || this.now() < this.retryAt)) return idx
@@ -988,6 +993,24 @@ export class ModlandProvider implements IndexProvider {
       this.loading = null
     })
     return this.loading
+  }
+
+  /** Note a use of the index; once it has gone unused for MODLAND_INDEX_IDLE_MS it is let go. */
+  private touch(): void {
+    this.lastUsed = Date.now()
+    if (this.idleTimer) return
+    const check = () => {
+      const idle = Date.now() - this.lastUsed
+      if (idle >= MODLAND_INDEX_IDLE_MS && !this.loading && !this.cacheLoading) {
+        this.index = null
+        this.idleTimer = null
+        return
+      }
+      this.idleTimer = setTimeout(check, Math.max(1000, MODLAND_INDEX_IDLE_MS - idle))
+      this.idleTimer.unref?.()
+    }
+    this.idleTimer = setTimeout(check, MODLAND_INDEX_IDLE_MS)
+    this.idleTimer.unref?.()
   }
 
   /** The index in memory, else the one on disk (whatever its age), else null. */
@@ -1029,7 +1052,8 @@ export class ModlandProvider implements IndexProvider {
 
   private async load(force: boolean, priority: NonNullable<ProviderCallOptions['priority']>): Promise<ModlandIndex> {
     const cached = await this.fromCache()
-    if (cached && !force && this.fresh(cached)) return cached
+    // (A refresh that failed recently isn't retried yet, even if the index was reloaded from disk since.)
+    if (cached && !force && (this.fresh(cached) || this.now() < this.retryAt)) return cached
     try {
       const idx = await this.download(priority)
       this.index = idx

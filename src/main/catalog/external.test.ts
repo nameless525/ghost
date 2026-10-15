@@ -24,12 +24,16 @@ function fakeYtDlp(): YtDlp & { calls: string[][] } {
   const hornet = JSON.parse(read('youtube/video-hornet.json')) as YtVideo
   const full = JSON.parse(read('youtube/video-full-ost.json')) as YtVideo
   const calls: string[][] = []
+  let runs = 0
   const run = async (args: string[]): Promise<RunResult> => {
     calls.push(args)
     const target = args.at(-1)!
     if (args[0] === '-j') {
+      // Every extraction hands out a new URL (as googlevideo does); the first one is the fixture's.
+      const n = runs++
+      const fresh = (v: YtVideo) => (n ? { ...v, url: `${v.url}&run=${n}` } : v)
       const ids = args.filter((a) => a.startsWith('https://www.youtube.com/watch?v=')).map((a) => a.slice(-11))
-      return { stdout: ids.map((id) => JSON.stringify(id === full.id ? full : { ...hornet, id })).join('\n'), stderr: '', code: 0 }
+      return { stdout: ids.map((id) => JSON.stringify(fresh(id === full.id ? full : { ...hornet, id }))).join('\n'), stderr: '', code: 0 }
     }
     if (target.startsWith('https://www.youtube.com/results')) return { stdout: read('youtube/ytplaylists-hollow-knight.json'), stderr: '', code: 0 }
     if (target.startsWith('ytsearch12:')) return { stdout: read('youtube/ytsearch-full-ost.json'), stderr: '', code: 0 }
@@ -40,6 +44,8 @@ function fakeYtDlp(): YtDlp & { calls: string[][] } {
   const y = { calls, run, json: async (args: string[]) => JSON.parse((await y.run(args)).stdout) }
   return y as unknown as YtDlp & { calls: string[][] }
 }
+
+const extractions = (y: { calls: string[][] }) => y.calls.filter((c) => c[0] === '-j').length
 
 function fakeFetch(): typeof fetch & { urls: string[] } {
   const urls: string[] = []
@@ -71,6 +77,8 @@ function fakeKh(): Provider & { fail: boolean; calls: number } {
 }
 
 function setup(opts: { seed?: boolean } = {}) {
+  const clock = { now: NOW }
+  const now = () => clock.now
   const settings: Settings = defaultSettings('/tmp/ghost-dl')
   const db = memoryDb()
   const repo = new CatalogRepo(db)
@@ -80,14 +88,14 @@ function setup(opts: { seed?: boolean } = {}) {
   const kh = fakeKh()
   const registry = new ProviderRegistry()
     .register(kh)
-    .register(new ArchiveProvider({ fetch: fetchImpl, now: () => NOW }))
-    .register(new YouTubeProvider(async () => ytdlp, { now: () => NOW }))
+    .register(new ArchiveProvider({ fetch: fetchImpl, now }))
+    .register(new YouTubeProvider(async () => ytdlp, { now }))
   const statuses: CatalogStatus[] = []
   const svc = createCatalogService(
     { db, broadcast: ((_e: string, p: CatalogStatus) => statuses.push(p)) as never, getSettings: () => settings },
-    { registry, disableEnrichment: true, disableLocalScan: true, now: () => NOW, log: () => {} }
+    { registry, disableEnrichment: true, disableLocalScan: true, now, log: () => {} }
   )
-  return { settings, db, repo, svc, ytdlp, fetchImpl, kh, statuses }
+  return { settings, db, repo, svc, ytdlp, fetchImpl, kh, statuses, clock }
 }
 
 const until = async (cond: () => boolean, ms = 3000) => {
@@ -208,6 +216,57 @@ describe('external import', () => {
     expect(s2.source).toMatchObject({ cacheKey: 'yt:CbaFAQbCkdc.m4a', clipStartMs: 4_188_000 })
   })
 
+  it('after a 403, refreshing one chapter refreshes the whole video: one yt-dlp run, every chapter gets the new URL', async () => {
+    const { svc, ytdlp, clock, db } = setup({ seed: false })
+    const d = await svc.importExternal(
+      { provider: 'youtube', ref: 'CbaFAQbCkdc', title: 'Hollow Knight Full OST', subtitle: null, cover: null, trackCount: 23, totalMs: 6_644_000, url: 'https://www.youtube.com/watch?v=CbaFAQbCkdc', score: 0.8 },
+      {}
+    )
+    const [a, b, c] = d.tracks
+    const [sa] = await svc.resolveSources(a.id)
+    const key = (sa.source as { cacheKey: string }).cacheKey
+    clock.now += 60 * 60_000 // an hour later the address changed: the stored URL is refused
+    svc.markSourceFailed(a.id, key, 'stream failed: HTTP 403')
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM sources WHERE needs_refresh = 1`).get() as { n: number }).n).toBe(23)
+    const before = extractions(ytdlp)
+    const [fa] = await svc.resolveSources(a.id, { exclude: [] })
+    expect(extractions(ytdlp)).toBe(before + 1)
+    const url = (fa.source as { url: string }).url
+    expect(url).toContain('&run=')
+    // The other chapters were refreshed with it: no further runs, same URL, their own clips.
+    const [fb] = await svc.resolveSources(b.id)
+    const [fc] = await svc.resolveSources(c.id)
+    expect(extractions(ytdlp)).toBe(before + 1)
+    expect(fb.source).toMatchObject({ url, cacheKey: key, clipStartMs: 4_065_000, clipEndMs: 4_188_000 })
+    expect(fc.source).toMatchObject({ url, clipStartMs: 4_188_000 })
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM sources WHERE needs_refresh = 1`).get() as { n: number }).n).toBe(0)
+  })
+
+  it('stale fallback URLs behind a healthy source refresh in the background without holding up playback', async () => {
+    const { svc, ytdlp, db } = setup()
+    const hk = (await svc.browse({ text: 'hollow knight', group: 'album', sort: 'title', offset: 0, limit: 10 })).groups.find((g) => g.title === 'Hollow Knight')!
+    const dirtmouth = (await svc.album(hk.key.split(':')[1])).tracks.find((t) => t.title === 'Dirtmouth')!
+    await svc.resolveSources(dirtmouth.id)
+    // A YouTube copy found earlier, since marked for refresh (another YouTube URL got a 403).
+    db.prepare(
+      `INSERT INTO sources (track_id, provider, locator, cache_key, url, format, confidence, verified_at, expires_at, needs_refresh)
+       VALUES (?, 'youtube', '9Vdv01LsnQM', 'yt:9Vdv01LsnQM.m4a', 'https://old.example/yt', 'm4a', 0.8, ?, ?, 1)`
+    ).run(Number(dirtmouth.id), NOW, NOW + 3 * 3600_000)
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const run = ytdlp.run.bind(ytdlp)
+    ytdlp.run = (async (args: string[], o?: unknown) => {
+      await gate
+      return run(args, o as never)
+    }) as typeof ytdlp.run
+    const list = await svc.resolveSources(dirtmouth.id) // returns while yt-dlp is still held
+    expect(list.map((s) => s.provider)).toEqual(['khinsider', 'youtube'])
+    release()
+    const url = () => (db.prepare(`SELECT url FROM sources WHERE provider = 'youtube' AND track_id = ?`).get(Number(dirtmouth.id)) as { url: string }).url
+    await until(() => url() !== 'https://old.example/yt')
+    expect(url()).toContain('googlevideo')
+  })
+
   it('an explicit game name creates that game; unknown providers are rejected', async () => {
     const { svc } = setup()
     const d = await svc.importExternal(playlistHit, { gameName: 'Hallownest Chronicles' })
@@ -226,7 +285,7 @@ describe('external import', () => {
 
 describe('resolver fallback to search providers', () => {
   it('normal plays never search; failed or excluded album sources fall back in provider order, and cached candidates are reused', async () => {
-    const { svc, kh, ytdlp, fetchImpl, settings, db } = setup()
+    const { svc, kh, ytdlp, fetchImpl, settings, db, clock } = setup()
     const hk = (await svc.browse({ text: 'hollow knight', group: 'album', sort: 'title', offset: 0, limit: 10 })).groups.find((g) => g.title === 'Hollow Knight')!
     const album = await svc.album(hk.key.split(':')[1])
     const dirtmouth = album.tracks.find((t) => t.title === 'Dirtmouth')!
@@ -267,6 +326,7 @@ describe('resolver fallback to search providers', () => {
     // 4b. A YouTube URL refused with 403 (stale: bound to an IP this machine no longer has): every
     // stored YouTube URL is due for refresh, and re-resolving runs yt-dlp again instead of handing
     // back the memoised (stale) URL.
+    clock.now += 5 * 60_000 // (an extraction under 2 minutes old would be reused)
     svc.markSourceFailed(dirtmouth.id, (again[0].source as { cacheKey: string }).cacheKey, 'stream failed: HTTP 403')
     expect((db.prepare(`SELECT COUNT(*) AS n FROM sources WHERE provider = 'youtube' AND needs_refresh = 0`).get() as { n: number }).n).toBe(0)
     const resolvesBefore = ytdlp.calls.filter((c) => c[0] === '-j').length

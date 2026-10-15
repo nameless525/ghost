@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32, deflateRawSync } from 'node:zlib'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { isNetError, NetError } from '../net/errors'
 import type { BytesResult, HttpClient } from '../net/http'
 import {
@@ -17,6 +17,7 @@ import {
   isPlaceholderComposer,
   MODLAND_FAMILIES,
   MODLAND_ID,
+  MODLAND_INDEX_IDLE_MS,
   MODLAND_INDEX_MAX_AGE_MS,
   MODLAND_INDEX_URL,
   modlandAlbumHit,
@@ -580,6 +581,27 @@ describe('modland: provider', () => {
       await expect(none.fetchIndexPage('spc', 1)).rejects.toThrow(/offline/)
     } finally {
       await rm(empty, { recursive: true, force: true })
+    }
+  })
+
+  it('lets the parsed index go after it has been unused for a while, and reloads it from disk', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      const { p, http, logs } = setup()
+      await p.fetchIndexPage('spc', 1)
+      const held = () => (p as unknown as { index: unknown }).index
+      expect(held()).not.toBeNull()
+      vi.advanceTimersByTime(MODLAND_INDEX_IDLE_MS - 60_000)
+      await p.fetchIndexPage('spc', 1) // a use pushes the release back
+      vi.advanceTimersByTime(MODLAND_INDEX_IDLE_MS - 60_000)
+      expect(held()).not.toBeNull()
+      vi.advanceTimersByTime(120_000)
+      expect(held()).toBeNull()
+      expect((await p.fetchIndexPage('spc', 1)).totalAlbums).toBe(10)
+      expect(http.calls.map((c) => c.url)).toEqual([MODLAND_INDEX_URL]) // from the disk copy
+      expect(logs.some((l) => l.startsWith('index cache:'))).toBe(true)
+    } finally {
+      vi.useRealTimers()
     }
   })
 

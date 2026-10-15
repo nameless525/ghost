@@ -39,6 +39,7 @@ import { scoreAlbumTitle } from './youtube'
 export const IA_ID = 'archive'
 export const IA_BASE = 'https://archive.org'
 const CACHE_TTL_MS = 6 * 3600_000
+const CACHE_MAX = 64
 
 /** Collections that hold game soundtracks. */
 export const IA_GAME_COLLECTIONS = ['folksoundomy_gamesoundtracks', 'hifidelity_soundtracks']
@@ -826,7 +827,12 @@ export class ArchiveProvider implements IndexProvider {
   private getJson<T>(url: string, opts: ProviderCallOptions = {}, how: FetchHow = {}): Promise<T> {
     const useCache = how.cache !== false
     const c = useCache ? this.cache.get(url) : undefined
-    if (c && !opts.force && this.now() - c.at < CACHE_TTL_MS) return c.value as Promise<T>
+    if (c && !opts.force && this.now() - c.at < CACHE_TTL_MS) {
+      // Most recently used last (evicted oldest first).
+      this.cache.delete(url)
+      this.cache.set(url, c)
+      return c.value as Promise<T>
+    }
     const limiter = how.limiter ?? this.limiter
     const value = limiter.schedule(async () => {
       const timeout = AbortSignal.timeout(how.timeoutMs ?? 20_000)
@@ -853,7 +859,8 @@ export class ArchiveProvider implements IndexProvider {
     if (!useCache) return value
     value.catch(() => this.cache.delete(url))
     this.cache.set(url, { at: this.now(), value })
-    if (this.cache.size > 200) this.cache.delete(this.cache.keys().next().value!)
+    // Parsed metadata of a big item can run to megabytes: keep a modest number.
+    if (this.cache.size > CACHE_MAX) this.cache.delete(this.cache.keys().next().value!)
     return value
   }
 

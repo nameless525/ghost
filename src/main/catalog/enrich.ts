@@ -14,6 +14,8 @@ type FetchFn = typeof fetch
 const IGDB_IMG = 'https://images.igdb.com/igdb/image/upload'
 const SGDB_API = 'https://www.steamgriddb.com/api/v2'
 const RECHECK_MS = 30 * 24 * 3600_000
+/** Covers the accent worker remembers having looked up. */
+const SEEN_MAX = 20_000
 
 export interface IgdbGame {
   id: number
@@ -388,6 +390,8 @@ export class AccentWorker {
       if (r.accent || !r.cover) continue
       const k = `${r.gameId}\u0000${r.cover}`
       if (this.seen.has(k)) continue
+      // Bounded: forgetting only means a cover may be looked up in the art cache once more.
+      if (this.seen.size >= SEEN_MAX) this.seen.clear()
       this.seen.add(k)
       this.queue.push({ gameId: r.gameId, url: r.cover })
     }

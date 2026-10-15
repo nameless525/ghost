@@ -240,10 +240,13 @@ export class Crawler {
           // main process' library writes get the lock in between.
           await tick()
           const items = res.items.filter((h) => !h.onlyForKnownGame || repo.findGameKey(h.title, { scanAltNames: false }) != null)
-          const ids = await repo.upsertHitsPaced(items, { initial: !!job.initial })
+          // Only new or edited albums are re-clustered and re-indexed here (a refresh crawl sees
+          // nearly every album unchanged); the re-cluster at the end looks at everything anyway.
+          const changed: number[] = []
+          await repo.upsertHitsPaced(items, { initial: !!job.initial }, writerPause, changed)
           await writerPause()
-          await repo.assignGamesPaced(ids)
-          repo.revision++
+          await repo.assignGamesPaced(changed)
+          if (changed.length) repo.revision++
           repo.run(
             `INSERT INTO crawl_pages (job_id, section, page, total_pages, items, fetched_at) VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(job_id, section, page) DO UPDATE SET total_pages = excluded.total_pages, items = excluded.items, fetched_at = excluded.fetched_at, error = NULL`,

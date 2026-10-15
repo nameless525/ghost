@@ -230,20 +230,22 @@ export interface ClusterInput {
  * Assign every album a game key. Albums of mergeable kinds whose head ("X: subtitle") matches a
  * game that has an OST or gamerip are folded into that game.
  */
-export function clusterKeys(albums: ClusterInput[], existingPrimaryKeys?: ReadonlySet<string>): Map<number, string> {
+export function clusterKeys(albums: ClusterInput[], existingPrimaryKeys?: Pick<ReadonlySet<string>, 'has'>): Map<number, string> {
   const keys = new Map<number, string>()
-  const primary = new Set<string>(existingPrimaryKeys ?? [])
+  // The batch's own primaries, plus the catalog's (looked up, never copied: it can hold ~100k keys).
+  const local = new Set<string>()
+  const isPrimary = (k: string) => local.has(k) || !!existingPrimaryKeys?.has(k)
   for (const a of albums) {
     const k = gameKey(a.title)
     keys.set(a.id, k)
-    if (!MERGEABLE_KINDS.has(a.kind)) primary.add(k)
+    if (!MERGEABLE_KINDS.has(a.kind)) local.add(k)
   }
   for (const a of albums) {
     if (!MERGEABLE_KINDS.has(a.kind)) continue
     const k = keys.get(a.id)!
-    if (primary.has(k)) continue
+    if (isPrimary(k)) continue
     const h = headKey(a.title)
-    if (h && primary.has(h)) keys.set(a.id, h)
+    if (h && isPrimary(h)) keys.set(a.id, h)
   }
   return keys
 }

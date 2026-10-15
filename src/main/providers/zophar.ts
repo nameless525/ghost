@@ -25,7 +25,8 @@
 // No Cloudflare and no robots.txt. The index crawl reads listing pages only (≈120 pages for all 36
 // platforms); album pages are fetched when an album is opened, and streams need no request at all.
 
-import { load, type CheerioAPI } from 'cheerio'
+import type { CheerioAPI } from 'cheerio'
+import { fragmentText, loadHtml } from './html'
 import type { AudioFormat } from '../../shared/types'
 import { NetError } from '../net/errors'
 import { DAY, TTL, type HttpClient } from '../net/http'
@@ -339,13 +340,13 @@ function parseStats($: CheerioAPI, requestedPage: number): Pick<IndexPage, 'page
 
 /** A platform listing page (/music/<platform>[?page=N]). */
 export function parseListingPage(html: string, requestedPage = 1): IndexPage {
-  const $ = load(html)
+  const $ = loadHtml(html)
   assertZopharLayout($)
   return { items: parseGameList($), ...parseStats($, requestedPage) }
 }
 
 export function parseSearchPage(html: string): AlbumHit[] {
-  const $ = load(html)
+  const $ = loadHtml(html)
   assertZopharLayout($)
   return parseGameList($)
 }
@@ -501,7 +502,7 @@ function infoNames($: CheerioAPI, el: Parameters<CheerioAPI>[0]): string[] {
 export function parseAlbumPage(html: string, ref: string): ProviderAlbum {
   // Unknown albums are a 404 with an empty body; anything else without #gamepage is a layout change.
   if (!html.trim()) throw new NetError('not_found', `Zophar's Domain has no album "${ref}"`)
-  const $ = load(html)
+  const $ = loadHtml(html)
   const page = $('#gamepage')
   if (!page.length) throw new NetError('parse', "unexpected Zophar's Domain album page layout (no #gamepage)")
   const info = page.find('#music_info')
@@ -521,7 +522,7 @@ export function parseAlbumPage(html: string, ref: string): ProviderAlbum {
     if (!label || !data.length) return
     if (label.startsWith('alternative name')) {
       for (const frag of (data.html() ?? '').split(/<br\s*\/?>/i)) {
-        const t = tidyTitle(load(`<div>${frag}</div>`)('div').text())
+        const t = tidyTitle(fragmentText(frag))
         if (t && t !== title && !altTitles.includes(t)) altTitles.push(t)
       }
     } else if (label === 'release date') year = yearOf(data.find('a[href*="/music/year/"]').first().text()) ?? yearOf(data.text())
@@ -583,7 +584,7 @@ export class ZopharProvider implements IndexProvider {
   readonly name = "Zophar's Domain"
   /** New sets trickle in (a few a week) and land anywhere in the A–Z listings: a full re-read every two weeks. */
   readonly indexRefreshMs = ZOPHAR_INDEX_REFRESH_MS
-  /** A small hobby site: one listing page every ~1.5 s (≈120 pages, about 4 minutes). */
+  /** A small hobby site: a 1 s pause after each listing page, on top of its 1 s host spacing (≈120 pages, about 4 minutes). */
   readonly indexPageDelayMs = ZOPHAR_PAGE_DELAY_MS
   readonly indexEstimateMs = 3 * 60_000
 
