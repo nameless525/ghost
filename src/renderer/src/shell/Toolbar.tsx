@@ -5,7 +5,7 @@
 // On the Play screen it hides itself until the pointer nears the top edge.
 import { Bell, Compass, Download, LibraryBig, Music2, Pause, Play, Settings } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { DownloadItem } from '@shared/types'
+import type { DownloadItem, Progress } from '@shared/types'
 import { ghost } from '../ghost'
 import { Spring } from '../motion/spring'
 import { useTicker } from '../motion/ticker'
@@ -15,6 +15,8 @@ import { sfx } from '../sound'
 import { CoverArt } from '../ui/CoverArt'
 import { GhostMark } from '../ui/GhostMark'
 import { Marquee } from '../ui/Marquee'
+import { ProgressBar } from '../ui/ProgressBar'
+import { progressPercent } from '../ui/progress'
 import { ProgressRing } from '../ui/ProgressRing'
 import { Tooltip } from '../ui/Tooltip'
 import { cx } from '../ui/util'
@@ -117,9 +119,16 @@ function NotificationsButton() {
   )
 }
 
+/** "Getting the stream from YouTube · 45 %" (the percentage only when measured). */
+function loadingTip(p: Progress): string {
+  const pct = progressPercent(p)
+  return [p.label, p.detail, pct != null ? `${pct}%` : null].filter(Boolean).join(' · ')
+}
+
 function NowPlayingChip() {
   const current = usePlayer((s) => s.current)
   const status = usePlayer((s) => s.status)
+  const loading = usePlayer((s) => s.loading ?? null)
   const open = useUI((s) => s.overlays.nowPlaying)
   const bar = useRef<HTMLDivElement>(null)
   const playing = status === 'playing'
@@ -147,7 +156,7 @@ function NowPlayingChip() {
 
   return (
     <div className={cx('g-np-chip', open && 'g-np-chip--open', !current && 'g-np-chip--empty')} data-overlay-toggle="nowPlaying">
-      <Tooltip content={current ? 'Now playing' : 'Nothing playing'} shortcut="F6">
+      <Tooltip content={!current ? 'Nothing playing' : loading ? loadingTip(loading) : 'Now playing'} shortcut="F6">
         <button
           type="button"
           className="g-np-chip__main"
@@ -169,7 +178,9 @@ function NowPlayingChip() {
                 <Marquee className="g-np-chip__title" speed={30} paused={!playing}>
                   {current.title}
                 </Marquee>
-                <span className="g-np-chip__sub g-ellipsis">{current.gameName ?? current.albumTitle}</span>
+                <span className={cx('g-np-chip__sub g-ellipsis', loading && 'g-np-chip__sub--loading')}>
+                  {loading ? `${loading.label}…` : (current.gameName ?? current.albumTitle)}
+                </span>
               </>
             ) : (
               <span className="g-np-chip__sub">Nothing playing</span>
@@ -193,11 +204,14 @@ function NowPlayingChip() {
           </button>
         </Tooltip>
       )}
-      {current && (
-        <div className="g-np-chip__progress">
-          <div ref={bar} className="g-np-chip__progress-fill" />
-        </div>
-      )}
+      {current &&
+        (loading ? (
+          <ProgressBar className="g-np-chip__load" size="thin" progress={loading} waitKey={loading.wait} />
+        ) : (
+          <div className="g-np-chip__progress">
+            <div ref={bar} className="g-np-chip__progress-fill" />
+          </div>
+        ))}
     </div>
   )
 }

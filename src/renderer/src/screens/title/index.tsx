@@ -71,6 +71,7 @@ export default function TitleScreen(props: ScreenProps) {
 
   const current = usePlayer((s) => s.current)
   const status = usePlayer((s) => s.status)
+  const loadingLabel = usePlayer((s) => s.loading?.label ?? null)
   const anyOverlay = useUI((s) => Object.values(s.overlays).some(Boolean))
   const attract = useIdle(IDLE_MS, props.lifecycle !== 'exiting' && !anyOverlay)
   const attractRef = useRef(attract)
@@ -346,7 +347,15 @@ export default function TitleScreen(props: ScreenProps) {
               <i />
             </span>
             <span className="tl-np__label">
-              {playing ? 'Now playing' : status === 'paused' ? 'Paused' : status === 'loading' || status === 'buffering' ? 'Loading' : status === 'error' ? 'Couldn’t play' : 'Last played'}
+              {playing
+                ? 'Now playing'
+                : status === 'paused'
+                  ? 'Paused'
+                  : status === 'loading' || status === 'buffering'
+                    ? (loadingLabel ?? 'Loading')
+                    : status === 'error'
+                      ? 'Couldn’t play'
+                      : 'Last played'}
             </span>
             <span className="tl-np__title">{current.title}</span>
             {current.gameName && <span className="tl-np__game">{current.gameName}</span>}

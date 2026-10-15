@@ -2,9 +2,11 @@
 // connection to the shared SQLite file, builds the same CatalogService that can run in-process, with
 // main-process-only dependencies injected as RPCs:
 //   - page fetches (Electron net.fetch; KHInsider's Cloudflare refuses Node's fetch) → 'fetch'
-//   - the engine's archive lister → 'inspectArchive'
+//   - the engine's archive lister → 'inspectArchive' (with the TaskProgress key main reports its download under)
 //   - accents of cached art (the ghost-art protocol) → 'accent'
 //   - catalog:status and other events → 'broadcast' (fire-and-forget)
+//   - progress for the player: a resolve's network steps → 'resolveStep', the yt-dlp install →
+//     'toolProgress' (fire-and-forget)
 // Settings and newly fetched art are pushed from main ('settings', 'art'); nothing here calls back
 // synchronously. Plain JSON APIs (Internet Archive, IGDB, SteamGridDB) use the worker's own fetch
 // and yt-dlp runs as a child process of the worker.
@@ -21,8 +23,10 @@ import { RpcEndpoint, serializeError, type Handler, type PortLike } from '../net
 import { remoteFetch, type WireRequest, type WireResponse } from '../net/rpc-fetch'
 import { setSharedYtDlp, YtDlp } from '../tools/ytdlp'
 import type { CatalogService } from './index'
+import type { ResolveStep, ToolProgress } from './progress'
 import { txStats } from './repo'
 import { createCatalogService, PREFETCH_DWELL_MS, type CatalogInternals } from './service'
+import { ytDlpInstallReporter } from './tasks'
 
 export interface CatalogWorkerData {
   /** The app database (shared with the main process' library tables; WAL mode). */
@@ -69,6 +73,7 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
   let service: CatalogService | null = null
   let closed = false
   const artListeners = new Set<(url: string, bytes?: Buffer, accent?: string | null) => void>()
+  const settingsListeners = new Set<() => void>()
 
   let resolveReady!: (s: CatalogService) => void
   let rejectReady!: (e: unknown) => void
@@ -139,6 +144,7 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
   const ep = new RpcEndpoint(port, handlers, {
     settings: (s) => {
       settings = s as Settings
+      for (const fn of settingsListeners) fn()
     },
     art: (url, accent) => {
       for (const fn of artListeners) fn(String(url), undefined, accent === undefined ? undefined : (accent as string | null))
@@ -179,14 +185,20 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
         fetch: remoteFetch((req: WireRequest, o) => ep.call<WireResponse>('fetch', [req], o)),
         log: (m) => console.log(`[http] ${m}`)
       })
-      setSharedYtDlp(new YtDlp({ binDir: join(data.dataDir, 'bin'), log: (m) => console.log(`[yt-dlp] ${m}`) }))
       const broadcast = ((event: string, payload: unknown) => ep.notify('broadcast', event, payload)) as Broadcast
+      const onInstall = ytDlpInstallReporter({ broadcast, onTool: (p: ToolProgress) => ep.notify('toolProgress', p) })
+      setSharedYtDlp(new YtDlp({ binDir: join(data.dataDir, 'bin'), log: (m) => console.log(`[yt-dlp] ${m}`), onInstall }))
       service = createCatalogService(
         {
           db,
           broadcast,
           getSettings: () => settings,
-          inspectArchive: (source: EngineSource) => ep.call<ArchiveListing>('inspectArchive', [source])
+          inspectArchive: (source: EngineSource, ctx?: { progressKey?: string }) => ep.call<ArchiveListing>('inspectArchive', ctx?.progressKey ? [source, ctx] : [source]),
+          onResolveStep: (step: ResolveStep) => ep.notify('resolveStep', step),
+          onSettingsChanged: (fn) => {
+            settingsListeners.add(fn)
+            return () => settingsListeners.delete(fn)
+          }
         },
         {
           http,

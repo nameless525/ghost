@@ -6,6 +6,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { installMockGhost } from './mock'
 import { initPlayerStore } from './state/player'
+import { initTaskProgress } from './state/progress'
 import { initSettingsStore } from './state/settings'
 import { useUI } from './state/ui'
 import { initFramePacing } from './motion/pacing'
@@ -21,6 +22,7 @@ if (import.meta.env.GHOST_WEB_MOCK || (import.meta.env.DEV && !window.ghost)) in
 // it's usually here by the first commit and mounts with the shell.
 preloadScreen(useUI.getState().screen)
 initPlayerStore()
+initTaskProgress()
 initSettingsStore()
 initFramePacing()
 startRendererPerf()

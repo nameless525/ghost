@@ -478,6 +478,37 @@ describe('soundcloud: provider over a fake yt-dlp', () => {
     expect(statSync(join(dir, 'sc-1.m4a')).size).toBe(3000)
   })
 
+  it('a download reports its bytes to every caller waiting on it', async () => {
+    const dir = tmp()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    let report: RunOptions['onProgress']
+    const y = {
+      async run(args: string[], opts?: RunOptions): Promise<RunResult> {
+        report = opts?.onProgress
+        await gate
+        const path = args[args.indexOf('-o') + 1].replace('%(id)s', '7').replace('%(ext)s', 'mp3')
+        writeFileSync(path, Buffer.alloc(100))
+        return ok(`7\thttp_mp3_128\thttp\tmp3\tmp3\t128\t60\n${path}\n`)
+      }
+    } as unknown as YtDlp
+    const p = new SoundCloudProvider(async () => y, { now, cacheDir: dir })
+    const a: number[] = []
+    const b: [number, number | null][] = []
+    const first = p.resolveStream('7', { onBytes: (n) => a.push(n) })
+    const second = p.resolveStream('7#0-30000', { onBytes: (n, t) => b.push([n, t]) })
+    for (let i = 0; i < 100 && !report; i++) await new Promise((r) => setTimeout(r, 5))
+    report!(50, 100)
+    report!(100, 100)
+    release()
+    await Promise.all([first, second])
+    expect(a).toEqual([50, 100])
+    expect(b).toEqual([
+      [50, 100],
+      [100, 100]
+    ])
+  })
+
   it('a download that reports a path outside the cache dir is refused', async () => {
     const dir = tmp()
     const y = fakeYtDlp(() => ok('5\thls_aac_160k\tm3u8_native\tm4a\tmp4a.40.2\t160\t1\n/etc/passwd\n'))

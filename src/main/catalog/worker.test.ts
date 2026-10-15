@@ -18,7 +18,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { tx } from '../db'
 import { CatalogRepo } from './repo'
 import { openWorkerDb, serveCatalog, type CatalogServer } from './server'
-import { hit, memoryDb, P } from './testing'
+import { ProviderRegistry } from '../providers'
+import type { Provider } from '../providers/types'
+import type { ResolveStep, ToolProgress } from './progress'
+import { hit, memoryDb, P, seedSmall } from './testing'
 
 const fx = (name: string) => readFileSync(join(__dirname, '../providers/__fixtures__/khinsider', name), 'utf8')
 const KH = 'https://downloads.khinsider.com'
@@ -254,6 +257,59 @@ describe('catalog worker (client ↔ server)', () => {
     s2.close()
     c.close(new Error('done'))
     for (const p of [port1, port2, a, b]) p.close()
+  })
+})
+
+describe('progress for the player crosses the worker boundary', () => {
+  it('resolve steps and the yt-dlp install reach main; an archive listing carries its progress key', async () => {
+    const steps: ResolveStep[] = []
+    const tools: ToolProgress[] = []
+    const inspected: unknown[][] = []
+    const c = new CatalogClient({
+      broadcast: (() => {}) as never,
+      log: () => {},
+      onResolveStep: (s) => steps.push(s)
+    })
+    // The worker's side, served for real: a play resolving through a page request.
+    const db = memoryDb()
+    seedSmall(new CatalogRepo(db))
+    const kh: Provider = {
+      id: 'khinsider',
+      name: 'KHInsider',
+      async resolveStream(locator) {
+        return [{ provider: 'khinsider', source: { kind: 'http', url: `https://kh.example/${locator}`, cacheKey: `kh:${locator}` }, format: 'mp3', lossless: false, bitrateKbps: 320, sizeBytes: null, expiresAt: null }]
+      }
+    }
+    const { port1, port2 } = new MessageChannel()
+    const settings = defaultSettings('/tmp/ghost-dl')
+    const dir = mkdtempSync(join(tmpdir(), 'ghost-worker-progress-'))
+    const s = serveCatalog(port1, { dbPath: ':memory:', dataDir: dir, settings }, { db, log: () => {}, internals: { registry: new ProviderRegistry().register(kh), disableEnrichment: true, disableLocalScan: true, chip: false } })
+    c.attach(port2)
+    const track = db.prepare(`SELECT id FROM tracks WHERE title = 'Dirtmouth'`).get() as { id: number }
+    await c.catalog.resolveSources(String(track.id))
+    await until(() => steps.length === 1)
+    expect(steps[0]).toEqual({ trackId: String(track.id), provider: 'khinsider', providerName: 'KHInsider', kind: 'stream', fraction: null, detail: null })
+    s.close()
+    c.close(new Error('done'))
+    port1.close()
+    port2.close()
+    rmSync(dir, { recursive: true, force: true })
+
+    // The notes and the archive call as the worker sends them.
+    const { port1: w, port2: m } = new MessageChannel()
+    const c2 = new CatalogClient({ broadcast: (() => {}) as never, log: () => {}, onToolProgress: (p) => tools.push(p), inspectArchive: async (...args) => (inspected.push(args), { entries: [] }) as never })
+    c2.attach(m)
+    const worker = new RpcEndpoint(w)
+    worker.notify('toolProgress', { tool: 'yt-dlp', fraction: 0.5, detail: 'One-time download · 17.0 of 34.0 MB', done: false })
+    const source = { kind: 'http', url: 'https://vgmrips.net/files/x.zip', cacheKey: 'chip:x' }
+    await worker.call('inspectArchive', [source, { progressKey: 'album:3' }])
+    await worker.call('inspectArchive', [source])
+    await until(() => tools.length === 1)
+    expect(tools[0]).toMatchObject({ tool: 'yt-dlp', fraction: 0.5 })
+    expect(inspected).toEqual([[source, { progressKey: 'album:3' }], [source]])
+    c2.close(new Error('done'))
+    w.close()
+    m.close()
   })
 })
 

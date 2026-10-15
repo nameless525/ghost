@@ -246,6 +246,8 @@ export interface Progress {
   since: number
   /** Where this step sits in the whole wait, as [from, to] within 0..1 (default [0, 1]), so bars stay monotonic across steps. */
   span?: [number, number]
+  /** Identity of the whole wait: its steps share it, and a new one (e.g. a fallback to another source) restarts bars. */
+  wait?: string
 }
 
 /** A long task's progress, pushed as the 'progress' event. Bars find theirs by `key`. */

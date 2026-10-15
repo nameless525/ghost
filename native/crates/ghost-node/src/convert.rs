@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use ghost_engine::{
-    ArchiveListing, DeviceInfo, DownloadOptions, DownloadStatus, EngineEvent, LoopMode, NormalizationMode, OfflineAnalysis,
-    PlaybackState, PositionInfo, SourceExtras, SourceSpec, TagInfo, TrackInfo, TrackLoad,
+    ArchiveListing, DeviceInfo, DownloadOptions, DownloadStatus, EngineEvent, LoadProgress, LoopMode, NormalizationMode,
+    OfflineAnalysis, PlaybackState, PositionInfo, Slot, SourceExtras, SourceSpec, TagInfo, TrackInfo, TrackLoad,
 };
 use napi::bindgen_prelude::*;
 use napi::JsValue;
@@ -280,6 +280,14 @@ pub fn loop_mode(s: &str) -> Result<LoopMode> {
     }
 }
 
+pub fn slot(s: &str) -> Result<Slot> {
+    match s {
+        "current" => Ok(Slot::Current),
+        "preview" => Ok(Slot::Preview),
+        other => Err(invalid(format!("unknown slot '{other}' (expected 'current' | 'preview')"))),
+    }
+}
+
 pub fn normalization_mode(s: &str) -> Result<NormalizationMode> {
     match s {
         "auto" => Ok(NormalizationMode::Auto),
@@ -343,6 +351,45 @@ impl From<PositionInfo> for JsEnginePosition {
             at: p.at_epoch_ms,
         }
     }
+}
+
+/// `EngineLoadProgress` (see `ghost_engine::LoadProgress`).
+#[napi(object, use_nullable = true)]
+pub struct JsLoadProgress {
+    pub id: String,
+    pub started: bool,
+    pub connected: bool,
+    pub bytes: f64,
+    pub total_bytes: Option<f64>,
+    pub whole_file: bool,
+    pub buffered_ms: f64,
+    pub target_ms: f64,
+    pub stalled_ms: f64,
+    pub stall_timeout_ms: f64,
+}
+
+impl From<LoadProgress> for JsLoadProgress {
+    fn from(p: LoadProgress) -> Self {
+        JsLoadProgress {
+            id: p.id,
+            started: p.started,
+            connected: p.connected,
+            bytes: p.bytes as f64,
+            total_bytes: p.total_bytes.map(|t| t as f64),
+            whole_file: p.whole_file,
+            buffered_ms: p.buffered_ms as f64,
+            target_ms: p.target_ms as f64,
+            stalled_ms: p.stalled_ms as f64,
+            stall_timeout_ms: p.stall_timeout_ms as f64,
+        }
+    }
+}
+
+/// `EngineCacheProgress`: `{ bytes, totalBytes }`.
+#[napi(object, use_nullable = true)]
+pub struct JsCacheProgress {
+    pub bytes: f64,
+    pub total_bytes: Option<f64>,
 }
 
 #[napi(object)]

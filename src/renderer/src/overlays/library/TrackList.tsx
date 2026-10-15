@@ -458,7 +458,9 @@ const Row = memo(function Row({ optId, item, index, track, selected, sortable, e
     transition: { duration: 280, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
   })
   const playState = usePlayer((s) => (s.current?.id === track.id ? s.status : null))
-  const playing = playState === 'playing' || playState === 'loading' || playState === 'buffering'
+  const playing = playState === 'playing'
+  // Loading / buffering: not playing yet (the eq breathes instead of dancing), like the queue and the player.
+  const busy = playState === 'loading' || playState === 'buffering'
   const heart = useRef<SVGSVGElement>(null)
   const wasLiked = useRef(track.liked)
   useEffect(() => {
@@ -488,7 +490,7 @@ const Row = memo(function Row({ optId, item, index, track, selected, sortable, e
         <div className={cx('tl-row__body', introDelay >= 0 && 'tl-row__body--intro', entering && 'tl-row__body--enter')} style={bodyStyle}>
           <span className="tl-c tl-c--num">
             {playState ? (
-              <span className={cx('tl-eq', playing && 'tl-eq--on')} aria-label={playing ? 'Playing' : 'Paused'}>
+              <span className={cx('tl-eq', playing && 'tl-eq--on', busy && 'tl-eq--busy')} aria-label={playing ? 'Playing' : busy ? 'Loading' : 'Paused'}>
                 <i />
                 <i />
                 <i />

@@ -41,6 +41,8 @@ use crate::{ArchiveEntryInfo, ArchiveListing, SourceSpec};
 /// misdetected multi-gigabyte stream).
 const MAX_IN_MEMORY: u64 = 256 * 1024 * 1024;
 const PEEK: usize = 4096;
+/// Whole-stream reads with a progress callback report after every this many bytes.
+const PROGRESS_STEP: u64 = 64 * 1024;
 
 /// Context for opening sources.
 pub struct OpenCtx<'a> {
@@ -156,8 +158,23 @@ fn peek(spec: &SourceSpec, ctx: &OpenCtx<'_>) -> Result<(Vec<u8>, Option<u64>), 
     }
 }
 
+/// Whether the decoder for `spec` needs the whole file before its first sample (archive entries;
+/// libgme / libopenmpt formats), judged from the entry / hint / extension alone (no I/O). A chip
+/// file behind an unknown extension is only recognised by content, so it reads `false` here.
+pub(crate) fn whole_file_hint(spec: &SourceSpec) -> bool {
+    spec.extras().archive_entry.is_some() || matches!(ext_of(spec).as_deref().and_then(ghost_formats::family_for_extension), Some(Family::Gme | Family::Openmpt))
+}
+
+/// Progress callback for whole-stream reads: (bytes in the stream cache, total size).
+pub type ReadProgress<'a> = &'a mut dyn FnMut(u64, Option<u64>);
+
 /// The whole stream in memory (through the cache for HTTP sources).
 pub(crate) fn read_all(spec: &SourceSpec, ctx: &OpenCtx<'_>, max: u64) -> Result<Vec<u8>, SourceError> {
+    read_all_with(spec, ctx, max, None)
+}
+
+/// [`read_all`], reporting an HTTP source's arrival to `progress` as it is read.
+pub(crate) fn read_all_with(spec: &SourceSpec, ctx: &OpenCtx<'_>, max: u64, mut progress: Option<ReadProgress<'_>>) -> Result<Vec<u8>, SourceError> {
     let too_big = || SourceError::new(format!("file too large to load ({} MB max)", max >> 20));
     match spec {
         SourceSpec::File { path, .. } => {
@@ -174,7 +191,20 @@ pub(crate) fn read_all(spec: &SourceSpec, ctx: &OpenCtx<'_>, max: u64) -> Result
                 return Err(too_big());
             }
             let mut out = Vec::with_capacity(r.total_len().unwrap_or(0) as usize);
-            (&mut r).take(max + 1).read_to_end(&mut out).map_err(|e| SourceError::new(e.to_string()))?;
+            match progress.as_mut() {
+                None => {
+                    (&mut r).take(max + 1).read_to_end(&mut out).map_err(|e| SourceError::new(e.to_string()))?;
+                }
+                Some(report) => loop {
+                    // A step at a time, reporting what the cache holds (the fetcher runs ahead).
+                    let n = (&mut r).take(PROGRESS_STEP).read_to_end(&mut out).map_err(|e| SourceError::new(e.to_string()))?;
+                    let p = r.entry().progress();
+                    report(p.bytes, p.total);
+                    if n == 0 || out.len() as u64 > max {
+                        break;
+                    }
+                },
+            }
             if out.len() as u64 > max {
                 return Err(too_big());
             }

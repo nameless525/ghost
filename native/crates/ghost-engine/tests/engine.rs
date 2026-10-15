@@ -551,3 +551,104 @@ fn streamed_flac_skips_embedded_art() {
     assert_eq!(got.len(), want.len());
     assert!(got == want, "streamed decode differs");
 }
+
+/// Poll `load_progress(Current)` every 2 ms until `done` returns true for a report (or `timeout`),
+/// returning every report seen.
+fn poll_load(engine: &ghost_engine::Engine, timeout: Duration, done: impl Fn(&ghost_engine::LoadProgress) -> bool) -> Vec<ghost_engine::LoadProgress> {
+    let t0 = std::time::Instant::now();
+    let mut seen = Vec::new();
+    loop {
+        if let Some(p) = engine.load_progress(ghost_engine::Slot::Current) {
+            let stop = done(&p);
+            seen.push(p);
+            if stop {
+                return seen;
+            }
+        }
+        assert!(t0.elapsed() < timeout, "load progress never got there: {:?}", seen.last());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// `load_progress` while an HTTP track starts: the source's size once connected, bytes arriving,
+/// decoded audio toward the 200 ms prefill, then started. A local file reads as fully present;
+/// paused, it buffers past the prefill without starting.
+#[test]
+fn load_progress_follows_an_http_start_and_a_paused_file() {
+    use ghost_engine::Slot;
+    let dir = tmp_dir("loadprog");
+    let rate = 44_100;
+    let a = dir.join("a.wav");
+    wav::write_f32(&a, rate, 2, &sweep(rate, rate as usize * 3, 200.0, 4000.0, 0.5)).unwrap();
+    let data = std::fs::read(&a).unwrap();
+    let len = data.len() as u64;
+    // 16 KB per 40 ms (~400 KB/s, a bit over real time for this 353 KB/s WAV).
+    let srv = serve(data, "a.wav", Duration::from_millis(40), false);
+    let (engine, _sink) = offline(&dir, 48_000);
+    assert_eq!(engine.load_progress(Slot::Current), None);
+    engine.set_current(track("h", SourceSpec::http(srv.url.clone(), "loadprog-a")), 0, true);
+    let seen = poll_load(&engine, Duration::from_secs(20), |p| p.started);
+    assert!(seen.iter().all(|p| p.id == "h" && !p.whole_file && p.stall_timeout_ms == 8_000), "{seen:?}");
+    let waiting: Vec<_> = seen.iter().filter(|p| !p.started && p.connected).collect();
+    assert!(!waiting.is_empty(), "never saw it waiting: {seen:?}");
+    assert!(waiting.iter().all(|p| p.total_bytes == Some(len) && p.bytes <= len && p.target_ms == 200), "{waiting:?}");
+    assert!(waiting.iter().any(|p| p.buffered_ms > 0 && p.buffered_ms < 200), "no partial prefill: {waiting:?}");
+    assert!(seen.windows(2).all(|w| w[0].bytes <= w[1].bytes), "bytes went backwards");
+    let last = seen.last().unwrap();
+    assert!(last.started && last.target_ms == 0 && last.bytes > 0, "{last:?}");
+    assert_eq!(engine.load_progress(Slot::Preview), None);
+    engine.stop();
+    let t0 = std::time::Instant::now();
+    while engine.load_progress(Slot::Current).is_some() {
+        assert!(t0.elapsed() < Duration::from_secs(2), "stopped track still reported");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    // A local file, paused: everything is present; the ring fills past the prefill, unstarted.
+    let size = std::fs::metadata(&a).unwrap().len();
+    engine.set_current(track("f", file(&a)), 0, false);
+    let seen = poll_load(&engine, Duration::from_secs(10), |p| p.id == "f" && p.buffered_ms >= 1_000);
+    let p = seen.last().unwrap();
+    assert!(p.connected && p.bytes == size && p.total_bytes == Some(size) && !p.started && p.stalled_ms == 0, "{p:?}");
+    engine.play();
+    poll_load(&engine, Duration::from_secs(10), |p| p.started);
+}
+
+/// Before the server answers, `load_progress` says so and runs the stall clock toward the
+/// reader's timeout.
+#[test]
+fn load_progress_reports_a_source_that_does_not_answer() {
+    let dir = tmp_dir("loadprog-stall");
+    let srv = serve(vec![0u8; 1000], "hang.mp3", Duration::ZERO, true);
+    let (engine, _sink) = offline(&dir, 48_000);
+    engine.set_current(track("s", SourceSpec::http(srv.url.clone(), "loadprog-stall")), 0, true);
+    std::thread::sleep(Duration::from_millis(1200));
+    let p = engine.load_progress(ghost_engine::Slot::Current).expect("current track");
+    println!("{p:?}");
+    assert!(p.id == "s" && !p.started && !p.connected && p.bytes == 0 && p.total_bytes.is_none() && p.buffered_ms == 0, "{p:?}");
+    assert!(p.stalled_ms >= 800 && p.stalled_ms < 4_000 && p.stall_timeout_ms == 8_000, "{p:?}");
+}
+
+/// What one `load_progress` / `cache_progress` call costs while a track loads (the player polls
+/// them ~5×/s during waits). `cargo test --release --test engine load_progress_cost -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn load_progress_cost() {
+    let dir = tmp_dir("loadprog-cost");
+    let srv = serve(vec![0u8; 4 << 20], "slow.mp3", Duration::from_millis(50), false);
+    let (engine, _sink) = offline(&dir, 48_000);
+    engine.set_current(track("c", SourceSpec::http(srv.url.clone(), "loadprog-cost")), 0, true);
+    poll_load(&engine, Duration::from_secs(10), |p| p.connected);
+    let n = 200_000;
+    let t0 = std::time::Instant::now();
+    for _ in 0..n {
+        std::hint::black_box(engine.load_progress(ghost_engine::Slot::Current));
+    }
+    let load = t0.elapsed() / n;
+    let t0 = std::time::Instant::now();
+    for _ in 0..n {
+        std::hint::black_box(engine.cache_progress("loadprog-cost"));
+    }
+    let cache = t0.elapsed() / n;
+    println!("load_progress: {load:?}/call, cache_progress: {cache:?}/call (fetcher and decoder running)");
+}

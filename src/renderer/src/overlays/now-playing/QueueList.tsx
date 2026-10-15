@@ -377,6 +377,7 @@ function QueueRowView({
 }: RowProps & { nodeRef?: (el: HTMLElement | null) => void; style?: CSSProperties; dragging?: boolean; dndProps?: Record<string, unknown> }) {
   const t = row.item.track
   const playing = usePlayer((s) => s.status === 'playing')
+  const busy = usePlayer((s) => current && (s.status === 'loading' || s.status === 'buffering'))
   return (
     <div
       ref={nodeRef}
@@ -404,7 +405,7 @@ function QueueRowView({
       <span className="np-q-row__text">
         <span className="np-q-row__title g-ellipsis">{t.title}</span>
         <span className="np-q-row__sub g-ellipsis">
-          {current && pinned ? <em>{playing ? 'Now playing' : 'Paused'}</em> : null}
+          {current && pinned ? <em>{playing ? 'Now playing' : busy ? 'Loading' : 'Paused'}</em> : null}
           {current && pinned ? ' · ' : null}
           {t.gameName ?? t.albumTitle}
         </span>

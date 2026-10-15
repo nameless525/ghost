@@ -214,6 +214,50 @@ fn underrun_fades_and_reports() {
     assert!(max_jump(&out) < slope * 1.5);
 }
 
+/// The counters behind `Engine::load_progress`: short of its prefill, a voice reports what it
+/// has against the prefill; after running dry, what came since against the rebuffer amount.
+#[test]
+fn wait_progress_follows_prefill_and_rebuffer() {
+    use crate::voice::{PLAY_REBUFFERING, PLAY_STARTED, PLAY_WAITING};
+    let (mut m, mut link, _) = mixer(false);
+    let (prefill, rebuffer) = ((PREFILL_SEC * RATE as f32) as u64, (REBUFFER_SEC * RATE as f32) as u64);
+    let (mut prod, cons) = rtrb::RingBuffer::new(RATE as usize * 4);
+    let shared = VoiceShared::new(1);
+    shared.origin_set.store(true, Ordering::Release);
+    // What the decode worker does: push frames, then publish the write position.
+    let mut written = 0u64;
+    let mut feed = |frames: u64| {
+        prod.push_entire_slice(&vec![0.25; frames as usize * 2]).unwrap();
+        written += frames;
+        shared.write_pos.store(written, Ordering::Release);
+    };
+    let progress = || shared.wait_progress(prefill, rebuffer);
+
+    feed(prefill / 2);
+    send(&mut link, MixerCmd::SetCurrent { voice: Some(Box::new(Voice::new(1, 1, Bus::Music, cons, shared.clone(), 1.0))), fade_frames: 0 });
+    send(&mut link, MixerCmd::Play);
+    render(&mut m, 2048, 512);
+    assert_eq!(progress(), (PLAY_WAITING, prefill / 2, prefill));
+
+    feed(prefill);
+    render(&mut m, 512, 512);
+    assert!(events(&mut link).contains(&MixerEvent::Started(1)));
+    assert_eq!(progress(), (PLAY_STARTED, 0, 0), "nothing to wait for while playing");
+
+    // Play past everything that was decoded: the voice runs dry.
+    render(&mut m, (prefill * 2) as usize, 512);
+    assert!(events(&mut link).contains(&MixerEvent::Underrun(1, true)));
+    assert_eq!(progress(), (PLAY_REBUFFERING, 0, rebuffer));
+    feed(rebuffer / 3);
+    render(&mut m, 512, 512);
+    assert_eq!(progress(), (PLAY_REBUFFERING, rebuffer / 3, rebuffer));
+
+    feed(rebuffer);
+    render(&mut m, 512, 512);
+    assert!(events(&mut link).contains(&MixerEvent::Underrun(1, false)));
+    assert_eq!(progress(), (PLAY_STARTED, 0, 0));
+}
+
 #[test]
 fn preview_ducks_music_and_ends() {
     let (mut m, mut link, _) = mixer(false);

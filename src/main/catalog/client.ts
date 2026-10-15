@@ -14,12 +14,18 @@ import type { Broadcast } from '../ipc'
 import { deserializeError, RpcEndpoint, transfer, type CallContext, type PortLike, type SerializedError } from '../net/rpc'
 import type { WireRequest, WireResponse } from '../net/rpc-fetch'
 import type { CatalogService } from './index'
+import type { ResolveStep, ToolProgress } from './progress'
 
 export interface CatalogClientOptions {
   broadcast: Broadcast
   /** Run a page request for the worker (main: Electron net.fetch). */
   fetch?: (req: WireRequest, signal: AbortSignal) => Promise<{ res: WireResponse; transfer: ArrayBuffer[] }>
-  inspectArchive?: (source: EngineSource) => Promise<ArchiveListing>
+  /** `progressKey`: the TaskProgress key to report the archive's download under (an album being opened). */
+  inspectArchive?: (source: EngineSource, ctx?: { progressKey?: string }) => Promise<ArchiveListing>
+  /** A resolve a play waits on went to the network (re-sent as a download progresses). */
+  onResolveStep?: (step: ResolveStep) => void
+  /** The one-time yt-dlp install, as it goes. */
+  onToolProgress?: (p: ToolProgress) => void
   /** Accent colour of a cached cover. */
   accentOf?: (url: string) => Promise<string | null>
   /** The worker failed to build the catalog (DB unreadable, …). */
@@ -115,6 +121,8 @@ export class CatalogClient {
         this.ready = true
         this.opts.onReady?.()
       },
+      resolveStep: (step) => this.opts.onResolveStep?.(step as ResolveStep),
+      toolProgress: (p) => this.opts.onToolProgress?.(p as ToolProgress),
       fatal: (e) => this.opts.onFatal?.(deserializeError(e as SerializedError))
     })
     if (this.settings) this.ep.notify('settings', this.settings)
@@ -182,9 +190,9 @@ export class CatalogClient {
         const r = await o.fetch(req as WireRequest, ctx.signal)
         return transfer(r.res, r.transfer)
       },
-      inspectArchive: async ([source]: unknown[]) => {
+      inspectArchive: async ([source, ctx]: unknown[]) => {
         if (!o.inspectArchive) throw new Error('The audio engine is unavailable, so chiptune rip sets can’t be opened.')
-        return o.inspectArchive(source as EngineSource)
+        return ctx ? o.inspectArchive(source as EngineSource, ctx as { progressKey?: string }) : o.inspectArchive(source as EngineSource)
       },
       accent: async ([url]: unknown[]) => (o.accentOf ? o.accentOf(String(url)) : null)
     }

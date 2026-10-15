@@ -2,6 +2,7 @@
 // enrichment and analysis storage, external search/import (YouTube, Internet Archive, Bandcamp) and
 // the local-files scan, behind the CatalogAPI contract (src/shared/api.ts).
 
+import { basename, resolve as resolvePath } from 'node:path'
 import { parseSearch } from '../../shared/search'
 import type { AlbumDetail, BrowsePage, BrowseQuery, CatalogStatus, ExternalAlbumHit, Game, ID, SourceIndexStatus, TrackView } from '../../shared/types'
 import { isNetError, NetError } from '../net/errors'
@@ -9,8 +10,9 @@ import type { HttpClient } from '../net/http'
 import { createDefaultRegistry, type ProviderRegistry } from '../providers'
 import { CHIP_ID, ChipProvider } from '../providers/chip'
 import { KH_ID } from '../providers/khinsider'
-import { LocalProvider } from '../providers/local'
-import { isIndexProvider, type IndexProvider, type ProviderAlbum } from '../providers/types'
+import { LocalProvider, type ScanProgress, type ScanResult } from '../providers/local'
+import { SET_MAX_TRACKS } from '../providers/soundcloud'
+import { isIndexProvider, type IndexProvider, type Provider, type ProviderAlbum } from '../providers/types'
 import type { YtDlp } from '../tools/ytdlp'
 import { ChipIndexer, VGMRIPS_REFRESH_MS, type ChipIndexerDeps } from './chip'
 import { Crawler } from './crawler'
@@ -21,6 +23,7 @@ import { baseTitle } from './normalize'
 import { CatalogRepo, writerPause } from './repo'
 import { CLUSTER_VERSION } from './schema'
 import { SourceResolver } from './resolver'
+import { TaskReporter, TypicalMs } from './tasks'
 
 const DETAIL_TTL_MS = 7 * 24 * 3600_000
 const ART_QUEUE_MAX = 60
@@ -33,6 +36,16 @@ export const PREFETCH_DWELL_MS = 600
 const SEARCHED_MAX = 500
 /** warmSources resolves at most this many tracks per call. */
 const WARM_MAX = 3
+/**
+ * Typical time to fetch an album's track list, per provider, until this session has measured its
+ * own: a page request (KHInsider, Zophar's Domain, Bandcamp), an API call (Internet Archive), a
+ * yt-dlp extraction (YouTube, SoundCloud).
+ */
+const ALBUM_MS: Record<string, number> = { khinsider: 900, zophar: 700, modland: 800, bandcamp: 900, archive: 1000, youtube: 4000, soundcloud: 4000 }
+/** Opening a chiptune set before its archive downloads (main reports the download itself). */
+const CHIP_OPEN_MS = 900
+/** A SoundCloud set import extracts every track: about this long each. */
+const SC_SET_TRACK_MS = 1000
 
 /** Test / smoke-script seams. Production uses the defaults. */
 export interface CatalogInternals {
@@ -157,7 +170,10 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     }))
   const quality = () => deps.getSettings().sources.quality
   const qe = new QueryEngine(repo, quality, { bucketStaleMs: internals.bucketStaleMs ?? 0, sourceOrder: () => deps.getSettings().sources.order })
-  const resolver = new SourceResolver({ repo, registry: lazyRegistry(getRegistry), getSettings: deps.getSettings, now, log })
+  const resolver = new SourceResolver({ repo, registry: lazyRegistry(getRegistry), getSettings: deps.getSettings, now, log, onStep: deps.onResolveStep })
+  // Waits with a bar of their own (the 'progress' event): album track lists, imports, folder scans.
+  const tasks = new TaskReporter((p) => deps.broadcast('progress', p))
+  const albumMs = new TypicalMs(ALBUM_MS, 1000)
 
   // --- status broadcast (throttled) -----------------------------------------------------------
   let lastSent = 0
@@ -452,9 +468,13 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     if (!st) return Promise.reject(new NetError('not_found', `no album ${albumId}`))
     const provider = getRegistry().get(st.provider)
     if (!provider?.getAlbum) return Promise.resolve()
+    const t0 = now()
+    // Someone is waiting (priority 0): a chiptune set's download through the engine reports to their bar.
     const p = provider
-      .getAlbum(st.provider_ref, { priority, force })
+      .getAlbum(st.provider_ref, priority === 0 ? { priority, force, progressKey: `album:${albumId}` } : { priority, force })
       .then((d) => {
+        // Learn how long this source takes when asked interactively (background fetches queue behind others).
+        if (priority === 0 && provider.id !== CHIP_ID) albumMs.record(provider.id, now() - t0)
         repo.applyAlbumDetail(albumId, d)
         storeProviderStreams(albumId, d)
         notify()
@@ -597,22 +617,43 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     }, 600)
   }
 
+  /** The first step of opening an album whose track list isn't here yet. */
+  function albumStep(provider: Provider) {
+    // A chiptune set: then main reports the archive's download and unpacking (spans continue from here).
+    if (provider.id === CHIP_ID) return { label: 'Opening the chiptune set', fraction: null, expectMs: CHIP_OPEN_MS, span: [0, 0.1] as [number, number] }
+    return { label: `Loading tracks from ${provider.name}`, fraction: null, expectMs: albumMs.get(provider.id) }
+  }
+
   // --- local files ----------------------------------------------------------------------------
-  // Scan settings.sources.localFolders at startup and whenever the list changes (incremental).
+  // Scan settings.sources.localFolders at startup and whenever the list changes (incremental). The
+  // list is checked when settings arrive (deps.onSettingsChanged), or polled without it.
   let localKey: string | null = null
   let localPoll: ReturnType<typeof setInterval> | null = null
-  function checkLocalFolders(force = false): void {
+  let offSettings: (() => void) | null = null
+  const count = (n: number) => n.toLocaleString('en-US')
+  const scanProgress = (p: ScanProgress): void => {
+    if (p.phase === 'done') tasks.done('scan')
+    else if (p.phase === 'walk') tasks.step('scan', { label: 'Looking for music files', detail: p.found ? `${count(p.found)} found` : null, fraction: null, expectMs: null, span: [0, 0.15] })
+    else tasks.step('scan', { label: 'Reading tags', detail: `${count(p.done)} of ${count(p.total)} files`, fraction: p.total ? p.done / p.total : null, expectMs: null, span: [0.15, 1] })
+  }
+  /** `startup`: the launch rescan (quiet); otherwise the user changed the folder list. */
+  function checkLocalFolders(startup = false): void {
     if (internals.disableLocalScan || stopped) return
+    // Settings can arrive before the launch scan: that one reads the current list anyway.
+    if (!startup && localKey === null) return
     const folders = deps.getSettings().sources.localFolders ?? []
     const key = JSON.stringify(folders)
-    if (!force && key === localKey) return
+    if (!startup && key === localKey) return
+    const before = localKey ? (JSON.parse(localKey) as string[]).map((f) => resolvePath(f)) : []
     localKey = key
     const local = getRegistry().get('local')
     const lib = local instanceof LocalProvider ? local.library : null
     if (!lib || (!folders.length && lib.count() === 0)) return
+    const added = startup ? [] : [...new Set(folders.map((f) => resolvePath(f)))].filter((f) => !before.includes(f))
     lib
-      .scan(folders)
+      .scan(folders, { onProgress: scanProgress })
       .then((r) => {
+        if (!startup) scanNotice(r, added)
         if (r.added || r.updated || r.removed || r.errors) log(`local files: ${r.files} in ${r.roots.length} folder(s), +${r.added} ~${r.updated} -${r.removed}, ${r.errors} unreadable (${r.ms} ms)`)
         if (r.removedPaths.length) {
           repo.tx(() => {
@@ -622,7 +663,32 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
           notify()
         }
       })
-      .catch((e) => log(`local files scan failed: ${(e as Error).message}`))
+      .catch((e) => {
+        log(`local files scan failed: ${(e as Error).message}`)
+        if (!startup) deps.broadcast('notify', { id: 'local-scan', kind: 'error', title: 'Couldn’t scan your music folders', body: (e as Error).message })
+      })
+  }
+
+  /** What a scan the user asked for (a folder added or removed) did, in one notice. */
+  function scanNotice(r: ScanResult, added: string[]): void {
+    const tracks = (n: number) => `${count(n)} track${n === 1 ? '' : 's'}`
+    const names = (roots: string[]) => listNames(roots.map((f) => basename(f) || f))
+    const unreadable = r.errors ? `${count(r.errors)} file${r.errors === 1 ? '' : 's'} couldn’t be read, so they’re listed by file name.` : undefined
+    const missing = added.filter((f) => r.unavailable.includes(f))
+    const fresh = r.byRoot.filter((x) => added.includes(x.root))
+    const found = fresh.filter((x) => x.files > 0)
+    const empty = fresh.filter((x) => x.files === 0)
+    let n: { kind: 'success' | 'info' | 'error'; title: string; body?: string } | null = null
+    if (missing.length) n = { kind: 'error', title: `Couldn’t open ${names(missing)}`, body: 'Check that the folder exists and that GHOST may read it.' }
+    else if (found.length) {
+      const total = found.reduce((s, x) => s + x.added, 0)
+      const where = names(found.map((x) => x.root))
+      n = total ? { kind: 'success', title: `Added ${tracks(total)} from ${where}`, body: unreadable } : { kind: 'info', title: `No new music files in ${where}` }
+    }
+    else if (empty.length) n = { kind: 'info', title: `No music files in ${names(empty.map((x) => x.root))}`, body: 'GHOST looks for MP3, FLAC, M4A, AAC, Ogg, Opus, WAV and AIFF files, in subfolders too.' }
+    else if (r.removed) n = { kind: 'info', title: `Removed ${tracks(r.removed)} from your local files` }
+    else if (r.added) n = { kind: 'success', title: `Added ${tracks(r.added)} from your music folders`, body: unreadable }
+    if (n) deps.broadcast('notify', { id: 'local-scan', ...n })
   }
 
   // --- external import (YouTube / Internet Archive / Bandcamp) -----------------------------------
@@ -658,10 +724,33 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       .slice(0, EXTERNAL_HITS_MAX)
   }
 
+  /** How long importing a hit usually takes: its provider's album fetch, or per track for a SoundCloud set. */
+  function importExpectMs(hit: ExternalAlbumHit): number {
+    const n = Math.min(SET_MAX_TRACKS, Math.max(0, hit.trackCount ?? 0))
+    if (hit.provider === 'soundcloud') {
+      if (/\/sets\//.test(hit.ref)) return 3000 + SC_SET_TRACK_MS * (n || 20)
+      // An uploader's tracks: their whole upload list plus a search.
+      if (hit.ref.startsWith('uploads:')) return 8000
+    }
+    // A YouTube playlist (not a video id) lists every entry.
+    if (hit.provider === 'youtube' && !/^[\w-]{11}$/.test(hit.ref)) return albumMs.get('youtube') + 30 * n
+    return albumMs.get(hit.provider)
+  }
+
   async function importExternal(hit: ExternalAlbumHit, opts: { gameName?: string } = {}): Promise<AlbumDetail> {
     const provider = getRegistry().get(hit?.provider)
     if (!provider?.getAlbum) throw new Error(`Importing from ${hit?.provider ?? 'that source'} isn't supported.`)
-    const d = await provider.getAlbum(hit.ref, { priority: 0, force: true })
+    const key = `import:${hit.provider}:${hit.ref}`
+    tasks.step(key, { label: `Importing from ${provider.name}`, fraction: null, expectMs: importExpectMs(hit) })
+    try {
+      return await importHit(provider, hit, opts)
+    } finally {
+      tasks.done(key)
+    }
+  }
+
+  async function importHit(provider: Provider, hit: ExternalAlbumHit, opts: { gameName?: string }): Promise<AlbumDetail> {
+    const d = await provider.getAlbum!(hit.ref, { priority: 0, force: true })
     if (!d.tracks.length) throw new NetError('not_found', `"${hit.title}" has nothing playable`)
     const album: ProviderAlbum = { ...d, cover: d.cover ?? hit.cover, thumb: d.thumb ?? hit.cover, images: d.images.length ? d.images : hit.cover ? [hit.cover] : [] }
     const [albumId] = repo.upsertHits([album], { initial: false })
@@ -728,8 +817,12 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       localKey = null
       timers.push(setTimeout(() => checkLocalFolders(true), (internals.startDelayMs ?? 1500) + 500))
       if (!internals.disableLocalScan) {
-        localPoll = setInterval(() => checkLocalFolders(), LOCAL_FOLDERS_POLL_MS)
-        localPoll.unref?.()
+        offSettings?.()
+        offSettings = deps.onSettingsChanged?.(() => checkLocalFolders()) ?? null
+        if (!offSettings) {
+          localPoll = setInterval(() => checkLocalFolders(), LOCAL_FOLDERS_POLL_MS)
+          localPoll.unref?.()
+        }
       }
       if (!internals.disableEnrichment) {
         unsubscribeArt = (internals.onArtFetched ?? defaultOnArtFetched)((url, bytes, hex) => accent.onArtFetched(url, bytes, hex))
@@ -773,6 +866,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       searchTimer = null
       if (localPoll) clearInterval(localPoll)
       localPoll = null
+      offSettings?.()
+      offSettings = null
     },
 
     async status() {
@@ -823,11 +918,16 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       if (!st) throw new NetError('not_found', `no album ${albumId}`)
       const hasTracks = !!repo.get<{ n: number }>(`SELECT 1 AS n FROM tracks WHERE album_id = ? AND removed = 0 LIMIT 1`, id)
       if (!st.detail_at || !hasTracks) {
+        const provider = getRegistry().get(st.provider)
+        const key = `album:${id}`
+        if (provider?.getAlbum) tasks.step(key, albumStep(provider))
         try {
           await fetchDetail(id, 0)
         } catch (e) {
           if (!hasTracks) throw e
           log(`album ${id}: using cached tracks (${(e as Error).message})`)
+        } finally {
+          tasks.done(key)
         }
       } else if (now() - st.detail_at > DETAIL_TTL_MS) {
         void fetchDetail(id, 1).catch((e) => log(`album ${id} refresh: ${(e as Error).message}`))

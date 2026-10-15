@@ -11,6 +11,9 @@
 // engine reported a failure. A search provider's cached candidates are re-resolved by locator
 // rather than searched again; empty searches are remembered for a while. Failed sources are
 // demoted, and `exclude` drops ones that already failed.
+// While a play waits on `resolve`, each network request it waits for is reported as a ResolveStep
+// (`onStep`): the track's own page / extraction, a fallback search, a download measuring itself.
+// Background refreshes and prefetches report nothing, but a play joining one follows its steps.
 
 import { ACCESS_DENIED } from '../net/errors'
 import type { AudioFormat, ID, Settings } from '../../shared/types'
@@ -19,7 +22,9 @@ import type { Priority } from '../net/limiter'
 import type { ProviderRegistry } from '../providers'
 import type { CanonicalTrack, Provider, StreamInfo } from '../providers/types'
 import type { ResolvedSource } from './index'
+import type { ResolveStep } from './progress'
 import { estimateKbps, formatRank, j, type CatalogRepo, type Quality } from './repo'
+import { byteFraction, mbDetail, Throttle } from './tasks'
 
 export const SOURCE_TTL_MS = 7 * 24 * 3600_000
 /** A failure this recent pushes a source behind every healthy one. */
@@ -32,6 +37,8 @@ const FAILED_SEARCH_TTL_MS = 10 * 60_000
 const MAX_REUSE_FAILURES = 2
 /** Prefetches go ahead of index crawls (2) but behind anything the user is waiting for (0). */
 const PREFETCH_PRIORITY: Priority = 1
+/** A step measuring itself (a download) is re-sent at most this often. */
+const STEP_INTERVAL_MS = 250
 
 interface SourceRow {
   id: number
@@ -77,10 +84,25 @@ export interface ResolverDeps {
   getSettings: () => Settings
   now?: () => number
   log?: (msg: string) => void
+  /**
+   * `resolve` (a play or preview waiting) went to the network: the step it waits on, sent when the
+   * step starts and again as a download measures itself. Never for background refreshes or prefetches.
+   */
+  onStep?: (step: ResolveStep) => void
 }
 
+/** A provider refresh in flight. Callers waiting on it (`resolve`) follow its steps. */
+interface Flight {
+  run: Promise<void>
+  /** The step it's at (replayed to a caller that joins later), null before any network request. */
+  step: ResolveStep | null
+  followers: Set<(s: ResolveStep) => void>
+}
+
+const sameStep = (a: ResolveStep, b: ResolveStep) => a.kind === b.kind && a.detail === b.detail && (a.fraction == null || b.fraction == null ? a.fraction === b.fraction : Math.abs(a.fraction - b.fraction) < 0.002)
+
 export class SourceResolver {
-  private inflight = new Map<string, Promise<void>>()
+  private inflight = new Map<string, Flight>()
   /** `${trackId}\0${provider}` → don't run that fallback search again before this time. */
   private backoff = new Map<string, number>()
   private now: () => number
@@ -249,13 +271,40 @@ export class SourceResolver {
    * `force`: a stored URL failed, so skip provider-side caches (a memoised YouTube URL is the stale
    * one). `priority`: the album provider's request priority (a prefetch asks below interactive work).
    */
-  private async refreshProvider(p: Provider, t: CanonicalTrack, trackId: number, force = false, priority: Priority = 0): Promise<void> {
+  private async refreshProvider(p: Provider, t: CanonicalTrack, trackId: number, force = false, priority: Priority = 0, onStep?: (s: ResolveStep) => void): Promise<void> {
     const flightKey = `${trackId}\u0000${p.id}`
     const existing = this.inflight.get(flightKey)
-    if (existing) return existing
+    if (existing) return onStep ? this.follow(existing, onStep) : existing.run
+    const flight: Flight = { run: Promise.resolve(), step: null, followers: new Set() }
+    // Steps: each network request as it starts (at once), then a download's progress (throttled).
+    const steps = new Throttle<ResolveStep>(
+      (s) => {
+        flight.step = s
+        for (const fn of flight.followers) fn(s)
+      },
+      STEP_INTERVAL_MS,
+      sameStep,
+      this.now
+    )
+    const step = (kind: ResolveStep['kind']) => steps.push({ trackId: String(trackId), provider: p.id, providerName: p.name, kind, fraction: null, detail: null }, true)
+    // Bytes per locator (two candidates may download at once): the step measures their sum.
+    const bytes = new Map<string, { bytes: number; total: number | null }>()
+    const onBytes = (locator: string) => (b: number, total: number | null) => {
+      bytes.set(locator, { bytes: b, total })
+      let sum = 0
+      let all: number | null = 0
+      for (const x of bytes.values()) {
+        sum += x.bytes
+        all = all == null || x.total == null ? null : all + x.total
+      }
+      const at = flight.step
+      if (at) steps.push({ ...at, fraction: byteFraction(sum, all), detail: mbDetail(sum, all) })
+    }
+    if (onStep) flight.followers.add(onStep)
     const run = (async () => {
       if (p.id === t.albumProvider) {
-        const infos = await p.resolveStream(t.locator, { priority, force })
+        if (!p.streamsFromLocator) step('stream')
+        const infos = await p.resolveStream(t.locator, { priority, force, onBytes: onBytes(t.locator) })
         this.store(trackId, p.id, infos.map((info) => ({ info, locator: t.locator, confidence: 1 })), t.durationMs)
       } else if (p.findTrack) {
         const now = this.now()
@@ -265,8 +314,12 @@ export class SourceResolver {
         for (const r of rows) {
           if (r.failures < MAX_REUSE_FAILURES && now - r.verified_at < SOURCE_TTL_MS) reuse.set(r.locator, Math.max(reuse.get(r.locator) ?? 0, r.confidence))
         }
+        // A network search (findTrackMode 'fallback') reports its steps; a local lookup isn't a wait.
+        const network = p.findTrackMode === 'fallback'
         const resolveAll = async (cands: { locator: string; confidence: number }[]): Promise<StoredStream[]> => {
-          const settled = await Promise.allSettled(cands.map((c) => p.resolveStream(c.locator, { priority: 0, force })))
+          if (network && cands.length) step('stream')
+          bytes.clear()
+          const settled = await Promise.allSettled(cands.map((c) => p.resolveStream(c.locator, { priority: 0, force, onBytes: onBytes(c.locator) })))
           const items: StoredStream[] = []
           settled.forEach((r, i) => {
             if (r.status === 'fulfilled') for (const info of r.value) items.push({ info, locator: cands[i].locator, confidence: cands[i].confidence })
@@ -277,6 +330,7 @@ export class SourceResolver {
         let items = reuse.size ? await resolveAll([...reuse].map(([locator, confidence]) => ({ locator, confidence }))) : []
         if (!items.length) {
           const bad = new Set(rows.filter((r) => r.failures >= MAX_REUSE_FAILURES).map((r) => r.locator))
+          if (network) step('search')
           const cands = (await p.findTrack(t, { priority: 0 }))
             .filter((c) => !bad.has(c.locator))
             .sort((a, b) => b.confidence - a.confidence)
@@ -287,9 +341,21 @@ export class SourceResolver {
         // Keep rows that failed too often so they stay excluded from future searches.
         if (items.length) this.store(trackId, p.id, [...items, ...this.keepFailed(rows, items)], t.durationMs)
       }
-    })().finally(() => this.inflight.delete(flightKey))
-    this.inflight.set(flightKey, run)
+    })().finally(() => {
+      this.inflight.delete(flightKey)
+      steps.cancel()
+      flight.followers.clear()
+    })
+    flight.run = run
+    this.inflight.set(flightKey, flight)
     return run
+  }
+
+  /** Wait on a refresh already in flight, following its steps from where it is. */
+  private follow(f: Flight, onStep: (s: ResolveStep) => void): Promise<void> {
+    f.followers.add(onStep)
+    if (f.step) onStep(f.step)
+    return f.run.finally(() => f.followers.delete(onStep))
   }
 
   /** Rows over the failure limit, re-stored as-is so `store` doesn't drop the memory of them. */
@@ -298,7 +364,7 @@ export class SourceResolver {
     return rows.filter((r) => r.failures >= MAX_REUSE_FAILURES && !kept.has(r.cache_key)).map((r) => ({ info: { ...toStream(r) }, locator: r.locator, confidence: r.confidence, kept: true }))
   }
 
-  private async refreshIfNeeded(p: Provider, t: CanonicalTrack, trackId: number, now: number): Promise<unknown> {
+  private async refreshIfNeeded(p: Provider, t: CanonicalTrack, trackId: number, now: number, onStep?: (s: ResolveStep) => void): Promise<unknown> {
     const rows = this.rows(trackId, p.id)
     if (!this.needsRefresh(rows, now)) return null
     const key = `${trackId}\u0000${p.id}`
@@ -306,7 +372,7 @@ export class SourceResolver {
     if (fallback && (this.backoff.get(key) ?? 0) > now) return null
     if (this.backoff.size > 5000) for (const [k, until] of this.backoff) if (until <= now) this.backoff.delete(k)
     try {
-      await this.refreshProvider(p, t, trackId, rows.some((r) => r.needs_refresh === 1))
+      await this.refreshProvider(p, t, trackId, rows.some((r) => r.needs_refresh === 1), 0, onStep)
       return null
     } catch (e) {
       if (fallback) this.backoff.set(key, now + FAILED_SEARCH_TTL_MS)
@@ -327,6 +393,17 @@ export class SourceResolver {
     const now = this.now()
     let firstError: unknown = null
     const isFallback = (p: Provider) => p.id !== t.albumProvider && !!p.findTrack && p.findTrackMode === 'fallback'
+    // This call is a play or preview waiting: the steps it awaits are reported (background ones aren't).
+    const report = this.deps.onStep
+    const onStep = report
+      ? (s: ResolveStep) => {
+          try {
+            report(s)
+          } catch (e) {
+            this.log(`resolve step report failed: ${(e as Error).message}`)
+          }
+        }
+      : undefined
 
     const rank = () =>
       this.rows(trackId)
@@ -345,7 +422,7 @@ export class SourceResolver {
     for (const p of providers) {
       if (p.id !== t.albumProvider && !p.findTrack) continue
       if (isFallback(p)) continue
-      const e = await this.refreshIfNeeded(p, t, trackId, now)
+      const e = await this.refreshIfNeeded(p, t, trackId, now, onStep)
       firstError ??= e
     }
     let ranked = rank()
@@ -365,7 +442,7 @@ export class SourceResolver {
         void this.refreshIfNeeded(p, t, trackId, now)
         continue
       }
-      const e = await this.refreshIfNeeded(p, t, trackId, now)
+      const e = await this.refreshIfNeeded(p, t, trackId, now, onStep)
       firstError ??= e
       ranked = rank()
     }

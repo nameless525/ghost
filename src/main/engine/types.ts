@@ -111,6 +111,51 @@ export interface EnginePosition {
   at: number
 }
 
+/**
+ * What the current (or preview) track's start or rebuffer is waiting on (`EngineBridge.loadProgress`).
+ * Read the fields in this order: not `connected` (still connecting, see the stall clock) → `wholeFile`
+ * (bytes / totalBytes is the progress to the first sound) → bufferedMs / targetMs.
+ */
+export interface EngineLoadProgress {
+  /** Engine track id. */
+  id: string
+  /** The track is producing audio (started and not rebuffering). */
+  started: boolean
+  /**
+   * The source answered: HTTP response header in (size/type known; for a partly cached stream,
+   * known from an earlier fetch); always true for local files.
+   */
+  connected: boolean
+  /** Bytes of the source present in the stream cache (archive entries: of the archive; local files: the file size). */
+  bytes: number
+  /** Total size if known. */
+  totalBytes: number | null
+  /**
+   * The decoder can't start before the whole file is in (GME/OpenMPT chip formats, archive entries),
+   * judged from the extension / format hint.
+   */
+  wholeFile: boolean
+  /**
+   * Decoded audio ready to play, and how much the voice waits for before it (re)starts (prefill
+   * 200 ms before the first sound / rebuffer 750 ms after running dry). Both 0 while `started`.
+   */
+  bufferedMs: number
+  targetMs: number
+  /**
+   * How long the reader has waited for bytes that haven't come (0 when not waiting; restarts on
+   * every byte), and when it gives up (the player then tries another source).
+   */
+  stalledMs: number
+  stallTimeoutMs: number
+}
+
+/** A stream's bytes in the cache (`EngineBridge.cacheProgress`). */
+export interface EngineCacheProgress {
+  bytes: number
+  /** Total size if known. */
+  totalBytes: number | null
+}
+
 export interface TagInfo {
   title: string
   album: string
@@ -200,6 +245,17 @@ export interface EngineBridge {
   preview(track: EngineTrack, startMs: number): void
   stopPreview(): void
   position(): EnginePosition
+  /**
+   * What the current (or preview) track's start or rebuffer waits on; null when that slot is empty.
+   * Polled ~5×/s during waits. Optional: mocks and the null engine may omit it.
+   */
+  loadProgress?(which: 'current' | 'preview'): EngineLoadProgress | null
+  /**
+   * Bytes of a stream in the cache while its entry is open (being fetched or read: a playing
+   * track, an analysis, an `inspectArchive` in flight; for an archive, pass the archive source's
+   * `cacheKey`); null otherwise (not started yet, or done reading). Optional, like `loadProgress`.
+   */
+  cacheProgress?(cacheKey: string): EngineCacheProgress | null
   listDevices(): { id: string; name: string; isDefault: boolean }[]
   setDevice(id: string | null): void
   /** Decode the full (cached) source and emit an 'analysis' event. */

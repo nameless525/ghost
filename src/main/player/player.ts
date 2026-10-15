@@ -28,6 +28,7 @@ import { sliderToDb } from '../engine/types'
 import type { Broadcast } from '../ipc'
 import { ACCESS_DENIED } from '../net/errors'
 import type { ResolveStep, ToolProgress } from '../catalog/progress'
+import { Typical, WaitTracker, type EngineWait } from './progress'
 import type { SessionData, SessionStore } from './session'
 import { fisherYates, smartShuffle, type Rng } from './shuffle'
 
@@ -74,6 +75,12 @@ export const PREV_RESTART_MS = 3000
 export const HISTORY_MIN_MS = 30000
 /** A source refused again within this long after a refresh is treated as broken. */
 const REFRESH_AGAIN_MS = 10 * 60_000
+
+/** How often the engine is asked what a loading / buffering track waits on (only while one does). */
+export const WAIT_POLL_MS = 200
+
+/** An opening preview the engine reports nothing about for this many polls is taken as playing. */
+const PREVIEW_UNKNOWN_POLLS = 5
 
 /** Stop auto-skipping after this many tracks in a row failed to play. */
 export const MAX_FAIL_STREAK = 8
@@ -209,6 +216,15 @@ export class Player implements PlayerAPI {
   private pvSeq = 0
   /** The queue item a preview paused (P while music plays): it resumes when the preview ends. */
   private hold: { seq: number } | null = null
+  // What the current track / the preview waits on (PlayerState.loading / previewLoading).
+  private readonly typical = new Typical()
+  private curWait: WaitTracker | null = null
+  private pvWait: WaitTracker | null = null
+  /** The preview is audible (the engine started it). */
+  private pvStarted = false
+  /** Polls in a row without an engine report for the opening preview. */
+  private pvMisses = 0
+  private waitTimer: ReturnType<typeof setInterval> | null = null
   private engineState: EnginePlaybackState = 'idle'
   private seekHold: { ms: number; at: number } | null = null
 
@@ -321,7 +337,11 @@ export class Player implements PlayerAPI {
     const current = this.item()?.track ?? null
     const v = current ? this.s.voices : null
     const { queue: _queue, ...rest } = this.s
-    return { ...rest, current, voices: v ? { names: [...v.names], mask: v.mask } : null, queueRev: this.queueRevision() }
+    const st = this.s.status
+    const loading = (st === 'loading' || st === 'buffering') && this.curWait ? this.curWait.progress() : null
+    const pv = this.pv
+    const previewLoading = pv && this.pvWait && !this.pvStarted ? { ...this.pvWait.progress(), trackId: pv.trackId } : null
+    return { ...rest, current, voices: v ? { names: [...v.names], mask: v.mask } : null, loading, previewLoading, queueRev: this.queueRevision() }
   }
 
   // The queue is replaced (never mutated) on every change, so its identity is its revision.
@@ -420,7 +440,9 @@ export class Player implements PlayerAPI {
       }
     }
     this.s.status = st
+    if (st === 'playing') this.curWait?.playing()
     this.syncHeartbeat()
+    this.syncWaitPoll()
     this.checkPlay()
   }
 
@@ -657,8 +679,6 @@ export class Player implements PlayerAPI {
   private async doLoad(i: number, autoplay: boolean, startMs: number): Promise<void> {
     const item = this.item(i)
     if (!item) return this.stopAtEnd()
-    if (autoplay) this.endPreviewForMain()
-    else this.hold = null
     const seq = ++this.loadSeq
     const wasAudible = !!this.cur?.loaded && (this.s.status === 'playing' || this.s.status === 'buffering')
     // Reuse the preloaded next's sources when the user skips to it.
@@ -667,6 +687,7 @@ export class Player implements PlayerAPI {
     this.s.queueIndex = i
     this.setCurrentItem(item)
     this.s.positionMs = Math.max(0, startMs)
+    this.curWait = new WaitTracker(`${item.uid}:${seq}`, this.typical, this.now)
     this.setStatus('loading')
     this.beginPlay(item)
     const cur: Current = {
@@ -721,6 +742,8 @@ export class Player implements PlayerAPI {
       this.engineState = 'loading'
       this.uidTrack.set(cur.id, cur.trackId)
       this.setSourceSummary(cur.id, src)
+      this.curWait?.opened(src.provider)
+      this.syncWaitPoll()
       if (!cur.autoplay) this.setStatus('paused')
       this.s.positionMs = cur.startMs
       this.s.positionAt = this.now()
@@ -920,6 +943,7 @@ export class Player implements PlayerAPI {
         if (this.s.status !== 'paused') this.setStatus('loading')
         break
       case 'buffering':
+        this.curWait?.stalled()
         this.setStatus('buffering')
         break
       case 'idle':
@@ -931,8 +955,10 @@ export class Player implements PlayerAPI {
   private onBuffering(id: string, buffering: boolean): void {
     const cur = this.cur
     if (!cur?.loaded || id !== cur.id) return
-    if (buffering) this.setStatus('buffering')
-    else this.setStatus(this.engineState === 'paused' || !cur.autoplay ? 'paused' : 'playing')
+    if (buffering) {
+      this.curWait?.stalled()
+      this.setStatus('buffering')
+    } else this.setStatus(this.engineState === 'paused' || !cur.autoplay ? 'paused' : 'playing')
     this.changed()
   }
 
@@ -1010,6 +1036,7 @@ export class Player implements PlayerAPI {
       if (src) this.setSourceSummary(id, src)
     }
     this.uidTrack.set(id, item.track.id)
+    this.curWait = WaitTracker.playing(`${id}:${this.loadSeq}`, this.typical, this.now)
     this.seekHold = null
     this.engineState = 'playing'
     this.s.positionMs = 0
@@ -1068,6 +1095,7 @@ export class Player implements PlayerAPI {
       cur.loaded = false
       // Same queue position; superseded if the user loads something else meanwhile.
       cur.autoplay = cur.autoplay && this.s.status !== 'paused'
+      ;(this.curWait ??= new WaitTracker(`${cur.id}:${cur.seq}`, this.typical, this.now)).fallback()
       this.setStatus('loading')
       this.changed()
       void this.track(this.startSource(cur))
@@ -1290,6 +1318,7 @@ export class Player implements PlayerAPI {
     this.s.queue = items
     this.s.context = context
     this.failStreak.clear()
+    this.endPreviewForMain()
     const loading = this.loadIndex(startIdx, true, 0)
     // After the first track's own resolve went out (it stays ahead: the warm-up is background priority).
     this.warmUpcoming(startIdx)
@@ -1412,7 +1441,9 @@ export class Player implements PlayerAPI {
     this.mutations++
     const ni = this.naturalNext()
     if (ni === null) return this.stopAtEnd()
-    void this.loadIndex(ni, this.keepPlaying(), 0)
+    const play = this.keepPlaying()
+    if (play) this.endPreviewForMain()
+    void this.loadIndex(ni, play, 0)
   }
 
   async prev(): Promise<void> {
@@ -1424,7 +1455,9 @@ export class Player implements PlayerAPI {
     const n = this.s.queue.length
     const canGoBack = i > 0 || (this.s.repeat === 'all' && n > 1)
     if (live > PREV_RESTART_MS || !canGoBack) return this.seek(0)
-    void this.loadIndex(i > 0 ? i - 1 : n - 1, this.keepPlaying(), 0)
+    const play = this.keepPlaying()
+    if (play) this.endPreviewForMain()
+    void this.loadIndex(i > 0 ? i - 1 : n - 1, play, 0)
   }
 
   async seek(ms: number): Promise<void> {
@@ -1624,6 +1657,7 @@ export class Player implements PlayerAPI {
   async jumpTo(index: number): Promise<void> {
     if (!Number.isInteger(index) || index < 0 || index >= this.s.queue.length) return
     this.mutations++
+    this.endPreviewForMain()
     void this.loadIndex(index, true, 0)
   }
 
@@ -1631,10 +1665,67 @@ export class Player implements PlayerAPI {
   // Progress from the catalog (see catalog/progress.ts)
 
   /** The catalog went to the network to resolve a track (services.ts forwards these from the worker). */
-  onResolveStep(_step: ResolveStep): void {}
+  onResolveStep(step: ResolveStep): void {
+    let changed = false
+    const cur = this.cur
+    if (cur && !cur.loaded && cur.trackId === step.trackId && this.curWait) changed = this.curWait.onResolveStep(step) || changed
+    const pv = this.pv
+    if (pv && pv.trackId === step.trackId && this.pvWait) changed = this.pvWait.onResolveStep(step) || changed
+    if (changed) this.changed(false)
+  }
 
-  /** A tool the catalog needs (yt-dlp) is being installed. */
-  onToolProgress(_p: ToolProgress): void {}
+  /** A tool the catalog needs (yt-dlp) is being installed: it holds up whatever resolves meanwhile. */
+  onToolProgress(p: ToolProgress): void {
+    let changed = false
+    if (this.cur && !this.cur.loaded && this.curWait) changed = this.curWait.onTool(p) || changed
+    if (this.pv && this.pvWait) changed = this.pvWait.onTool(p) || changed
+    if (changed) this.changed(false)
+  }
+
+  /** Ask the engine what the opening / buffering tracks wait on, only while one does. */
+  private syncWaitPoll(): void {
+    const st = this.s.status
+    const cur = this.cur
+    const curWaits = !!(cur?.loaded && this.curWait && (st === 'loading' || st === 'buffering'))
+    const pvWaits = !!(this.pv && this.pvWait?.phaseName === 'open' && !this.pvStarted)
+    const want = !!this.engine.loadProgress && (curWaits || pvWaits) && !this.disposed
+    if (want && !this.waitTimer) {
+      this.waitTimer = setInterval(() => this.pollWaits(), WAIT_POLL_MS)
+      this.waitTimer.unref?.()
+    } else if (!want && this.waitTimer) {
+      clearInterval(this.waitTimer)
+      this.waitTimer = null
+    }
+  }
+
+  /** One engine query per waiting slot; broadcasts only when what the UI shows changed. */
+  pollWaits(): void {
+    let changed = false
+    const st = this.s.status
+    const cur = this.cur
+    if (cur?.loaded && this.curWait && (st === 'loading' || st === 'buffering')) {
+      const w = this.engineWait('current', cur.id)
+      if (w) changed = this.curWait.poll(w) || changed
+    }
+    const pv = this.pv
+    if (pv && this.pvWait?.phaseName === 'open' && !this.pvStarted) {
+      const w = this.engineWait('preview', pv.id)
+      // No report for it yet (the engine hasn't taken it up): wait a little, then assume it plays.
+      if (w ? w.started : ++this.pvMisses >= PREVIEW_UNKNOWN_POLLS) changed = this.previewAudible() || changed
+      else if (w) changed = this.pvWait.poll(w) || changed
+    }
+    if (changed) this.changed(false)
+    this.syncWaitPoll()
+  }
+
+  private engineWait(which: 'current' | 'preview', id: string): EngineWait | null {
+    try {
+      const w = this.engine.loadProgress?.(which)
+      return w && w.id === id ? w : null
+    } catch {
+      return null
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Previews
@@ -1668,6 +1759,9 @@ export class Player implements PlayerAPI {
       startMs: typeof startMs === 'number' && startMs >= 0 ? startMs : 0
     }
     this.pv = pv
+    this.pvWait = new WaitTracker(pv.id, this.typical, this.now)
+    this.pvStarted = false
+    this.changed(false)
     // The start point may need the analysis from the catalog worker: look it up while resolving.
     const point = typeof startMs === 'number' && startMs >= 0 ? null : this.previewPoint(track)
     try {
@@ -1701,10 +1795,22 @@ export class Player implements PlayerAPI {
       }
       this.uidTrack.set(pv.id, pv.trackId)
       this.s.preview = { track: pv.track, startedAt: this.now() }
-      this.holdForPreview()
+      this.pvWait?.opened(src.provider)
+      this.pvMisses = 0
+      // The queue keeps playing until the preview is actually audible (then one fades into the other).
+      if (!this.engine.loadProgress || this.engineWait('preview', pv.id)?.started) this.previewAudible()
+      this.syncWaitPoll()
       this.changed()
       return true
     }
+  }
+
+  /** The engine started the preview: it no longer loads, and it takes over from the queue. */
+  private previewAudible(): boolean {
+    if (this.pvStarted) return false
+    this.pvStarted = true
+    this.holdForPreview()
+    return true
   }
 
   /**
@@ -1728,23 +1834,29 @@ export class Player implements PlayerAPI {
     void this.play()
   }
 
-  /** The queue is about to be audible: end any preview (and any pending one) without resuming a hold. */
+  /**
+   * The user made the queue audible (play, skip, a new queue): end any preview (and any pending
+   * one) without resuming a hold. Automatic advances don't: a preview can't sound alongside them
+   * (it would have paused the queue), and one still loading pauses them when it starts.
+   */
   private endPreviewForMain(): void {
     this.hold = null
     this.pvSeq++
     if (!this.pv && !this.s.preview) return
     this.pv = null
+    this.pvWait = null
     this.safe(() => this.engine.stopPreview())
     this.s.preview = null
     this.changed()
   }
 
   private clearPreviewState(): void {
+    const had = !!(this.pv || this.s.preview)
     this.pv = null
-    if (this.s.preview) {
-      this.s.preview = null
-      this.changed()
-    }
+    this.pvWait = null
+    this.s.preview = null
+    if (had) this.changed()
+    this.syncWaitPoll()
     this.releaseHold()
   }
 
@@ -1808,6 +1920,8 @@ export class Player implements PlayerAPI {
     this.disposed = true
     if (this.heartbeat) clearInterval(this.heartbeat)
     this.heartbeat = null
+    if (this.waitTimer) clearInterval(this.waitTimer)
+    this.waitTimer = null
     if (this.emitTimer) clearTimeout(this.emitTimer)
     this.emitTimer = null
   }

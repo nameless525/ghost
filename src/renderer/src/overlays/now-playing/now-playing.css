@@ -288,3 +288,8 @@
   gap: 8px;
   margin-top: 10px;
 }
+
+/* What a loading track waits on, above the seek bar. */
+.np-load {
+  margin: 0 2px 8px;
+}

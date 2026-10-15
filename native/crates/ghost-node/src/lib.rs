@@ -285,6 +285,22 @@ impl GhostEngine {
         }
     }
 
+    /// `loadProgress(which: 'current' | 'preview')`: what that track's start or rebuffer waits on
+    /// (`EngineLoadProgress`), or null when the slot is empty. Cheap; poll it while waiting.
+    #[napi(catch_unwind)]
+    pub fn load_progress(&self, which: String) -> Result<Option<JsLoadProgress>> {
+        let slot = slot(&which)?;
+        Ok(self.live().and_then(|e| e.load_progress(slot)).map(Into::into))
+    }
+
+    /// `cacheProgress(cacheKey)`: `{ bytes, totalBytes }` of that stream in the cache while it is
+    /// being fetched or read (a track, an analysis, an `inspectArchive` in flight), else null.
+    #[napi(catch_unwind)]
+    pub fn cache_progress(&self, cache_key: String) -> Option<JsCacheProgress> {
+        let (bytes, total) = self.live()?.cache_progress(&cache_key)?;
+        Some(JsCacheProgress { bytes: bytes as f64, total_bytes: total.map(|t| t as f64) })
+    }
+
     #[napi(catch_unwind)]
     pub fn list_devices(&self) -> Vec<JsDeviceInfo> {
         match self.live() {

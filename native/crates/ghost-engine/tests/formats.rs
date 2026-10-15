@@ -361,3 +361,81 @@ fn vgmstream_streams_over_http_with_loops() {
     let body2 = &out[48_000 * 2..80_000 * 2];
     assert!(max_abs_diff(body1, body2) < 1e-4);
 }
+
+/// A rip set big enough to watch arrive: an NSF plus 1.5 MB of incompressible filler.
+fn big_set(nsf: &[u8]) -> Vec<u8> {
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    let filler: Vec<u8> = (0..1536 * 1024)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 24) as u8
+        })
+        .collect();
+    zip_bytes(&[("Set/Song.nsf", nsf), ("Set/filler.bin", &filler)])
+}
+
+/// The whole archive is fetched before an archive entry can do anything: `inspect_archive`
+/// (through `cache_progress`), downloads and playback (`load_progress`) all report the archive's
+/// bytes against its size while it arrives, instead of nothing.
+#[test]
+fn archive_fetches_report_progress() {
+    let dir = tmp_dir("fmt-archive-progress");
+    let nsf = nsf_songs(&[253], "Song");
+    let set = big_set(&nsf);
+    let len = set.len() as u64;
+    // 16 KB per 7 ms (~2.3 MB/s): most of a second per fetch. One key per phase: each fetches anew.
+    let srv = serve(set, "Set.zip", Duration::from_millis(7), false);
+    let (engine, sink) = offline(&dir, RATE);
+    let engine = std::sync::Arc::new(engine);
+    let mid = |b: u64, t: Option<u64>| t == Some(len) && b > 0 && b < len;
+
+    // inspectArchive: cache_progress under the archive source's cache key while it runs.
+    assert_eq!(engine.cache_progress("set:inspect"), None);
+    let base = SourceSpec::http(srv.url.clone(), "set:inspect");
+    let inspect = {
+        let (engine, base) = (engine.clone(), base.clone());
+        std::thread::spawn(move || engine.inspect_archive(&base))
+    };
+    let mut seen = Vec::new();
+    while !inspect.is_finished() {
+        seen.extend(engine.cache_progress("set:inspect"));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let listing = inspect.join().unwrap().unwrap();
+    assert_eq!(listing.entries.len(), 2);
+    assert!(seen.iter().any(|&(b, t)| mid(b, t)), "no progress while inspecting: {seen:?}");
+    assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0), "{seen:?}");
+
+    // Download of an entry as-is: archive bytes / archive size, then the entry's size.
+    let entry = SourceExtras { archive_entry: Some("Set/Song.nsf".into()), ..Default::default() };
+    let src = SourceSpec::http(srv.url.clone(), "set:download").with_extras(entry.clone());
+    engine.download_with("d".into(), src, dir.join("out").join("Song.nsf"), TagInfo::default(), DownloadOptions { render_flac: Some(false) });
+    let (status, path, error, progress) = wait_download(&engine);
+    assert_eq!(status, DownloadStatus::Done, "{error:?}");
+    assert_eq!(std::fs::read(path.unwrap()).unwrap(), nsf);
+    println!("archive download progress: {progress:?}");
+    assert!(progress.iter().any(|&(b, t)| mid(b, t)), "no archive progress: {progress:?}");
+    assert_eq!(progress.last(), Some(&(nsf.len() as u64, Some(nsf.len() as u64))));
+
+    // Playback: a whole-file wait on the archive's bytes, then the track starts.
+    engine.set_current(track("e", SourceSpec::http(srv.url.clone(), "set:play").with_extras(entry)), 0, true);
+    let t0 = Instant::now();
+    let mut seen = Vec::new();
+    loop {
+        if let Some(p) = engine.load_progress(ghost_engine::Slot::Current) {
+            let started = p.started;
+            seen.push(p);
+            if started {
+                break;
+            }
+        }
+        while sink.blocks.try_recv().is_ok() {}
+        assert!(t0.elapsed() < Duration::from_secs(20), "never started: {:?}", seen.last());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(seen.iter().all(|p| p.id == "e" && p.whole_file), "{seen:?}");
+    assert!(seen.iter().any(|p| !p.started && mid(p.bytes, p.total_bytes)), "no archive progress: {seen:?}");
+    assert_eq!(seen.last().unwrap().bytes, len, "the archive is whole by the time it plays");
+}

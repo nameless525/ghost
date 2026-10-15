@@ -1,7 +1,7 @@
 // Play: GHOST's player screen, the osu! player analogue.
 //
 //  · entry: a big title card (cover, title, game, album, composers, ★) zooms in, holds ~1.2 s
-//    (longer while the track is still loading, up to ~3 s), then FLIPs its cover/title/game
+//    (while the track is still loading, up to ~8 s, showing what it waits on), then FLIPs its cover/title/game
 //    into the compact bottom-left block; the same card returns on every track change
 //  · the game's hero art behind, far less blurred/dimmed than Browse (restored on exit)
 //  · GPU visualizer (radial / skyline / scope; V cycles) with osu!-style kiai time
@@ -41,7 +41,8 @@ export type PlayScreenProps = ScreenProps
 type Phase = 'card' | 'play'
 
 const HOLD_MS = 1200
-const MAX_HOLD_MS = 3000
+/** The card (and its loading progress) stays at most this long for a slow start; the HUD's seek bar shows the rest. */
+const MAX_HOLD_MS = 8000
 const GLIDE_MS = 860
 const IDLE_MS = 2000
 
@@ -55,6 +56,7 @@ const coverSizeFor = (w: number, h: number) => Math.round(Math.max(150, Math.min
 export default function PlayScreen(props: PlayScreenProps) {
   const current = useCurrentTrack()
   const status = usePlayer((s) => s.status)
+  const loading = usePlayer((s) => s.loading ?? null)
   const error = usePlayer((s) => s.error)
   const duration = usePlayer((s) => s.durationMs)
   const queueLen = usePlayer((s) => s.queue.length)
@@ -68,7 +70,6 @@ export default function PlayScreen(props: PlayScreenProps) {
   const [mode, setModeState] = useState<VisualizerMode>(savedMode)
   const [phase, setPhase] = useState<Phase>('card')
   const [showKey, setShowKey] = useState(0)
-  const [waiting, setWaiting] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
   const [hudHover, setHudHover] = useState(false)
   const [size, setSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
@@ -220,7 +221,6 @@ export default function PlayScreen(props: PlayScreenProps) {
     if (exiting.current) return
     phaseRef.current = 'play'
     setPhase('play')
-    setWaiting(false)
     const m = meta.current
     if (m) {
       for (const el of m.querySelectorAll<HTMLElement>('[data-flip]')) tween(el).clear().set({ opacity: 1, x: 0, y: 0, scale: 1 })
@@ -239,7 +239,6 @@ export default function PlayScreen(props: PlayScreenProps) {
     const m = meta.current
     const p = cardPieces()
     if (!c || !m || !p) return finishGlide()
-    setWaiting(false)
     const z = uiZoom()
     tween(m).clear().set({ opacity: 1, x: 0 })
     const targets = new Map<string, HTMLElement>()
@@ -283,7 +282,6 @@ export default function PlayScreen(props: PlayScreenProps) {
     const st = usePlayer.getState().status
     const elapsed = performance.now() - shownAt.current
     if ((st === 'loading' || st === 'buffering') && elapsed < MAX_HOLD_MS) {
-      setWaiting(true)
       holdTimer.current = window.setTimeout(checkHold, 100)
       return
     }
@@ -493,7 +491,7 @@ export default function PlayScreen(props: PlayScreenProps) {
           durationMs={duration}
           position={position}
           coverSize={coverSize}
-          waiting={waiting}
+          progress={loading}
           showKey={showKey}
         />
       ) : (

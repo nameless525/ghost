@@ -592,3 +592,70 @@ fn redirects_keep_the_range() {
     assert!(!ranges.is_empty() && ranges.iter().all(|r| r.starts_with("bytes=")), "{ranges:?}");
     assert_eq!(r.entry().state.lock().range_ok, Some(true));
 }
+
+#[test]
+fn bytes_present_counts_the_short_last_chunk_and_the_partial_one() {
+    let mgr = CacheManager::new_for_test(tmp_dir("bytes"), 1 << 30, Duration::from_secs(8));
+    let e = mgr.entry(&spec("http://127.0.0.1:9/none.mp3", "bytes")).unwrap();
+    let mut st = e.state.lock();
+    assert_eq!(st.bytes_present(), 0);
+    // 600 000 bytes = 256 KB + 256 KB + 75 712.
+    st.total = Some(600_000);
+    st.set(0);
+    st.set(2);
+    assert_eq!(st.bytes_present(), CHUNK_SIZE + 600_000 - 2 * CHUNK_SIZE);
+    st.partial = Some((1, 1000));
+    assert_eq!(st.bytes_present(), CHUNK_SIZE + 600_000 - 2 * CHUNK_SIZE + 1000);
+    st.set(1);
+    assert_eq!(st.bytes_present(), 600_000, "a stale partial marker for a present chunk isn't counted twice");
+}
+
+#[test]
+fn progress_reports_bytes_size_and_completion() {
+    // 2 MB at ~16 KB per 2 ms (~8 MB/s): ~250 ms to fill.
+    let data = test_data(2 * 1024 * 1024 + 321, 40);
+    let srv = serve(data.clone(), ServerOpts { per_16k_delay: Duration::from_millis(2), ..Default::default() });
+    let mgr = CacheManager::new_for_test(tmp_dir("progress"), 1 << 30, Duration::from_secs(8));
+    assert_eq!(mgr.progress("progress"), None, "nothing open under that key");
+    let r = mgr.open_reader(&spec(&srv.url, "progress"), None).unwrap();
+    r.wait_header().unwrap();
+    let p = mgr.progress("progress").expect("open entry");
+    assert!(p.connected);
+    assert_eq!(p.total, Some(data.len() as u64));
+    assert!(p.bytes > 0 && p.bytes <= data.len() as u64, "{p:?}");
+    assert_eq!(p.stalled, Duration::ZERO, "nobody is blocked");
+    let t0 = Instant::now();
+    let mut seen = vec![p.bytes];
+    while !r.is_complete() {
+        assert!(t0.elapsed() < Duration::from_secs(10), "never completed");
+        std::thread::sleep(Duration::from_millis(20));
+        seen.push(mgr.progress("progress").unwrap().bytes);
+    }
+    assert!(seen.windows(2).all(|w| w[0] <= w[1]), "progress went backwards: {seen:?}");
+    assert!(seen.iter().any(|&b| b > 0 && b < data.len() as u64), "no intermediate progress: {seen:?}");
+    assert_eq!(mgr.progress("progress").unwrap().bytes, data.len() as u64);
+    // Once the last reader and the fetcher let go, the entry isn't open any more.
+    drop(r);
+    let t0 = Instant::now();
+    while mgr.progress("progress").is_some() {
+        assert!(t0.elapsed() < Duration::from_secs(5), "entry stayed open");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn progress_stall_clock_runs_while_a_reader_waits() {
+    let srv = serve(test_data(1000, 41), ServerOpts { hang: true, ..Default::default() });
+    let mgr = CacheManager::new_for_test(tmp_dir("stallclock"), 1 << 30, Duration::from_millis(1500));
+    let r = mgr.open_reader(&spec(&srv.url, "stallclock"), None).unwrap();
+    let waiter = std::thread::spawn(move || r.wait_header().map_err(|e| e.kind()));
+    std::thread::sleep(Duration::from_millis(500));
+    let p = mgr.progress("stallclock").unwrap();
+    assert!(!p.connected && p.bytes == 0 && p.total.is_none(), "{p:?}");
+    assert!(p.stalled >= Duration::from_millis(400) && p.stalled < Duration::from_millis(1500), "{p:?}");
+    assert_eq!(waiter.join().unwrap(), Err(std::io::ErrorKind::TimedOut));
+    // The reader gave up: nobody waits, so no stall is reported (the fetcher may still hold it).
+    if let Some(p) = mgr.progress("stallclock") {
+        assert_eq!(p.stalled, Duration::ZERO, "{p:?}");
+    }
+}

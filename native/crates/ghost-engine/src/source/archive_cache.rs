@@ -10,7 +10,7 @@ use std::sync::Arc;
 use ghost_formats::archive::{self, Extracted};
 use parking_lot::Mutex;
 
-use super::{OpenCtx, SourceError};
+use super::{OpenCtx, ReadProgress, SourceError};
 use crate::SourceSpec;
 
 const KEEP: usize = 2;
@@ -43,11 +43,17 @@ fn lookup(key: &str) -> Option<Arc<Extracted>> {
 
 /// The extracted archive behind `spec`, fetching it through the cache if needed.
 pub fn get(spec: &SourceSpec, ctx: &OpenCtx<'_>) -> Result<Arc<Extracted>, SourceError> {
+    get_with_progress(spec, ctx, None)
+}
+
+/// [`get`], reporting the archive's bytes in the stream cache (and its size) to `progress` while
+/// an HTTP archive is fetched. Not called when the set is already in memory.
+pub fn get_with_progress(spec: &SourceSpec, ctx: &OpenCtx<'_>, progress: Option<ReadProgress<'_>>) -> Result<Arc<Extracted>, SourceError> {
     let key = key_of(spec);
     if let Some(v) = lookup(&key) {
         return Ok(v);
     }
-    let data = super::read_all(&spec.base(), ctx, MAX_ARCHIVE_BYTES)?;
+    let data = super::read_all_with(&spec.base(), ctx, MAX_ARCHIVE_BYTES, progress)?;
     if archive::kind_of(&data).is_none() {
         return Err(SourceError::new(format!("{} is not a zip or 7z archive", super::source_name(spec))));
     }

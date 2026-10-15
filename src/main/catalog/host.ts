@@ -1,6 +1,7 @@
 // Spawns the catalog worker (out/main/catalogWorker.js, built from ./worker.ts) and connects it to
 // the main-process services it needs: Electron's network stack for page requests, the engine's
-// archive lister, and the ghost-art protocol (accents, newly fetched covers, cache trimming).
+// archive lister, and the ghost-art protocol (accents, newly fetched covers, cache trimming). The
+// worker's progress reports for the player (resolve steps, the yt-dlp install) come out here.
 // Main-process only. The worker is restarted if it dies; calls queue meanwhile.
 
 import { app } from 'electron'
@@ -16,6 +17,7 @@ import { electronFetch } from '../net/http'
 import { serveFetch } from '../net/rpc-fetch'
 import { CatalogClient, type CallStats } from './client'
 import type { CatalogService } from './index'
+import type { ResolveStep, ToolProgress } from './progress'
 import type { CatalogWorkerData } from './server'
 
 export interface CatalogHostOptions {
@@ -24,7 +26,12 @@ export interface CatalogHostOptions {
   dataDir: string
   settings: Settings
   broadcast: Broadcast
-  inspectArchive?: (source: EngineSource) => Promise<ArchiveListing>
+  /** `progressKey`: report the archive's download as this TaskProgress key (an album being opened). */
+  inspectArchive?: (source: EngineSource, ctx?: { progressKey?: string }) => Promise<ArchiveListing>
+  /** A resolve a play waits on went to the network (re-sent as a download progresses). */
+  onResolveStep?: (step: ResolveStep) => void
+  /** The one-time yt-dlp install, as it goes. */
+  onToolProgress?: (p: ToolProgress) => void
   /** The catalog can't run (the worker failed to start or keeps crashing). */
   onFatal?: (e: Error) => void
 }
@@ -59,6 +66,8 @@ export function createCatalogHost(opts: CatalogHostOptions): CatalogHost {
     broadcast: opts.broadcast,
     fetch: (req, signal) => serveFetch(electronFetch, req, signal),
     inspectArchive: opts.inspectArchive,
+    onResolveStep: opts.onResolveStep,
+    onToolProgress: opts.onToolProgress,
     accentOf: (url) => artAccent(url),
     onFatal: (e) => {
       fatal = true

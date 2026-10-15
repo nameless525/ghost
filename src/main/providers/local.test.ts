@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { memoryDb } from '../catalog/testing'
 import { isNetError } from '../net/errors'
-import { albumKeyOf, LocalLibrary, LocalProvider, matchLocal, musicMetadataReader, rowFromTags, type LocalFileRow, type TagInfo } from './local'
+import { albumKeyOf, LocalLibrary, LocalProvider, matchLocal, musicMetadataReader, rowFromTags, type LocalFileRow, type ScanProgress, type TagInfo } from './local'
 import type { CanonicalTrack } from './types'
 
 const dirs: string[] = []
@@ -112,6 +112,32 @@ describe('local: incremental scans', () => {
     const r4 = await lib.scan([])
     expect(r4.removed).toBe(2)
     expect(lib.count()).toBe(0)
+  })
+
+  it('reports its phases: walking the folders, reading new files’ tags, done (also when nothing changed)', async () => {
+    const root = tmp()
+    mkdirSync(join(root, 'A'), { recursive: true })
+    for (const n of ['1.mp3', '2.mp3', '3.flac', 'notes.txt']) writeFileSync(join(root, 'A', n), 'x')
+    writeFileSync(join(root, '4.ogg'), 'x')
+    const lib = new LocalLibrary(memoryDb(), { readTags: async () => ({}) })
+    const seen: ScanProgress[] = []
+    const r = await lib.scan([root, join(root, 'missing')], { onProgress: (p) => seen.push(p) })
+    expect(r.byRoot).toEqual([{ root, files: 4, added: 4 }])
+    expect(r.unavailable).toEqual([join(root, 'missing')])
+    expect(seen.filter((p) => p.phase === 'walk').map((p) => (p as { found: number }).found)).toEqual([0, 1, 2, 3, 4])
+    expect(seen.filter((p) => p.phase === 'tags')).toEqual([
+      { phase: 'tags', done: 0, total: 4 },
+      { phase: 'tags', done: 4, total: 4 }
+    ])
+    expect(seen.at(-1)).toEqual({ phase: 'done' })
+    seen.length = 0
+    await lib.scan([root], { onProgress: (p) => seen.push(p) })
+    expect(seen.map((p) => p.phase)).toEqual(['walk', 'walk', 'walk', 'walk', 'walk', 'done'])
+    // A failing scan still ends.
+    seen.length = 0
+    lib.db.close()
+    await expect(lib.scan([root], { onProgress: (p) => seen.push(p) })).rejects.toThrow()
+    expect(seen.at(-1)).toEqual({ phase: 'done' })
   })
 
   it('an unavailable folder keeps what was known', async () => {

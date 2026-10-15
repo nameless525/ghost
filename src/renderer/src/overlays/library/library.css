@@ -940,6 +940,14 @@
   animation-duration: 1100ms;
   animation-delay: -450ms;
 }
+.tl-eq--busy {
+  animation: lib-tl-eq-busy 1.1s ease-in-out infinite;
+}
+@keyframes lib-tl-eq-busy {
+  50% {
+    opacity: 0.35;
+  }
+}
 @keyframes lib-tl-eq {
   0%,
   100% {

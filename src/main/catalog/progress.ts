@@ -11,6 +11,8 @@ export interface ResolveStep {
   trackId: ID
   /** Provider id, e.g. 'khinsider', 'youtube'. */
   provider: string
+  /** Its display name (Provider.name), e.g. "Zophar's Domain". */
+  providerName: string
   /** 'stream': the track's own page / API / extraction; 'search': a fallback search for the track on a site. */
   kind: 'stream' | 'search'
   /** 0..1 when the step can measure itself (e.g. a whole-track download), else null. */
@@ -26,4 +28,6 @@ export interface ToolProgress {
   fraction: number | null
   detail?: string | null
   done: boolean
+  /** It failed (with `done`): why. */
+  error?: string | null
 }

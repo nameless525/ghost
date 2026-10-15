@@ -7,8 +7,12 @@
 //    old yt-dlp can't talk to YouTube.
 //  - Download: https://github.com/yt-dlp/yt-dlp/releases/latest/download/<asset>, verified against
 //    the same release's SHA2-256SUMS, written atomically, chmod +x. Nothing else is ever downloaded.
-//  - Updates: `yt-dlp -U` (which verifies the release itself) at most once per 7 days, managed copy only.
-//  - Invocations: execFile with an args array (never a shell), ≤2 concurrent, with timeouts.
+//  - Updates: `yt-dlp -U` (which verifies the release itself) at most once per 7 days, managed copy
+//    only, outside the run queue (a slow update never holds a slot a search or a play waits for).
+//  - The first download (~35 MB) reports its progress (`onInstall`): the app shows it, since
+//    YouTube and SoundCloud wait on it.
+//  - Invocations: execFile with an args array (never a shell), ≤2 concurrent, with timeouts. Runs that
+//    download (SoundCloud tracks) can ask for yt-dlp's progress lines (`RunOptions.onProgress`).
 //    `--ignore-config` keeps a user's yt-dlp config (cookies-from-browser, proxies…) out of it.
 //  - JS challenges: YouTube needs a JS runtime for its player challenges. We pass one we can find
 //    (deno/node on disk, else Electron's own binary in ELECTRON_RUN_AS_NODE mode). No PO tokens, no
@@ -29,6 +33,21 @@ export const YTDLP_RELEASE_BASE = 'https://github.com/yt-dlp/yt-dlp/releases/lat
 export const UPDATE_INTERVAL_MS = 7 * 24 * 3600_000
 export const STALE_SYSTEM_DAYS = 150
 const DEFAULT_TIMEOUT_MS = 60_000
+/** Prefix of the progress lines a downloading run prints (see RunOptions.onProgress). */
+const PROGRESS_MARK = 'ghost-progress'
+/** Progress lines, at most four a second: "<mark> <downloaded> <total> <estimated total>" ("NA" when unknown). */
+const PROGRESS_ARGS = ['--progress', '--newline', '--progress-delta', '0.25', '--progress-template', `download:${PROGRESS_MARK} %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s`]
+
+/** A progress line of a downloading run → bytes so far and the (estimated) total; null for other lines. */
+export function parseProgressLine(line: string): { bytes: number; totalBytes: number | null } | null {
+  const f = line.trim().split(/\s+/)
+  if (f[0] !== PROGRESS_MARK) return null
+  const num = (v: string | undefined) => (v && v !== 'NA' && Number.isFinite(Number(v)) ? Number(v) : null)
+  const bytes = num(f[1])
+  if (bytes == null) return null
+  const total = num(f[2]) ?? num(f[3])
+  return { bytes, totalBytes: total != null && total > 0 ? Math.round(total) : null }
+}
 
 /** Official standalone release asset for a platform (null = unsupported). */
 export function releaseAssetName(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string | null {
@@ -117,9 +136,24 @@ export async function findJsRuntime(dirs: string[] = searchDirs()): Promise<JsRu
   return null
 }
 
+/** The one-time download of the managed binary, as it goes. */
+export interface InstallProgress {
+  /**
+   * 'download' while it arrives; 'check' while its first run proves it works (a few seconds: the
+   * standalone build unpacks itself); 'done' once it runs; 'error' when it failed (`error` says why).
+   */
+  phase: 'download' | 'check' | 'done' | 'error'
+  bytes: number
+  /** Its size, once the response says (null before). */
+  totalBytes: number | null
+  error?: string
+}
+
 export interface YtDlpOptions {
   /** Where the managed binary + its state file live (<userData>/bin). */
   binDir: string
+  /** Progress of downloading the managed binary (first use, or a broken copy): every chunk, unthrottled. */
+  onInstall?: (p: InstallProgress) => void
   /** yt-dlp's own cache (player JS etc.). Default <binDir>/cache. */
   cacheDir?: string
   fetch?: typeof fetch
@@ -142,6 +176,11 @@ export interface RunOptions {
   priority?: Priority
   /** Resolve with stdout/stderr even when yt-dlp exits non-zero (e.g. --ignore-errors batches). */
   allowFailure?: boolean
+  /**
+   * A run that downloads: report its progress (bytes so far, and the total or yt-dlp's estimate of
+   * it). yt-dlp then prints progress lines, which are left out of `stdout`.
+   */
+  onProgress?: (bytes: number, totalBytes: number | null) => void
 }
 
 export interface RunResult {
@@ -235,11 +274,26 @@ export class YtDlp {
       }
       this.log('managed yt-dlp is broken; downloading it again')
     }
-    await this.download()
-    const v = await this.version(managed)
-    if (!v) throw new Error('downloaded yt-dlp does not run')
-    await this.writeState({ ...(await this.readState())!, version: v })
-    return { path: managed, version: v, managed: true }
+    const report = this.opts.onInstall
+    let bytes = 0
+    let total: number | null = null
+    report?.({ phase: 'download', bytes, totalBytes: total })
+    try {
+      await this.download((b, t) => {
+        bytes = b
+        total = t
+        report?.({ phase: 'download', bytes, totalBytes: total })
+      })
+      report?.({ phase: 'check', bytes, totalBytes: total })
+      const v = await this.version(managed)
+      if (!v) throw new Error('downloaded yt-dlp does not run')
+      await this.writeState({ ...(await this.readState())!, version: v })
+      report?.({ phase: 'done', bytes, totalBytes: total })
+      return { path: managed, version: v, managed: true }
+    } catch (e) {
+      report?.({ phase: 'error', bytes, totalBytes: total, error: (e as Error)?.message ?? String(e) })
+      throw e
+    }
   }
 
   private async readState(): Promise<ManagedState | null> {
@@ -261,8 +315,8 @@ export class YtDlp {
     return res
   }
 
-  /** Download the official release binary for this platform and verify its SHA-256. */
-  async download(): Promise<string> {
+  /** Download the official release binary for this platform and verify its SHA-256. `onBytes`: progress, per chunk. */
+  async download(onBytes?: (bytes: number, totalBytes: number | null) => void): Promise<string> {
     const asset = releaseAssetName(this.platform, this.opts.arch ?? process.arch)
     if (!asset) throw new Error(`no yt-dlp release asset for ${this.platform}`)
     const dest = join(this.opts.binDir, asset)
@@ -270,7 +324,7 @@ export class YtDlp {
     const sums = parseSha256Sums(await (await this.get(`${YTDLP_RELEASE_BASE}/SHA2-256SUMS`, 30_000)).text())
     const expected = sums.get(asset)
     if (!expected) throw new Error(`SHA2-256SUMS has no entry for ${asset}`)
-    const bytes = Buffer.from(await (await this.get(`${YTDLP_RELEASE_BASE}/${asset}`, 300_000)).arrayBuffer())
+    const bytes = await this.receive(await this.get(`${YTDLP_RELEASE_BASE}/${asset}`, 300_000), onBytes)
     const actual = createHash('sha256').update(bytes).digest('hex')
     if (actual !== expected) throw new Error(`yt-dlp checksum mismatch for ${asset}: expected ${expected}, got ${actual}`)
     await mkdir(this.opts.binDir, { recursive: true })
@@ -289,7 +343,32 @@ export class YtDlp {
     return dest
   }
 
-  /** `yt-dlp -U` for the managed copy, at most once per UPDATE_INTERVAL_MS. Runs in the background. */
+  /** A response body, chunk by chunk (reporting progress), into one buffer. */
+  private async receive(res: Response, onBytes?: (bytes: number, totalBytes: number | null) => void): Promise<Buffer> {
+    const len = Number(res.headers.get('content-length'))
+    const total = Number.isFinite(len) && len > 0 ? len : null
+    if (!res.body) {
+      const buf = Buffer.from(await res.arrayBuffer())
+      onBytes?.(buf.length, total)
+      return buf
+    }
+    const chunks: Uint8Array[] = []
+    let n = 0
+    const reader = res.body.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      n += value.length
+      onBytes?.(n, total)
+    }
+    return Buffer.concat(chunks, n)
+  }
+
+  /**
+   * `yt-dlp -U` for the managed copy, at most once per UPDATE_INTERVAL_MS. Runs in the background,
+   * outside the run queue: it may take minutes, and must never hold a slot a user-facing run waits for.
+   */
   private maybeUpdate(path: string): void {
     if (this.opts.autoUpdate === false || this.updating) return
     this.updating = (async () => {
@@ -299,7 +378,7 @@ export class YtDlp {
       // Record the attempt first so a failing update doesn't retry on every launch.
       await this.writeState({ ...base, updateCheckedAt: this.now() })
       try {
-        const r = await this.queue.schedule(() => this.exec(path, ['-U'], { timeoutMs: 300_000 }, {}), 2)
+        const r = await this.exec(path, ['-U'], { timeoutMs: 300_000 }, {})
         const line = r.stdout.trim().split(/\r?\n/).at(-1) ?? ''
         this.log(`yt-dlp -U: ${line}`)
         const v = await this.version(path)
@@ -334,7 +413,9 @@ export class YtDlp {
           windowsHide: true,
           encoding: 'utf8'
         },
-        (err, stdout, stderr) => {
+        (err, rawStdout, stderr) => {
+          // Progress lines (a downloading run) aren't output.
+          const stdout = opts.onProgress && typeof rawStdout === 'string' ? rawStdout.split('\n').filter((l) => !l.startsWith(PROGRESS_MARK)).join('\n') : rawStdout
           if (!err) return resolve({ stdout, stderr, code: 0 })
           const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string; code?: unknown }
           if (opts.signal?.aborted || e.name === 'AbortError') return reject(new NetError('aborted', 'yt-dlp aborted'))
@@ -344,6 +425,18 @@ export class YtDlp {
           reject(classifyYtDlpError(String(stderr ?? ''), e.message))
         }
       )
+      const onProgress = opts.onProgress
+      if (onProgress && child.stdout) {
+        let partial = ''
+        child.stdout.on('data', (chunk: string | Buffer) => {
+          const lines = (partial + String(chunk)).split('\n')
+          partial = lines.pop() ?? ''
+          for (const line of lines) {
+            const p = parseProgressLine(line)
+            if (p) onProgress(p.bytes, p.totalBytes)
+          }
+        })
+      }
       // Ended by the main thread when the app quits (see ./children.ts), whichever thread runs this.
       const pid = child.pid
       trackChild(pid)
@@ -357,7 +450,7 @@ export class YtDlp {
   async run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
     const bin = await this.ensure()
     const rt = await this.jsRuntime()
-    const base = ['--ignore-config', '--no-warnings', '--no-progress', '--cache-dir', this.opts.cacheDir ?? join(this.opts.binDir, 'cache')]
+    const base = ['--ignore-config', '--no-warnings', ...(opts.onProgress ? PROGRESS_ARGS : ['--no-progress']), '--cache-dir', this.opts.cacheDir ?? join(this.opts.binDir, 'cache')]
     if (rt && existsSync(rt.path)) base.push('--js-runtimes', `${rt.name}:${rt.path}`)
     return this.queue.schedule(() => this.exec(bin.path, [...base, ...args], opts, rt?.env ?? {}), opts.priority ?? 1, opts.signal)
   }

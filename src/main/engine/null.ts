@@ -1,6 +1,6 @@
 // Fallback engine used when the native addon can't be loaded: no audio, simulated clock.
 // Keeps the app usable (browsing, library) and makes failures visible instead of fatal.
-import type { EngineBridge, EngineEvent, EnginePosition, EngineTrack } from './types'
+import type { EngineBridge, EngineCacheProgress, EngineEvent, EngineLoadProgress, EnginePosition, EngineTrack } from './types'
 
 export class NullEngine implements EngineBridge {
   private cb: (e: EngineEvent) => void = () => {}
@@ -82,6 +82,12 @@ export class NullEngine implements EngineBridge {
   stopPreview() {}
   position(): EnginePosition {
     return { id: this.current?.id ?? null, positionMs: this.live(), durationMs: this.current?.expectedDurationMs ?? null, playing: this.playing, at: Date.now() }
+  }
+  loadProgress(): EngineLoadProgress | null {
+    return null
+  }
+  cacheProgress(): EngineCacheProgress | null {
+    return null
   }
   listDevices() {
     return [{ id: 'default', name: 'System default', isDefault: true }]

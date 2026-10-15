@@ -11,6 +11,13 @@ export interface ProviderCallOptions {
   signal?: AbortSignal
   /** Bypass caches. */
   force?: boolean
+  /**
+   * The TaskProgress key of the wait this call belongs to (e.g. 'album:12'). Work handed to the main
+   * process (a chiptune set fetched through the engine) reports its progress there under this key.
+   */
+  progressKey?: string
+  /** Progress of a download this call makes (SoundCloud's whole-track fetch), as bytes arrive. */
+  onBytes?: (bytes: number, totalBytes: number | null) => void
 }
 
 export interface PlatformRef {
@@ -145,6 +152,11 @@ export interface Provider {
    * whose streams are free (known at album time) or too expensive (SoundCloud downloads the track).
    */
   prefetchStreams?: boolean
+  /**
+   * resolveStream builds the stream from the locator alone, without a request (Zophar's Domain,
+   * Modland, chiptune rips, local files): re-resolving one is never a wait worth reporting.
+   */
+  streamsFromLocator?: boolean
   /** Album-like results for "import from YouTube / Internet Archive / Bandcamp". */
   searchExternal?(q: string, opts?: ProviderCallOptions): Promise<ExternalAlbumHit[]>
   /** Turn a locator into playable stream(s), one per available format. */

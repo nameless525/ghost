@@ -5,6 +5,7 @@ import type { Album, AudioFormat, Game, ID, Settings, TrackAnalysis, TrackView }
 import type { DB } from '../db'
 import type { Broadcast } from '../ipc'
 import type { ArchiveListing, EngineSource, OfflineAnalysisResult } from '../engine/types'
+import type { ResolveStep } from './progress'
 
 export interface ResolvedSource {
   provider: string
@@ -64,9 +65,17 @@ export interface CatalogDeps {
   getSettings: () => Settings
   /**
    * The engine's archive lister (`EngineBridge.inspectArchive`): chiptune rip albums are built from
-   * their archive's listing. Without it those albums can't be opened.
+   * their archive's listing. Without it those albums can't be opened. `progressKey`: the TaskProgress
+   * key main reports the archive's download under (the album being opened).
    */
-  inspectArchive?: (source: EngineSource) => Promise<ArchiveListing>
+  inspectArchive?: (source: EngineSource, ctx?: { progressKey?: string }) => Promise<ArchiveListing>
+  /** A resolve a play is waiting on went to the network (see ResolveStep); re-sent as a download progresses. */
+  onResolveStep?: (step: ResolveStep) => void
+  /**
+   * Settings pushed to the catalog (the worker gets them from main): called after `getSettings`
+   * returns the new ones. Without it, settings the catalog acts on (local folders) are polled.
+   */
+  onSettingsChanged?: (fn: () => void) => () => void
 }
 
 export { createCatalogService as createCatalog } from './service'

@@ -366,6 +366,21 @@
   box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.8);
 }
 
+/* While the track loads: what it waits on, along the chip's bottom edge. */
+.g-np-chip__load {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+.g-np-chip__load .g-progress__track {
+  border-radius: 0;
+  background: rgb(255 255 255 / 0.06);
+}
+.g-np-chip__sub--loading {
+  color: var(--accent-hi);
+}
+
 /* ---------------------------------------------------------------- overlays */
 .g-overlay-dim {
   position: absolute;

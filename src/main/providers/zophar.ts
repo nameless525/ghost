@@ -582,6 +582,8 @@ export function parseAlbumPage(html: string, ref: string): ProviderAlbum {
 export class ZopharProvider implements IndexProvider {
   readonly id = ZOPHAR_ID
   readonly name = "Zophar's Domain"
+  /** Streams are built from the locator (no request). */
+  readonly streamsFromLocator = true
   /** New sets trickle in (a few a week) and land anywhere in the A–Z listings: a full re-read every two weeks. */
   readonly indexRefreshMs = ZOPHAR_INDEX_REFRESH_MS
   /** A small hobby site: a 1 s pause after each listing page, on top of its 1 s host spacing (≈120 pages, about 4 minutes). */

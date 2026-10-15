@@ -21,7 +21,7 @@ use crate::dsp::limiter::Limiter;
 use crate::dsp::overlay::OverlayFilter;
 use crate::dsp::{Curve, DbRamp, Fader, Ramp};
 use crate::stats::{Stats, LOW_WATER_SEC};
-use crate::voice::{Bus, Voice};
+use crate::voice::{Bus, Voice, PLAY_REBUFFERING, PLAY_STARTED};
 
 /// Largest block rendered in one pass (bigger callbacks are split).
 pub const MAX_BLOCK: usize = 512;
@@ -638,6 +638,7 @@ impl Mixer {
                     break;
                 }
                 cur.underrun = false;
+                cur.shared.play_state.store(PLAY_STARTED, std::sync::atomic::Ordering::Relaxed);
                 cur.env.retarget(1.0, self.switch_fade, Curve::SCurve);
                 let key = cur.key;
                 self.emit(MixerEvent::Underrun(key, false));
@@ -697,6 +698,8 @@ impl Mixer {
             // Underrun: wait for the decoder to catch up.
             if !cur.underrun {
                 cur.underrun = true;
+                cur.shared.stall_pos.store(cur.pos, std::sync::atomic::Ordering::Relaxed);
+                cur.shared.play_state.store(PLAY_REBUFFERING, std::sync::atomic::Ordering::Release);
                 Stats::add(&self.stats.underruns, 1);
                 let key = cur.key;
                 self.emit(MixerEvent::Underrun(key, true));

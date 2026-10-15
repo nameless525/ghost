@@ -9,6 +9,10 @@
 //! the `Done` event reports the final path. Progress counts PCM bytes rendered against the PCM
 //! size of the whole track; the last progress event (before tagging) and `Done` carry the FLAC's
 //! real size.
+//!
+//! Archive entries need the whole archive first: until it is in, progress counts the archive's
+//! bytes in the stream cache against the archive's size; then the entry's own phase reports
+//! (the entry's size for a saved entry, PCM from 0 for a render).
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -147,6 +151,13 @@ fn run(
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
     let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true };
+    if source.extras().archive_entry.is_some() {
+        // Everything below needs the extracted set, i.e. the whole archive: report the archive's
+        // bytes while it is fetched instead of sitting at 0 until it is in. (Rendering then
+        // reports its own progress from 0.)
+        rep.progress(0, None, true);
+        source::archive_cache::get_with_progress(source, &ctx, Some(&mut |bytes, total| rep.progress(bytes, total, false))).map_err(|e| e.message)?;
+    }
     let render = match options.render_flac {
         Some(r) => r,
         None => source.extras().has_clip() || source::probe_family(source, &ctx).map_err(|e| e.message)?.is_some(),
@@ -224,9 +235,8 @@ fn finish_file(tmp: &Path, dest: &Path, tags: &TagInfo, http: &Http, cancel: &At
     result
 }
 
-/// An archive entry saved as-is.
+/// An archive entry saved as-is (`run` has already fetched the archive, reporting its bytes).
 fn save_entry(source: &SourceSpec, entry: &str, dest: &Path, tags: &TagInfo, ctx: &OpenCtx<'_>, rep: &mut Reporter) -> Result<PathBuf, String> {
-    rep.progress(0, None, true);
     let set = source::archive_cache::get(source, ctx).map_err(|e| e.message)?;
     let (_, data) = set.find(entry).ok_or_else(|| format!("archive has no entry '{entry}'"))?;
     let tmp = temp_path(dest, rep.gen);

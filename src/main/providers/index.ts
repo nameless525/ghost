@@ -72,7 +72,7 @@ export interface RegistryDeps {
   /** fetch for archive.org's JSON APIs. */
   fetch?: typeof fetch
   /** The engine's archive lister, for chiptune rip sets (without it their albums can't open). */
-  inspectArchive?: (source: EngineSource) => Promise<ArchiveListing>
+  inspectArchive?: (source: EngineSource, ctx?: { progressKey?: string }) => Promise<ArchiveListing>
   /** Where sources keep downloaded indexes and files (Modland's list, SoundCloud tracks). Without it neither is registered. */
   cacheDir?: string
   log?: (msg: string) => void

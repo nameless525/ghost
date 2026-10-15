@@ -5,13 +5,20 @@
 //! the command queue; the mixer returns finished voices through a garbage queue so nothing is ever
 //! freed on the audio thread.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::dsp::{Curve, Fader, Ramp};
 
 /// Ring capacity in seconds.
 pub const RING_SECONDS: f32 = 2.0;
+
+/// `VoiceShared::play_state`: waiting for the prefill before the first sample.
+pub const PLAY_WAITING: u8 = 0;
+/// Producing audio.
+pub const PLAY_STARTED: u8 = 1;
+/// Ran dry mid-track; waiting for the rebuffer amount.
+pub const PLAY_REBUFFERING: u8 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bus {
@@ -35,6 +42,14 @@ pub struct VoiceShared {
     pub end_pos: AtomicU64,
     /// Estimated track length in device frames (from the container), or u64::MAX.
     pub est_end: AtomicU64,
+    /// Track position just past the last frame the worker pushed into the ring (Release, after
+    /// `origin`; 0 until the first push).
+    pub write_pos: AtomicU64,
+    /// Mixer state (`PLAY_*`), stored by the mixer on transitions only (start, run dry, recover).
+    pub play_state: AtomicU8,
+    /// Track position where the mixer ran dry (stored before `play_state` turns
+    /// `PLAY_REBUFFERING`); with `write_pos`, the audio buffered toward the rebuffer target.
+    pub stall_pos: AtomicU64,
     /// Worker thread handle, so the controller can wake it when cancelling.
     pub thread: parking_lot::Mutex<Option<std::thread::Thread>>,
     /// Gapless continuation: the next voice this voice's worker should decode into once its own
@@ -67,6 +82,9 @@ impl VoiceShared {
             origin_set: AtomicBool::new(false),
             end_pos: AtomicU64::new(u64::MAX),
             est_end: AtomicU64::new(u64::MAX),
+            write_pos: AtomicU64::new(0),
+            play_state: AtomicU8::new(PLAY_WAITING),
+            stall_pos: AtomicU64::new(0),
             thread: parking_lot::Mutex::new(None),
             chain: parking_lot::Mutex::new(ChainSlot::default()),
         })
@@ -99,6 +117,21 @@ impl VoiceShared {
     /// Take back a continuation that the worker hasn't started yet.
     pub fn detach_next(&self) -> Option<Continuation> {
         self.chain.lock().next.take()
+    }
+
+    /// What the voice waits for, from the worker's write position and the mixer's state
+    /// transitions: (`PLAY_*` state, frames decoded toward the target, target frames). The
+    /// target is the prefill before the first sample, the rebuffer amount after running dry, and
+    /// 0 while playing (the fill isn't tracked then: that would cost the audio thread a store per
+    /// block).
+    pub fn wait_progress(&self, prefill: u64, rebuffer: u64) -> (u8, u64, u64) {
+        let state = self.play_state.load(Ordering::Acquire);
+        let written = self.write_pos.load(Ordering::Acquire);
+        match state {
+            PLAY_WAITING => (state, written.saturating_sub(self.origin.load(Ordering::Acquire)), prefill),
+            PLAY_REBUFFERING => (state, written.saturating_sub(self.stall_pos.load(Ordering::Relaxed)), rebuffer),
+            _ => (state, 0, 0),
+        }
     }
 }
 
@@ -189,6 +222,7 @@ impl Voice {
             // The worker publishes `origin` before pushing its first frame.
             self.pos = if self.shared.origin_set.load(Ordering::Acquire) { self.shared.origin.load(Ordering::Acquire) } else { 0 };
             self.started = true;
+            self.shared.play_state.store(PLAY_STARTED, Ordering::Relaxed);
             if self.fade_in {
                 self.env = Fader::new(0.0, self.env.target(), (rate / 100).max(1), Curve::SCurve);
             }

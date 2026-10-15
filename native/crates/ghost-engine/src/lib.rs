@@ -259,6 +259,44 @@ pub enum EngineEvent {
     PreviewEnded { id: String },
 }
 
+/// Which track [`Engine::load_progress`] reports on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Current = 0,
+    Preview = 1,
+}
+
+/// What a track's start (or rebuffer) is waiting on, for honest progress bars; see
+/// [`Engine::load_progress`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoadProgress {
+    /// Track id (`TrackLoad::id`).
+    pub id: String,
+    /// The track is producing audio (started, and not rebuffering).
+    pub started: bool,
+    /// The source answered: the HTTP response header is in (size / type known; for a cached
+    /// entry reopened from disk, known from an earlier fetch). Always true for local files.
+    pub connected: bool,
+    /// Bytes of the source in the stream cache (for an archive entry: of the archive, which is
+    /// what is fetched); for local files the file's size.
+    pub bytes: u64,
+    pub total_bytes: Option<u64>,
+    /// The decoder can't start before the whole file is in (libgme / libopenmpt formats, archive
+    /// entries), so `bytes / total_bytes` is the progress toward the first sound. Judged from the
+    /// extension / hint (a chip file behind an unknown extension reads false).
+    pub whole_file: bool,
+    /// Decoded audio ready to play, and how much the voice waits for before it (re)starts: the
+    /// prefill (200 ms) before the first sound, the rebuffer amount (750 ms) after running dry.
+    /// Both 0 while `started` (the fill isn't tracked while audio flows).
+    pub buffered_ms: u64,
+    pub target_ms: u64,
+    /// How long a reader has waited for bytes that haven't come (0 when none is waiting; any
+    /// byte arriving restarts it), and when it gives up (a recoverable error: the player then
+    /// tries another source).
+    pub stalled_ms: u64,
+    pub stall_timeout_ms: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct PositionInfo {
     pub id: Option<String>,
@@ -454,6 +492,21 @@ impl Engine {
 
     pub fn position(&self) -> PositionInfo {
         self.inner.shared.position()
+    }
+
+    /// What the current (or preview) track's start or rebuffer waits on; `None` when that slot is
+    /// empty. Cheap (a few atomic loads and two briefly held locks, no I/O): meant to be polled a
+    /// few times a second while the player waits.
+    pub fn load_progress(&self, slot: Slot) -> Option<LoadProgress> {
+        self.inner.shared.load_progress(slot, self.inner.cache.stall_timeout)
+    }
+
+    /// Bytes of `cache_key`'s stream in the cache and its size (if known), while its entry is
+    /// open: being fetched or read (a playing track, an analysis, an `inspect_archive` or
+    /// download in flight). `None` otherwise, including before the first read and after the
+    /// last reader is done. Memory only (a map lookup and a few field reads).
+    pub fn cache_progress(&self, cache_key: &str) -> Option<(u64, Option<u64>)> {
+        self.inner.cache.progress(cache_key).map(|p| (p.bytes, p.total))
     }
 
     /// Copy the latest real-time analysis frame (audible-time aligned). Returns false if none.

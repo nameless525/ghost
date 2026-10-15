@@ -11,16 +11,16 @@ use crossbeam_channel::{select, Receiver, Sender};
 use parking_lot::Mutex;
 
 use crate::analysis_tap::{AnalysisShared, TapMsg};
-use crate::cache::{CacheEvent, CacheManager};
+use crate::cache::{CacheEvent, CacheManager, Entry};
 use crate::clock::Clock;
 use crate::decode::{self, WorkerEvent, WorkerParams};
 use crate::jobs::{analyze_job, JobPool, Loudness};
-use crate::mixer::{Mixer, MixerCmd, MixerEvent, MixerLink, Transition, SWITCH_FADE_SEC};
+use crate::mixer::{Mixer, MixerCmd, MixerEvent, MixerLink, Transition, PREFILL_SEC, REBUFFER_SEC, SWITCH_FADE_SEC};
 use crate::output::{self, NullOutput, OutputStream, ERR_REBUILD};
 use crate::source::loop_stage::LoopSettings;
 use crate::util::{db_to_lin, epoch_us};
-use crate::voice::{self, Bus, Continuation, Voice, VoiceShared};
-use crate::{DeviceInfo, EngineEvent, NormalizationMode, PlaybackState, PositionInfo, SourceSpec, TrackInfo, TrackLoad};
+use crate::voice::{self, Bus, Continuation, Voice, VoiceShared, PLAY_STARTED, PLAY_WAITING};
+use crate::{DeviceInfo, EngineEvent, LoadProgress, NormalizationMode, PlaybackState, PositionInfo, Slot, SourceSpec, TrackInfo, TrackLoad};
 
 /// Device enumeration cadence without change notifications (and the idle loop's longest sleep).
 const DEVICE_POLL: Duration = Duration::from_millis(1500);
@@ -62,6 +62,20 @@ pub enum OutputMode {
 /// (voice key, track id, duration ms) for position lookups.
 type VoiceEntry = (u64, Arc<str>, Option<u64>);
 
+/// What `Engine::load_progress` reads for one slot, published by the controller whenever the
+/// slot's track or voice changes.
+pub struct LoadWatch {
+    id: String,
+    voice: Option<Arc<VoiceShared>>,
+    /// The cache entry the track's bytes come through (an archive entry's: the archive's), held
+    /// open while the track is in the slot so it reads right even after its readers closed.
+    entry: Option<Arc<Entry>>,
+    /// Local files: the file's size (archive entries: the archive's).
+    file_size: Option<u64>,
+    whole_file: bool,
+    rate: u32,
+}
+
 /// State readable from the API handle without going through the controller.
 pub struct Shared {
     pub clock: Arc<Clock>,
@@ -77,6 +91,8 @@ pub struct Shared {
     pub voice_count: AtomicU32,
     /// Health counters (underruns, xruns, callback load, low water).
     pub stats: Arc<crate::stats::Stats>,
+    /// Load watches for the current and preview slots (`Slot as usize`).
+    loads: Mutex<[Option<LoadWatch>; 2]>,
 }
 
 impl Shared {
@@ -92,7 +108,40 @@ impl Shared {
             device_name: Mutex::new(String::new()),
             voice_count: AtomicU32::new(0),
             stats: Arc::new(crate::stats::Stats::new()),
+            loads: Mutex::new([None, None]),
         }
+    }
+
+    /// See `Engine::load_progress`. Holds the watch lock (taken by the controller only when a
+    /// slot changes) for a few atomic loads and the entry's `progress()` field reads.
+    pub fn load_progress(&self, slot: Slot, stall_timeout: Duration) -> Option<LoadProgress> {
+        let loads = self.loads.lock();
+        let w = loads[slot as usize].as_ref()?;
+        let rate = w.rate.max(1) as u64;
+        let frames = |sec: f32| (sec * rate as f32) as u64;
+        let (state, buffered, target) = match &w.voice {
+            Some(v) => v.wait_progress(frames(PREFILL_SEC), frames(REBUFFER_SEC)),
+            None => (PLAY_WAITING, 0, frames(PREFILL_SEC)),
+        };
+        let (connected, bytes, total_bytes, stalled) = match (&w.entry, w.file_size) {
+            (Some(e), _) => {
+                let p = e.progress();
+                (p.connected, p.bytes, p.total, p.stalled)
+            }
+            (None, size) => (true, size.unwrap_or(0), size, Duration::ZERO),
+        };
+        Some(LoadProgress {
+            id: w.id.clone(),
+            started: state == PLAY_STARTED,
+            connected,
+            bytes,
+            total_bytes,
+            whole_file: w.whole_file,
+            buffered_ms: buffered * 1000 / rate,
+            target_ms: target * 1000 / rate,
+            stalled_ms: stalled.as_millis() as u64,
+            stall_timeout_ms: stall_timeout.as_millis() as u64,
+        })
     }
 
     fn register_voice(&self, key: u64, id: &str, duration_ms: Option<u64>) {
@@ -230,6 +279,8 @@ pub struct Controller {
     measure_cancel: Arc<AtomicBool>,
     /// Keeps the next track's cache entry filling while it waits as a chained continuation.
     next_warm: Option<crate::cache::CacheReader>,
+    /// (track seq, voice key) of the current / preview tracks the load watches were built for.
+    published_loads: [(u32, u64); 2],
 }
 
 pub struct ControllerInit {
@@ -301,6 +352,7 @@ impl Controller {
             measuring: HashSet::new(),
             measure_cancel: Arc::new(AtomicBool::new(false)),
             next_warm: None,
+            published_loads: [(0, 0); 2],
         }
     }
 
@@ -327,7 +379,11 @@ impl Controller {
             }
             self.poll_mixer();
             self.tick();
+            self.publish_loads();
         }
+        // Released here, not under the lock (dropping one may close a cache entry).
+        let loads = std::mem::take(&mut *self.shared.loads.lock());
+        drop(loads);
         self.measure_cancel.store(true, Ordering::Relaxed);
         for v in self.voices.values() {
             v.cancel();
@@ -542,6 +598,48 @@ impl Controller {
         self.voices.insert(key, shared.clone());
         self.shared.register_voice(key, &load.id, load.expected_duration_ms);
         Some((v, shared))
+    }
+
+    /// Rebuild the load watches of slots whose track or voice changed (a compare otherwise).
+    fn publish_loads(&mut self) {
+        let slots = [self.current.as_ref(), self.preview.as_ref()];
+        let now = slots.map(|t| t.map_or((0, 0), |t| (t.seq, t.key)));
+        if now == self.published_loads {
+            return;
+        }
+        let mut fresh: [Option<Option<LoadWatch>>; 2] = [None, None];
+        for (i, t) in slots.into_iter().enumerate() {
+            if now[i] != self.published_loads[i] {
+                fresh[i] = Some(t.map(|t| self.load_watch(t)));
+            }
+        }
+        self.published_loads = now;
+        let mut old = Vec::new();
+        {
+            let mut loads = self.shared.loads.lock();
+            for (slot, w) in loads.iter_mut().zip(fresh) {
+                if let Some(w) = w {
+                    old.push(std::mem::replace(slot, w));
+                }
+            }
+        }
+        drop(old);
+    }
+
+    fn load_watch(&self, t: &Track) -> LoadWatch {
+        let (entry, file_size) = match &t.load.source {
+            // The worker opens the same entry moments later; this only takes a handle on it.
+            SourceSpec::Http { .. } => (self.cache.entry(&t.load.source).ok(), None),
+            SourceSpec::File { path, .. } => (None, std::fs::metadata(path).ok().map(|m| m.len())),
+        };
+        LoadWatch {
+            id: t.load.id.clone(),
+            voice: t.shared.clone(),
+            entry,
+            file_size,
+            whole_file: crate::source::whole_file_hint(&t.load.source),
+            rate: self.rate,
+        }
     }
 
     fn cancel_track(&mut self, t: &Track) {

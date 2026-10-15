@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { isNetError } from '../net/errors'
 import { killTrackedChildren, trackedChildren } from './children'
-import { classifyYtDlpError, parseSha256Sums, releaseAssetName, searchDirs, UPDATE_INTERVAL_MS, versionDate, YTDLP_RELEASE_BASE, YtDlp } from './ytdlp'
+import { classifyYtDlpError, parseProgressLine, parseSha256Sums, releaseAssetName, searchDirs, UPDATE_INTERVAL_MS, versionDate, YTDLP_RELEASE_BASE, YtDlp, type InstallProgress } from './ytdlp'
 
 const dirs: string[] = []
 function tmp(): string {
@@ -17,11 +17,15 @@ afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true })
 })
 
-/** A stand-in yt-dlp: prints its version, "updates", sleeps / fails on request, echoes its args. */
-const fakeBinary = (version: string) => `#!/bin/sh
+/**
+ * A stand-in yt-dlp: prints its version, "updates" (slowly on request), sleeps / fails on request,
+ * prints progress lines when asked for them, echoes its args.
+ */
+const fakeBinary = (version: string, opts: { updateSec?: number } = {}) => `#!/bin/sh
 if [ "$1" = "--version" ]; then echo ${version}; exit 0; fi
-if [ "$1" = "-U" ]; then echo "Updated yt-dlp to stable@2026.09.01"; touch "$(dirname "$0")/updated"; exit 0; fi
+if [ "$1" = "-U" ]; then sleep ${opts.updateSec ?? 0}; echo "Updated yt-dlp to stable@2026.09.01"; touch "$(dirname "$0")/updated"; exit 0; fi
 for a in "$@"; do
+  if [ "$a" = "--newline" ]; then echo "ghost-progress 1024 4096 NA"; echo "ghost-progress 3000 NA 6000.5"; echo "ghost-progress NA NA NA"; fi
   if [ "$a" = "--sleep" ]; then sleep 0.3; fi
   if [ "$a" = "--hang" ]; then exec sleep 5; fi
   if [ "$a" = "--fail" ]; then echo "ERROR: [youtube] abcdefghijk: Video unavailable. This video is private" >&2; exit 1; fi
@@ -32,7 +36,8 @@ for a in "$@"; do printf '%s\\n' "$a"; done
 const NOW = Date.UTC(2026, 9, 14)
 const unix = process.platform !== 'win32'
 
-function releaseFetch(binary: Buffer, opts: { badSum?: boolean } = {}): typeof fetch & { urls: string[] } {
+/** The release as GitHub serves it; `chunked`: the binary arrives in pieces with its Content-Length. */
+function releaseFetch(binary: Buffer, opts: { badSum?: boolean; chunked?: boolean } = {}): typeof fetch & { urls: string[] } {
   const asset = releaseAssetName()!
   const sum = createHash('sha256').update(binary).digest('hex')
   const urls: string[] = []
@@ -42,6 +47,16 @@ function releaseFetch(binary: Buffer, opts: { badSum?: boolean } = {}): typeof f
     if (url === `${YTDLP_RELEASE_BASE}/SHA2-256SUMS`) {
       const s = opts.badSum ? '0'.repeat(64) : sum
       return new Response(`${'1'.repeat(64)}  yt-dlp.tar.gz\n${s}  ${asset}\n${'2'.repeat(64)}  yt-dlp_x86.exe\n`)
+    }
+    if (url === `${YTDLP_RELEASE_BASE}/${asset}` && opts.chunked) {
+      const third = Math.ceil(binary.length / 3)
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          for (let i = 0; i < binary.length; i += third) c.enqueue(new Uint8Array(binary.subarray(i, i + third)))
+          c.close()
+        }
+      })
+      return new Response(body, { headers: { 'content-length': String(binary.length) } })
     }
     if (url === `${YTDLP_RELEASE_BASE}/${asset}`) return new Response(binary)
     return new Response('nope', { status: 404 })
@@ -98,6 +113,26 @@ describe.runIf(unix)('yt-dlp: locate / download / update / run', () => {
     expect(f2.urls).toEqual([])
   })
 
+  it('reports the download as it arrives, then that it runs', async () => {
+    const binDir = join(tmp(), 'bin')
+    const bin = Buffer.from(fakeBinary('2026.08.19'))
+    const seen: InstallProgress[] = []
+    const y = new YtDlp({ binDir, fetch: releaseFetch(bin, { chunked: true }), systemDirs: [], jsRuntime: null, now: () => NOW, autoUpdate: false, onInstall: (p) => seen.push(p) })
+    expect((await y.ensure()).managed).toBe(true)
+    expect(seen[0]).toEqual({ phase: 'download', bytes: 0, totalBytes: null })
+    const third = Math.ceil(bin.length / 3)
+    expect(seen.slice(1, -2)).toEqual([third, 2 * third, bin.length].map((bytes) => ({ phase: 'download', bytes, totalBytes: bin.length })))
+    expect(seen.slice(-2)).toEqual([
+      { phase: 'check', bytes: bin.length, totalBytes: bin.length },
+      { phase: 'done', bytes: bin.length, totalBytes: bin.length }
+    ])
+    // still verified: a bad checksum is an error
+    const bad: InstallProgress[] = []
+    const y2 = new YtDlp({ binDir: join(tmp(), 'bin'), fetch: releaseFetch(bin, { chunked: true, badSum: true }), systemDirs: [], jsRuntime: null, autoUpdate: false, onInstall: (p) => bad.push(p) })
+    await expect(y2.ensure()).rejects.toThrow(/checksum mismatch/)
+    expect(bad.at(-1)).toMatchObject({ phase: 'error', error: expect.stringMatching(/checksum mismatch/) })
+  })
+
   it('refuses a binary whose checksum does not match', async () => {
     const binDir = join(tmp(), 'bin')
     const y = new YtDlp({ binDir, fetch: releaseFetch(Buffer.from(fakeBinary('2026.08.19')), { badSum: true }), systemDirs: [], jsRuntime: null, autoUpdate: false })
@@ -138,6 +173,51 @@ describe.runIf(unix)('yt-dlp: locate / download / update / run', () => {
     await new YtDlp({ binDir, fetch: releaseFetch(bin), systemDirs: [], jsRuntime: null, now: () => later + 1000 }).ensure()
     await new Promise((r) => setTimeout(r, 200))
     expect(existsSync(join(binDir, 'updated'))).toBe(false)
+  })
+
+  it('the weekly self-update runs beside the queue: it never holds up a run', async () => {
+    const binDir = join(tmp(), 'bin')
+    const bin = Buffer.from(fakeBinary('2026.08.19', { updateSec: 1.5 }))
+    await new YtDlp({ binDir, fetch: releaseFetch(bin), systemDirs: [], jsRuntime: null, now: () => NOW, autoUpdate: false }).ensure()
+    const later = NOW + UPDATE_INTERVAL_MS + 3600_000
+    // One slot: a queued update would make this run wait 1.5 s.
+    const y = new YtDlp({ binDir, fetch: releaseFetch(bin), systemDirs: [], jsRuntime: null, now: () => later, maxConcurrent: 1 })
+    await y.ensure()
+    // The update has started (its attempt is recorded just before it runs).
+    const checked = () => JSON.parse(readFileSync(join(binDir, 'yt-dlp.json'), 'utf8')).updateCheckedAt === later
+    for (let i = 0; i < 100 && !checked(); i++) await new Promise((res) => setTimeout(res, 10))
+    await new Promise((res) => setTimeout(res, 50))
+    const t0 = Date.now()
+    const r = await y.run(['--flat-playlist', 'ytsearch1:x'])
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(r.stdout).toContain('ytsearch1:x')
+    expect(existsSync(join(binDir, 'updated'))).toBe(false) // still updating
+    for (let i = 0; i < 150 && !existsSync(join(binDir, 'updated')); i++) await new Promise((res) => setTimeout(res, 20))
+    expect(existsSync(join(binDir, 'updated'))).toBe(true)
+  })
+
+  it('a downloading run reports progress lines and leaves them out of its output', async () => {
+    expect(parseProgressLine('ghost-progress 1024 4096 NA')).toEqual({ bytes: 1024, totalBytes: 4096 })
+    expect(parseProgressLine('ghost-progress 3000 NA 6000.5')).toEqual({ bytes: 3000, totalBytes: 6001 })
+    expect(parseProgressLine('ghost-progress NA NA NA')).toBeNull()
+    expect(parseProgressLine('/music/sc-1.m4a')).toBeNull()
+    const sys = tmp()
+    writeFileSync(join(sys, 'yt-dlp'), fakeBinary('2026.09.30'))
+    chmodSync(join(sys, 'yt-dlp'), 0o755)
+    const y = new YtDlp({ binDir: join(tmp(), 'bin'), systemDirs: [sys], jsRuntime: null, now: () => NOW, autoUpdate: false })
+    const seen: [number, number | null][] = []
+    const r = await y.run(['--no-simulate', 'https://api.soundcloud.com/tracks/1'], { onProgress: (b, t) => seen.push([b, t]) })
+    expect(seen).toEqual([
+      [1024, 4096],
+      [3000, 6001]
+    ])
+    const args = r.stdout.trim().split('\n')
+    expect(args.filter((l) => l.startsWith('ghost-progress'))).toEqual([])
+    expect(args).not.toContain('--no-progress')
+    expect(args).toEqual(expect.arrayContaining(['--progress', '--newline', '--progress-template']))
+    expect(args.at(-1)).toBe('https://api.soundcloud.com/tracks/1')
+    // Other runs keep yt-dlp quiet.
+    expect((await y.run(['-J', 'x'])).stdout.split('\n')).toContain('--no-progress')
   })
 
   it('passes args without a shell, ignores user config, queues ≤2 at a time, times out, classifies errors', async () => {

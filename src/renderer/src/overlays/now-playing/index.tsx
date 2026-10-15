@@ -13,7 +13,7 @@ import type { OverlayProps } from '../../shell/types'
 import { sfx } from '../../sound'
 import { livePositionMs, usePlayer } from '../../state/player'
 import { useUI } from '../../state/ui'
-import { Button, CoverArt, GhostMark, IconButton, IntensityBadge, Marquee, Slider, SourceBadge, formatTime } from '../../ui'
+import { Button, CoverArt, GhostMark, IconButton, IntensityBadge, Marquee, ProgressBar, Slider, SourceBadge, formatTime } from '../../ui'
 import { cx } from '../../ui/util'
 import {
   AddToPlaylistButton,
@@ -47,6 +47,7 @@ const STATUS_LABEL: Record<string, string> = {
 export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProps) {
   const current = useCurrentTrack()
   const status = usePlayer((s) => s.status)
+  const loading = usePlayer((s) => s.loading ?? null)
   const duration = usePlayer((s) => s.durationMs)
   const context = usePlayer((s) => s.context)
   const upNext = usePlayer((s) => Math.max(0, s.queue.length - s.queueIndex - 1))
@@ -144,6 +145,7 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
           />
         </div>
         <div className="np-seek">
+          {loading && <ProgressBar className="np-load" size="thin" caption progress={loading} waitKey={loading.wait} />}
           <Slider
             variant="seek"
             min={0}

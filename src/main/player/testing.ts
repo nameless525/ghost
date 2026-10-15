@@ -5,7 +5,17 @@ import type { GhostEventName, GhostEvents } from '../../shared/api'
 import { defaultSettings } from '../../shared/defaults'
 import type { Album, AlbumDetail, Game, ID, Settings, TrackAnalysis, TrackView } from '../../shared/types'
 import type { CatalogService, ResolvedSource } from '../catalog'
-import type { EngineBridge, EngineEvent, EnginePosition, EngineSource, EngineTrack, OfflineAnalysisResult, TagInfo } from '../engine/types'
+import type {
+  EngineBridge,
+  EngineCacheProgress,
+  EngineEvent,
+  EngineLoadProgress,
+  EnginePosition,
+  EngineSource,
+  EngineTrack,
+  OfflineAnalysisResult,
+  TagInfo
+} from '../engine/types'
 import type { Broadcast } from '../ipc'
 
 // ---------------------------------------------------------------------------
@@ -138,6 +148,19 @@ export class FakeEngine implements EngineBridge {
   }
   position(): EnginePosition {
     return { id: this.current?.id ?? null, positionMs: this.posMs, durationMs: this.current?.expectedDurationMs ?? null, playing: this.playing, at: this.clock() }
+  }
+  /**
+   * What `loadProgress` returns (for either slot). While undefined (the default) the method is
+   * absent, like an engine without progress reporting. Polled, so calls aren't recorded.
+   */
+  loadProgressValue: EngineLoadProgress | null | undefined = undefined
+  get loadProgress(): ((which: 'current' | 'preview') => EngineLoadProgress | null) | undefined {
+    return this.loadProgressValue === undefined ? undefined : () => this.loadProgressValue ?? null
+  }
+  /** What `cacheProgress` returns (for any key); absent while undefined, like `loadProgressValue`. */
+  cacheProgressValue: EngineCacheProgress | null | undefined = undefined
+  get cacheProgress(): ((cacheKey: string) => EngineCacheProgress | null) | undefined {
+    return this.cacheProgressValue === undefined ? undefined : () => this.cacheProgressValue ?? null
   }
   listDevices() {
     return this.devices

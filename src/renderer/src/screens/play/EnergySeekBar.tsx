@@ -10,7 +10,7 @@ import type { TrackAnalysis } from '@shared/types'
 import { ghost } from '../../ghost'
 import { sfx } from '../../sound'
 import { livePositionMs, usePlayer } from '../../state/player'
-import { Slider, formatTime } from '../../ui'
+import { ProgressBar, Slider, formatTime } from '../../ui'
 import { cx } from '../../ui/util'
 import { LiveTime } from '../../overlays/now-playing/controls'
 import { useCurrentAnalysis } from '../../overlays/now-playing/store'
@@ -121,6 +121,7 @@ const revokeMasks = (m: Masks | null) => {
 export function EnergySeekBar({ active, className }: { active: boolean; className?: string }) {
   const analysis = useCurrentAnalysis()
   const duration = usePlayer((s) => s.durationMs)
+  const loading = usePlayer((s) => s.loading ?? null)
   const wrap = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [masks, setMasks] = useState<Masks | null>(null)
@@ -207,10 +208,17 @@ export function EnergySeekBar({ active, className }: { active: boolean; classNam
     <div className={cx('pl-seek', className)}>
       <div className="pl-seek__times">
         <LiveTime kind="elapsed" active={active} className="pl-seek__elapsed" />
-        {!hasEnergy && duration ? <span className="pl-seek__analysing g-caps">Analysing…</span> : null}
+        {loading ? (
+          <span className="pl-seek__loading g-ellipsis">
+            {loading.label}…{loading.detail ? <span className="pl-seek__loading-detail"> {loading.detail}</span> : null}
+          </span>
+        ) : !hasEnergy && duration ? (
+          <span className="pl-seek__analysing g-caps">Analysing…</span>
+        ) : null}
         <LiveTime kind="remaining" active={active} className="pl-seek__remaining" />
       </div>
       <div ref={wrap} className="pl-seek__bar">
+        {loading && <ProgressBar className="pl-seek__load" size="thin" progress={loading} waitKey={loading.wait} />}
         {kiaiSegs.map((k, i) => (
           <span key={i} className="pl-seek__kiai-seg" style={{ left: `${k.left}%`, width: `${k.width}%` }} />
         ))}

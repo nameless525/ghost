@@ -750,7 +750,8 @@ export class SoundCloudProvider implements Provider {
   private readonly log: (msg: string) => void
   private searches = new Map<string, Memo<ScEntry[]>>()
   private tracks = new Map<string, Memo<ScTrack>>()
-  private downloads = new Map<string, Promise<CachedFile>>()
+  /** Downloads in flight, and the callers following their progress. */
+  private downloads = new Map<string, { run: Promise<CachedFile>; followers: Set<(bytes: number, totalBytes: number | null) => void> }>()
 
   constructor(
     private readonly ytdlp: () => Promise<YtDlp>,
@@ -896,15 +897,28 @@ export class SoundCloudProvider implements Provider {
     return `sc-${id}`
   }
 
-  /** The cached file for a track, downloading it once (concurrent callers share the run). */
+  /**
+   * The cached file for a track, downloading it once (concurrent callers share the run; each one's
+   * `onBytes` follows its progress).
+   */
   download(id: string, opts: ProviderCallOptions = {}): Promise<CachedFile> {
-    const pending = this.downloads.get(id)
-    if (pending) return pending
-    const run = this.cached(id)
-      .then((hit) => hit ?? this.fetchFile(id, opts))
-      .finally(() => this.downloads.delete(id))
-    this.downloads.set(id, run)
-    return run
+    let d = this.downloads.get(id)
+    if (!d) {
+      const followers = new Set<(bytes: number, totalBytes: number | null) => void>()
+      const onBytes = (b: number, t: number | null) => {
+        for (const fn of followers) fn(b, t)
+      }
+      const run = this.cached(id)
+        .then((hit) => hit ?? this.fetchFile(id, opts, onBytes))
+        .finally(() => this.downloads.delete(id))
+      d = { run, followers }
+      this.downloads.set(id, d)
+    }
+    const fn = opts.onBytes
+    if (!fn) return d.run
+    const { run, followers } = d
+    followers.add(fn)
+    return run.finally(() => followers.delete(fn))
   }
 
   private async cached(id: string): Promise<CachedFile | null> {
@@ -941,7 +955,7 @@ export class SoundCloudProvider implements Provider {
     }
   }
 
-  private async fetchFile(id: string, opts: ProviderCallOptions): Promise<CachedFile> {
+  private async fetchFile(id: string, opts: ProviderCallOptions, onBytes: (bytes: number, totalBytes: number | null) => void): Promise<CachedFile> {
     const dir = resolvePath(this.opts.cacheDir!)
     await mkdir(dir, { recursive: true })
     const y = await this.ytdlp()
@@ -963,7 +977,8 @@ export class SoundCloudProvider implements Provider {
         'after_move:filepath',
         trackApiUrl(id)
       ],
-      { timeoutMs: this.opts.downloadTimeoutMs ?? 10 * 60_000, priority: opts.priority ?? 0, signal: opts.signal }
+      // yt-dlp's progress lines measure the download (HLS: its estimate from the segments so far).
+      { timeoutMs: this.opts.downloadTimeoutMs ?? 10 * 60_000, priority: opts.priority ?? 0, signal: opts.signal, onProgress: onBytes }
     )
     const out = parseDownloadOutput(r.stdout)
     // The path comes from yt-dlp's output: accept only our own file in our own directory.

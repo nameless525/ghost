@@ -1,11 +1,11 @@
 // The big title card shown when the Play screen opens (and on every track change): cover,
-// title, game, album, composers and stats. It covers the buffering time, then the screen
-// FLIPs its cover/title/game into the compact HUD block (see glide() in index.tsx).
+// title, game, album, composers and stats. It covers the loading time (showing what the track
+// waits on), then the screen FLIPs its cover/title/game into the compact HUD block (see glide()
+// in index.tsx).
 // Elements tagged data-flip="cover|title|game" travel; data-fade ones just leave.
 import { forwardRef } from 'react'
-import type { PlayStatus, TrackView } from '@shared/types'
-import { CoverArt, IntensityBadge, LoadingRing, SourceBadge, formatTime } from '../../ui'
-import { cx } from '../../ui/util'
+import type { PlayStatus, Progress, TrackView } from '@shared/types'
+import { CoverArt, IntensityBadge, LoadingRing, ProgressBar, SourceBadge, formatTime } from '../../ui'
 
 export interface TitleCardProps {
   track: TrackView
@@ -15,14 +15,14 @@ export interface TitleCardProps {
   durationMs: number | null
   position: { index: number; total: number; context: string | null }
   coverSize: number
-  /** True while the hold is extended because the track is still loading. */
-  waiting: boolean
+  /** What the loading track waits on (PlayerState.loading). */
+  progress: Progress | null
   /** Changes on every showing (restarts the hold progress line). */
   showKey: number
 }
 
 export const TitleCard = forwardRef<HTMLDivElement, TitleCardProps>(function TitleCard(
-  { track, status, intensity, bpm, durationMs, position, coverSize, waiting, showKey },
+  { track, status, intensity, bpm, durationMs, position, coverSize, progress, showKey },
   ref
 ) {
   const loading = status === 'loading' || status === 'buffering'
@@ -39,7 +39,7 @@ export const TitleCard = forwardRef<HTMLDivElement, TitleCardProps>(function Tit
         <div className="pl-card__text">
           <div className="pl-card__eyebrow g-caps" data-fade>
             {loading ? <LoadingRing size={13} /> : <span className="pl-card__dot" />}
-            <span>{loading ? 'Loading' : 'Now playing'}</span>
+            <span>{status === 'buffering' ? 'Buffering' : loading ? 'Loading' : 'Now playing'}</span>
             {position.total > 1 && (
               <span className="pl-card__pos tnum">
                 {position.index + 1} / {position.total}
@@ -76,9 +76,15 @@ export const TitleCard = forwardRef<HTMLDivElement, TitleCardProps>(function Tit
             {durationMs ? <span className="pl-stat tnum">{formatTime(durationMs)}</span> : null}
             {track.source && <SourceBadge source={track.source} />}
           </div>
-          <div className={cx('pl-card__progress', waiting && 'pl-card__progress--waiting')} data-fade>
-            <i key={showKey} />
-          </div>
+          {loading && progress ? (
+            <div className="pl-card__load" data-fade>
+              <ProgressBar caption progress={progress} waitKey={progress.wait} />
+            </div>
+          ) : (
+            <div className="pl-card__progress" data-fade>
+              <i key={showKey} />
+            </div>
+          )}
         </div>
       </div>
     </div>

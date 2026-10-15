@@ -140,6 +140,8 @@ impl Router {
             };
             let frames = (pushed / 2) as u64;
             front.written += frames;
+            // For load progress (what a waiting voice has buffered); Release orders it after `origin`.
+            front.shared.write_pos.store(front.origin + front.written, Ordering::Release);
             if let Some(q) = front.quota.as_mut() {
                 *q -= frames;
             }

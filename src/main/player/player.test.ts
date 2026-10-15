@@ -908,6 +908,72 @@ describe('session restore', () => {
   })
 })
 
+describe('loading progress', () => {
+  it('reports what a loading track waits on, from the catalog\'s steps to the engine, and nothing once it plays', async () => {
+    const t = setup()
+    let open!: () => void
+    t.catalog.gate = new Promise((r) => (open = r))
+    await t.player.playTracks(['t1', 't2'])
+    expect(t.st().status).toBe('loading')
+    expect(t.st().loading?.label).toBe('Finding a source')
+    t.player.onResolveStep({ trackId: 't2', provider: 'youtube', providerName: 'YouTube', kind: 'stream', fraction: null })
+    expect(t.st().loading?.label).toBe('Finding a source') // another track (a warm-up): not ours
+    t.player.onResolveStep({ trackId: 't1', provider: 'youtube', providerName: 'YouTube', kind: 'stream', fraction: null })
+    expect(t.st().loading).toMatchObject({ label: 'Getting the stream from YouTube', fraction: null })
+    expect(t.st().loading?.expectMs).toBeGreaterThan(1000)
+    t.player.onResolveStep({ trackId: 't1', provider: 'khinsider', providerName: 'KHInsider', kind: 'stream', fraction: null })
+    t.catalog.gate = null
+    open()
+    await t.settle()
+    // The fake catalog's sources are KHInsider's.
+    expect(t.st().loading?.label).toBe('Connecting to KHInsider')
+    const wait = t.st().loading?.wait
+    t.started()
+    expect(t.st().loading).toBeNull()
+    // A stall later is a new wait.
+    t.engine.emit({ type: 'buffering', id: t.engine.current!.id, buffering: true })
+    expect(t.st().status).toBe('buffering')
+    expect(t.st().loading?.label).toBe('Buffering')
+    expect(t.st().loading?.wait).not.toBe(wait)
+    t.engine.emit({ type: 'buffering', id: t.engine.current!.id, buffering: false })
+    expect(t.st().loading).toBeNull()
+  })
+
+  it('a source failing mid-track shows "Trying another source"', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1'])
+    await t.settle()
+    t.started()
+    let open!: () => void
+    t.catalog.gate = new Promise((r) => (open = r))
+    t.engine.emit({ type: 'error', id: t.engine.current!.id, message: 'stream failed: HTTP 500', recoverable: true })
+    expect(t.st().status).toBe('loading')
+    expect(t.st().loading?.label).toBe('Trying another source')
+    t.catalog.gate = null
+    open()
+    await t.settle()
+  })
+
+  it('a preview reports its loading until it was handed to the engine', async () => {
+    const t = setup()
+    let open!: () => void
+    t.catalog.gate = new Promise((r) => (open = r))
+    const p = t.player.preview('t3')
+    await flush()
+    expect(t.st().previewLoading).toMatchObject({ trackId: 't3', label: 'Finding a source' })
+    expect(t.st().preview).toBeNull()
+    t.player.onResolveStep({ trackId: 't3', provider: 'khinsider', providerName: 'KHInsider', kind: 'stream', fraction: null })
+    expect(t.st().previewLoading?.label).toBe('Getting the track from KHInsider')
+    t.catalog.gate = null
+    open()
+    await p
+    await t.settle()
+    expect(t.st().preview?.track.id).toBe('t3')
+    await t.player.stopPreview()
+    expect(t.st().previewLoading).toBeNull()
+  })
+})
+
 describe('volume, loop mode, previews, devices', () => {
   it('maps the volume slider to dB and persists it', async () => {
     const t = setup()
@@ -1079,6 +1145,28 @@ describe('volume, loop mode, previews, devices', () => {
     expect(t.st().status).toBe('paused')
     await t.player.stopPreview()
     await t.settle()
+    expect(t.st().status).toBe('playing')
+  })
+
+  it('a track ending on its own while a preview loads does not cancel the preview', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    t.started()
+    let open!: () => void
+    t.catalog.gate = new Promise((r) => (open = r))
+    const p = t.player.preview('t4') // P pressed; still resolving
+    await flush()
+    t.catalog.gate = null
+    t.engine.finishCurrent() // t1 ends: t2 plays
+    await t.settle()
+    open()
+    expect(await p).toBe(true)
+    await t.settle()
+    expect(t.st().preview?.track.id).toBe('t4')
+    expect(t.st().queueIndex).toBe(1)
+    expect(t.st().status).toBe('paused') // held for the preview
+    await t.player.stopPreview()
     expect(t.st().status).toBe('playing')
   })
 

@@ -966,8 +966,11 @@ export function buildChipTracks(listing: ArchiveListing, o: BuildTracksOptions):
 
 export interface ChipProviderDeps {
   http: HttpClient
-  /** The engine's archive lister (fetches the archive into the stream cache). */
-  inspectArchive?: (source: EngineSource) => Promise<ArchiveListing>
+  /**
+   * The engine's archive lister (fetches the archive into the stream cache). `progressKey`: the
+   * TaskProgress key the main process reports the download under.
+   */
+  inspectArchive?: (source: EngineSource, ctx?: { progressKey?: string }) => Promise<ArchiveListing>
   log?: (msg: string) => void
 }
 
@@ -980,6 +983,8 @@ export interface ChipListingPage {
 export class ChipProvider implements Provider {
   readonly id = CHIP_ID
   readonly name = 'Chiptune rips'
+  /** Streams are built from the locator (no request). */
+  readonly streamsFromLocator = true
 
   constructor(private readonly deps: ChipProviderDeps) {}
 
@@ -1016,10 +1021,11 @@ export class ChipProvider implements Provider {
     return { sets, skipped: l.packs.length - sets.length, totalPages: l.totalPages }
   }
 
-  private async inspect(archiveUrl: string): Promise<ArchiveListing> {
+  private async inspect(archiveUrl: string, opts: ProviderCallOptions): Promise<ArchiveListing> {
     if (!this.deps.inspectArchive) throw new Error('Chiptune rips need the audio engine, which is unavailable.')
     try {
-      return await this.deps.inspectArchive({ kind: 'http', url: archiveUrl, cacheKey: chipCacheKey(archiveUrl) })
+      const source: EngineSource = { kind: 'http', url: archiveUrl, cacheKey: chipCacheKey(archiveUrl) }
+      return await (opts.progressKey ? this.deps.inspectArchive(source, { progressKey: opts.progressKey }) : this.deps.inspectArchive(source))
     } catch (e) {
       const msg = (e as Error)?.message ?? String(e)
       if (/\b404\b|\b410\b|not found/i.test(msg)) throw new NetError('not_found', `rip set is gone: ${archiveUrl}`, { url: archiveUrl, cause: e })
@@ -1039,7 +1045,7 @@ export class ChipProvider implements Provider {
     const groupDir = dir.split('/').filter(Boolean)
     const set = joshwSet(src, dir, { href: file, name: safeDecode(file), dir: false, sizeBytes: null, modified: null }, groupDir.length > 1 ? safeDecode(groupDir[0]) : null)
     if (!set?.archiveUrl) throw new NetError('not_found', `not a playable rip set: ${ref}`)
-    const listing = await this.inspect(set.archiveUrl)
+    const listing = await this.inspect(set.archiveUrl, opts)
     const built = buildChipTracks(listing, { archiveUrl: set.archiveUrl, gameTitle: set.title })
     if (!built.tracks.length) throw new NetError('not_found', `"${set.title}" has nothing playable`)
     return this.album(set, built)
@@ -1069,7 +1075,7 @@ export class ChipProvider implements Provider {
       cover: pack.cover,
       thumb: pack.cover
     }
-    const listing = await this.inspect(pack.zipUrl)
+    const listing = await this.inspect(pack.zipUrl, opts)
     const built = buildChipTracks(listing, { archiveUrl: pack.zipUrl, pack: pack.tracks, gameTitle: pack.title })
     if (!built.tracks.length) throw new NetError('not_found', `"${pack.title}" has nothing playable`)
     return this.album(set, built)

@@ -57,6 +57,20 @@ pub struct CacheStats {
     pub open_entries: usize,
 }
 
+/// How far an entry has come (see [`Entry::progress`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EntryProgress {
+    /// Bytes on disk: complete chunks plus the downloaded prefix of the chunk in flight.
+    pub bytes: u64,
+    pub total: Option<u64>,
+    /// The size / type are known: a response header arrived (now, or on an earlier fetch of this
+    /// entry, for one reopened from disk).
+    pub connected: bool,
+    /// How long a reader blocked on this entry has gone without new bytes (zero when no reader
+    /// is blocked). A reader gives up after `CacheManager::stall_timeout` of this.
+    pub stalled: Duration,
+}
+
 #[derive(Debug)]
 pub struct CacheError(pub String);
 impl std::fmt::Display for CacheError {
@@ -96,6 +110,9 @@ pub(crate) struct State {
     pub partial: Option<(u64, u64)>,
     /// Readers blocked waiting for data (progress notifications are skipped when zero).
     pub waiting: u32,
+    /// When the longest-blocked reader started waiting (None while no reader waits). With
+    /// `last_progress`, this is the stall clock `progress()` reports.
+    pub wait_since: Option<Instant>,
     /// URLs that answered 401/403/404/410, and when: not fetched again for `DEAD_URL_TTL` (a
     /// provider may still hand them out, e.g. a stale preload of an expired YouTube URL), so
     /// callers fail fast and re-resolve instead of hammering a dead link.
@@ -142,6 +159,24 @@ impl State {
             None => to,
         };
         (from..end).find(|&c| !self.has(c))
+    }
+    /// Bytes on disk: present chunks (the last one counted at its real length) plus the written
+    /// prefix of the chunk being downloaded.
+    pub fn bytes_present(&self) -> u64 {
+        if self.complete {
+            if let Some(t) = self.total {
+                return t;
+            }
+        }
+        let mut bytes = self.present_count * CHUNK_SIZE;
+        if let Some(n) = self.n_chunks().filter(|&n| n > 0 && self.has(n - 1)) {
+            bytes -= n * CHUNK_SIZE - self.total.unwrap_or(0);
+        }
+        match self.partial {
+            Some((c, filled)) if !self.has(c) => bytes += filled,
+            _ => {}
+        }
+        self.total.map_or(bytes, |t| bytes.min(t))
     }
 }
 
@@ -250,6 +285,7 @@ impl CacheManager {
             demand: Vec::new(),
             partial: None,
             waiting: 0,
+            wait_since: None,
             dead_urls: Vec::new(),
             fatal: None,
             last_error: None,
@@ -299,6 +335,13 @@ impl CacheManager {
     pub fn open_reader(self: &Arc<Self>, spec: &SourceSpec, cancel: Option<Arc<AtomicBool>>) -> Result<CacheReader, CacheError> {
         let entry = self.entry(spec)?;
         Ok(CacheReader::new(entry, self.clone(), cancel))
+    }
+
+    /// Progress of the entry under `cache_key` while it is open (being read or filled, or held
+    /// by a playing track); `None` otherwise. Memory only: a map lookup and a few field reads.
+    pub fn progress(&self, cache_key: &str) -> Option<EntryProgress> {
+        let e = self.entries.lock().get(cache_key).and_then(Weak::upgrade)?;
+        Some(e.progress())
     }
 
     /// Path and size of a fully cached entry.
@@ -437,6 +480,24 @@ impl Entry {
 
     pub fn total(&self) -> Option<u64> {
         self.state.lock().total
+    }
+
+    /// Bytes present, size, whether the server answered, and how long a blocked reader has been
+    /// starved. A few field reads under the state lock.
+    pub fn progress(&self) -> EntryProgress {
+        let now = Instant::now();
+        let st = self.state.lock();
+        let stalled = match st.wait_since {
+            // The reader's own stall clock restarts on every byte that arrives (see `CacheReader`).
+            Some(since) => now.saturating_duration_since(since.max(st.last_progress)),
+            None => Duration::ZERO,
+        };
+        EntryProgress {
+            bytes: st.bytes_present(),
+            total: st.total,
+            connected: st.total.is_some() || st.range_ok.is_some() || st.complete,
+            stalled,
+        }
     }
 
     /// Make sure a fetcher is filling this entry.

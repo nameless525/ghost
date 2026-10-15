@@ -15,9 +15,11 @@ import { join } from 'node:path'
 import type {
   ArchiveListing,
   EngineBridge,
+  EngineCacheProgress,
   EngineConfig,
   EngineDownloadOptions,
   EngineEvent,
+  EngineLoadProgress,
   EnginePosition,
   EngineSource,
   EngineStats,
@@ -34,6 +36,9 @@ export type NativeGhostEngine = EngineBridge & {
   voiceCount(): number
   /** Health counters (absent in addons built before it existed). */
   stats?(reset?: boolean): EngineStats
+  /** Load / cache progress (absent in addons built before they existed). */
+  loadProgress?(which: 'current' | 'preview'): EngineLoadProgress | null
+  cacheProgress?(cacheKey: string): EngineCacheProgress | null
 }
 
 /** Read-only view of the analysis region (renderer side). Constructing one starts nothing. */
@@ -107,10 +112,22 @@ function loadAddon(path: string): NativeAddon {
 
 /** EngineBridge over the native GhostEngine. Keeps JS listener errors away from the addon. */
 class NativeEngine implements EngineBridge {
+  /**
+   * Load / cache progress: present only when the addon has them, so callers can tell "no progress
+   * reporting" (an addon built before it) from "nothing loading" (null).
+   */
+  readonly loadProgress?: (which: 'current' | 'preview') => EngineLoadProgress | null
+  readonly cacheProgress?: (cacheKey: string) => EngineCacheProgress | null
+
   constructor(
     private readonly native: NativeGhostEngine,
     readonly addonPath: string
-  ) {}
+  ) {
+    const load = native.loadProgress
+    if (typeof load === 'function') this.loadProgress = (which) => load.call(native, which) ?? null
+    const cache = native.cacheProgress
+    if (typeof cache === 'function') this.cacheProgress = (cacheKey) => cache.call(native, cacheKey) ?? null
+  }
 
   setCurrent(track: EngineTrack, startMs: number, autoplay: boolean): void {
     this.native.setCurrent(track, startMs, autoplay)

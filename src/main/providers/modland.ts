@@ -953,6 +953,8 @@ const tick = () => new Promise<void>((r) => setImmediate(r))
 export class ModlandProvider implements IndexProvider {
   readonly id = MODLAND_ID
   readonly name = 'Modland'
+  /** Streams are built from the locator (no request). */
+  readonly streamsFromLocator = true
   /** The crawl only re-reads the in-memory index; it's worth repeating when the download is due. */
   readonly indexRefreshMs = MODLAND_INDEX_MAX_AGE_MS
   readonly indexPageDelayMs = 0

@@ -171,7 +171,21 @@ export interface ScanResult {
   removed: number
   errors: number
   removedPaths: string[]
+  /** Per configured folder: music files found, and how many of them are new. */
+  byRoot: { root: string; files: number; added: number }[]
+  /** Configured folders that couldn't be read (unplugged drive, typo): what was known is kept. */
+  unavailable: string[]
   ms: number
+}
+
+/**
+ * How far a scan is: walking the folders (music files found so far), then reading the tags of new
+ * and changed files, then done (also after a failure).
+ */
+export type ScanProgress = { phase: 'walk'; found: number } | { phase: 'tags'; done: number; total: number } | { phase: 'done' }
+
+export interface ScanOptions {
+  onProgress?: (p: ScanProgress) => void
 }
 
 export interface LocalLibraryOptions {
@@ -187,7 +201,7 @@ export class LocalLibrary {
   private readonly now: () => number
   private readonly log: (msg: string) => void
   private scanning: Promise<ScanResult> | null = null
-  private queued: string[] | null = null
+  private queued: { folders: string[]; opts: ScanOptions } | null = null
   private next: Promise<ScanResult> | null = null
 
   constructor(
@@ -221,32 +235,41 @@ export class LocalLibrary {
 
   /**
    * Scan these folders (incremental by mtime/size). Concurrent calls coalesce: a scan requested
-   * while one runs starts right after it with the latest folder list.
+   * while one runs starts right after it with the latest folder list (and options).
    */
-  scan(folders: string[]): Promise<ScanResult> {
+  scan(folders: string[], opts: ScanOptions = {}): Promise<ScanResult> {
     if (!this.scanning) {
-      const p = this.doScan(folders).finally(() => {
+      const p = this.doScan(folders, opts.onProgress).finally(() => {
         if (this.scanning === p) this.scanning = null
       })
       this.scanning = p
       return p
     }
-    this.queued = folders
+    this.queued = { folders, opts }
     this.next ??= this.scanning
       .catch(() => undefined)
       .then(() => {
-        const f = this.queued ?? folders
+        const q = this.queued ?? { folders, opts }
         this.queued = null
         this.next = null
-        return this.scan(f)
+        return this.scan(q.folders, q.opts)
       })
     return this.next
   }
 
-  private async doScan(folders: string[]): Promise<ScanResult> {
+  private async doScan(folders: string[], onProgress?: (p: ScanProgress) => void): Promise<ScanResult> {
+    const progress = onProgress ?? (() => {})
+    try {
+      return await this.scanRoots(folders, progress)
+    } finally {
+      progress({ phase: 'done' })
+    }
+  }
+
+  private async scanRoots(folders: string[], progress: (p: ScanProgress) => void): Promise<ScanResult> {
     const t0 = this.now()
     const roots = [...new Set(folders.filter((f) => typeof f === 'string' && f.trim()).map((f) => resolve(f)))]
-    const res: ScanResult = { roots, files: 0, added: 0, updated: 0, removed: 0, errors: 0, removedPaths: [], ms: 0 }
+    const res: ScanResult = { roots, files: 0, added: 0, updated: 0, removed: 0, errors: 0, removedPaths: [], byRoot: [], unavailable: [], ms: 0 }
     // Folders no longer configured.
     const known = (this.db.prepare(`SELECT DISTINCT root FROM local_files`).all() as { root: string }[]).map((r) => r.root)
     for (const r of known) {
@@ -264,19 +287,27 @@ export class LocalLibrary {
          duration_ms = excluded.duration_ms, format = excluded.format, bitrate = excluded.bitrate, lossless = excluded.lossless, title_key = excluded.title_key,
          album_key = excluded.album_key, scanned_at = excluded.scanned_at, error = excluded.error`
     )
+    // 1. Walk every folder: what's there, and which files are new or changed.
+    type Todo = { path: string; st: { mtimeMs: number; size: number }; isNew: boolean }
+    const plans: { root: string; existing: Map<string, unknown>; seen: Set<string>; todo: Todo[]; truncated: boolean; files: number }[] = []
+    progress({ phase: 'walk', found: 0 })
     for (const root of roots) {
       try {
         if (!(await stat(root)).isDirectory()) throw new Error('not a folder')
       } catch (e) {
         // Unplugged drive or a typo: keep what we knew; resolveStream checks files exist.
         this.log(`local folder ${root} unavailable: ${(e as Error).message}`)
+        res.unavailable.push(root)
         continue
       }
       const existing = new Map((this.db.prepare(`SELECT path, mtime_ms, size FROM local_files WHERE root = ?`).all(root) as { path: string; mtime_ms: number; size: number }[]).map((r) => [r.path, r]))
-      const seen = new Set<string>()
-      const todo: { path: string; st: { mtimeMs: number; size: number }; isNew: boolean }[] = []
+      const plan = { root, existing, seen: new Set<string>(), todo: [] as Todo[], truncated: false, files: 0 }
+      plans.push(plan)
       for await (const path of walk(root, 24)) {
-        if (res.files >= this.maxFiles) break
+        if (res.files >= this.maxFiles) {
+          plan.truncated = true
+          break
+        }
         let st: { mtimeMs: number; size: number }
         try {
           st = await stat(path)
@@ -284,12 +315,20 @@ export class LocalLibrary {
           continue
         }
         res.files++
-        seen.add(path)
+        plan.files++
+        plan.seen.add(path)
+        progress({ phase: 'walk', found: res.files })
         const ex = existing.get(path)
         if (ex && ex.mtime_ms === Math.round(st.mtimeMs) && ex.size === st.size) continue
-        todo.push({ path, st, isNew: !ex })
+        plan.todo.push({ path, st, isNew: !ex })
       }
-      // Read tags 4 at a time; write in small transactions.
+    }
+    // 2. Read the tags of new and changed files, 4 at a time; write in small transactions.
+    const total = plans.reduce((n, p) => n + p.todo.length, 0)
+    let read = 0
+    if (total) progress({ phase: 'tags', done: 0, total })
+    for (const { root, existing, seen, todo, truncated, files } of plans) {
+      let added = 0
       for (let i = 0; i < todo.length; i += 32) {
         const batch = todo.slice(i, i + 32)
         const rows = await mapLimit(batch, 4, async (f) => {
@@ -304,7 +343,7 @@ export class LocalLibrary {
         try {
           for (const { f, row: r, error } of rows) {
             upsert.run(r.path, r.root, r.mtime_ms, r.size, r.title, r.album, r.artist, r.album_artist, r.composer, r.track_no, r.disc_no, r.duration_ms, r.format, r.bitrate, r.lossless, r.title_key, r.album_key, r.scanned_at, error)
-            if (f.isNew) res.added++
+            if (f.isNew) added++
             else res.updated++
           }
           this.db.exec('COMMIT')
@@ -312,10 +351,15 @@ export class LocalLibrary {
           this.db.exec('ROLLBACK')
           throw e
         }
+        read += batch.length
+        progress({ phase: 'tags', done: read, total })
         await new Promise((r) => setImmediate(r))
       }
+      res.added += added
+      res.byRoot.push({ root, files, added })
+      // A walk cut short by maxFiles didn't see everything: don't drop what it missed.
       const gone = [...existing.keys()].filter((p) => !seen.has(p))
-      if (gone.length && res.files < this.maxFiles) {
+      if (gone.length && !truncated) {
         const del = this.db.prepare(`DELETE FROM local_files WHERE path = ?`)
         this.db.exec('BEGIN IMMEDIATE')
         for (const p of gone) del.run(p)
@@ -390,6 +434,8 @@ export class LocalProvider implements Provider {
   readonly name = 'Local files'
   /** A DB lookup: cheap enough to ask on every play. */
   readonly findTrackMode = 'always' as const
+  /** Streams are built from the locator (no request). */
+  readonly streamsFromLocator = true
 
   constructor(readonly library: LocalLibrary) {}
 

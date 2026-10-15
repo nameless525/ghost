@@ -48,12 +48,7 @@ impl CacheReader {
 
     /// Bytes present so far (for progress reporting).
     pub fn bytes_present(&self) -> u64 {
-        let st = self.entry.state.lock();
-        let full = st.present_count * CHUNK_SIZE;
-        match st.total {
-            Some(t) => full.min(t),
-            None => full,
-        }
+        self.entry.state.lock().bytes_present()
     }
 
     fn canceled(&self) -> bool {
@@ -69,7 +64,8 @@ impl CacheReader {
         if let Some(n) = available_at(&st, pos) {
             return Ok(n);
         }
-        let mut since = Instant::now();
+        let started = Instant::now();
+        let mut since = started;
         let mut gen = st.progress_gen;
         let mut demanded = false;
         let result = loop {
@@ -102,12 +98,16 @@ impl CacheReader {
                 let why = st.last_error.clone().unwrap_or_else(|| "no data".into());
                 break Err(io::Error::new(io::ErrorKind::TimedOut, format!("stream stalled for {}s ({why})", stall.as_secs())));
             }
+            st.wait_since.get_or_insert(started);
             st.waiting += 1;
             self.entry.cond.wait_for(&mut st, Duration::from_millis(100));
             st.waiting -= 1;
         };
         if demanded {
             st.demand.retain(|&d| d != c);
+        }
+        if st.waiting == 0 {
+            st.wait_since = None;
         }
         result
     }

@@ -6,8 +6,10 @@ import { join } from 'node:path'
 import { IPC_EVENT, type GhostServices } from '../shared/api'
 import { defaultSettings } from '../shared/defaults'
 import type { BrowseQuery, CatalogStatus, GhostNotification } from '../shared/types'
+import { GHOST_VERSION } from '../shared/version'
 import type { CatalogService } from './catalog'
 import { createCatalogHost, type CatalogHost } from './catalog/host'
+import { TaskReporter, watchArchiveDownload } from './catalog/tasks'
 import { openDb } from './db'
 import { DownloadManager } from './downloads'
 import { loadEngine, preloadArgsFor } from './engine/native'
@@ -27,7 +29,7 @@ export interface ServicesHandle {
   shutdown(): Promise<void>
 }
 
-const USER_AGENT = 'GHOST/0.1'
+const USER_AGENT = `GHOST/${GHOST_VERSION}`
 
 const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -134,13 +136,21 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
   // Runs in a worker thread (catalog/worker.ts): its SQLite queries, crawling and HTML parsing would
   // otherwise stall this thread, which also delivers native window input on macOS. `catalog` is an
   // RPC proxy; calls queue until the worker is up (spawned below, after startup writes are done).
-  // Chiptune rip albums list their archive through the engine, created after the catalog.
+  // Chiptune rip albums list their archive through the engine, created after the catalog. Opening
+  // one waits on its download (up to 32 MB): an engine that can say how far that is (cacheProgress)
+  // gives the album's bar real bytes.
   let engineRef: EngineBridge | null = null
-  const inspectArchive = (source: EngineSource): Promise<ArchiveListing> => {
+  const tasks = new TaskReporter((p) => broadcast('progress', p))
+  const inspectArchive = (source: EngineSource, ctx?: { progressKey?: string }): Promise<ArchiveListing> => {
     const e = engineRef
     if (!e?.inspectArchive) return Promise.reject(new Error('The audio engine is unavailable, so chiptune rip sets can’t be opened.'))
-    return e.inspectArchive(source)
+    const work = e.inspectArchive(source)
+    const key = ctx?.progressKey
+    if (!key || source.kind !== 'http' || typeof e.cacheProgress !== 'function') return work
+    return watchArchiveDownload(work, () => e.cacheProgress!(source.cacheKey), key, tasks)
   }
+  // The catalog's progress reports for the player, which is created below (none can be waiting before).
+  let playerRef: Player | null = null
   let catalogHost: CatalogHost | null = null
   let catalog: CatalogService
   try {
@@ -150,6 +160,8 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
       settings: settingsStore.get(),
       broadcast,
       inspectArchive,
+      onResolveStep: (step) => playerRef?.onResolveStep(step),
+      onToolProgress: (p) => playerRef?.onToolProgress(p),
       onFatal: (e) => {
         console.error('[services] catalog failed to load:', e)
         notices.push({ id: 'startup-catalog', kind: 'error', title: 'Catalog unavailable', body: errMessage(e) })
@@ -207,6 +219,7 @@ export async function createServices(broadcast: Broadcast): Promise<ServicesHand
     // A dragged volume slider calls setVolume ~120×/s: echo it at most ~30×/s (status changes are immediate).
     echoIntervalMs: 33
   })
+  playerRef = player
 
   const downloads = new DownloadManager({
     engine,
