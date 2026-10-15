@@ -31,13 +31,26 @@ const initial: PlayerState = {
 
 export const usePlayer = create<PlayerState>(() => initial)
 
+/**
+ * performance.now() stops while the machine sleeps (macOS/Linux), so timeOrigin + now() falls
+ * behind the wall clock by every sleep, while main stamps positions with Date.now(). Re-anchored
+ * on every state push (≥ 1 Hz while playing); without it the live position sat seconds-to-hours
+ * in the past after a lid close (seek bars at 0, no beat pulses) until a reload.
+ */
+let clockSkew = 0
+function resyncClock(): void {
+  const skew = Date.now() - (performance.timeOrigin + performance.now())
+  // Date.now() only has ms resolution: ignore jitter, follow real jumps (sleep, NTP steps)
+  if (Math.abs(skew - clockSkew) > 4) clockSkew = skew
+}
+
 /** Sub-millisecond epoch clock in the same domain as Date.now(). */
-export const epochNow = (): number => performance.timeOrigin + performance.now()
+export const epochNow = (): number => performance.timeOrigin + performance.now() + clockSkew
 
 /** Current playback position in ms, extrapolated between state updates. Call from rAF loops. */
 export function livePositionMs(s: PlayerState = usePlayer.getState()): number {
   if (s.status !== 'playing') return s.positionMs
-  const p = s.positionMs + (epochNow() - s.positionAt)
+  const p = s.positionMs + Math.max(0, epochNow() - s.positionAt)
   return s.durationMs ? Math.min(p, s.durationMs) : p
 }
 
@@ -46,6 +59,7 @@ export function livePositionMs(s: PlayerState = usePlayer.getState()): number {
  * refers to a queue revision we don't hold (the caller should refetch the full state).
  */
 export function applyPlayerState(e: PlayerStateEvent | PlayerState): boolean {
+  resyncClock()
   const prev = usePlayer.getState()
   let queue = e.queue
   if (queue === undefined) {

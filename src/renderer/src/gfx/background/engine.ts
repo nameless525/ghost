@@ -17,6 +17,7 @@ import { motionPrefs } from '../../motion/prefs'
 import { ticker, TickPriority } from '../../motion/ticker'
 import { accentNow } from '../../theme/accent'
 import { mixNumber } from '../../theme/color'
+import { adoptPixiTicker } from '../pixiTicker'
 import { ArtLayer } from './artLayer'
 import { GradientField } from './gradient'
 import { PixelField } from './pixels'
@@ -71,6 +72,7 @@ export class BackgroundEngine {
       return
     }
     this.renderer = r
+    adoptPixiTicker()
     r.canvas.classList.add('g-bg__gl')
     const blob = makeBlobTexture()
     this.gradient = new GradientField(blob)

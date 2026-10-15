@@ -15,7 +15,11 @@ export interface Placement {
 
 const opposite: Record<Side, Side> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' }
 
-/** Place a box of size w×h next to `anchor` (a viewport rect). */
+/**
+ * Place a box next to `anchor` (a viewport rect, e.g. getBoundingClientRect). `w`×`h` is the box's
+ * layout size (offsetWidth/offsetHeight): under a UI scale those are unzoomed CSS px, so they
+ * are scaled to viewport px here (mixing the two put bubbles off-centre and broke flip/clamp).
+ */
 export function place(
   anchor: { left: number; top: number; right: number; bottom: number; width: number; height: number },
   w: number,
@@ -23,6 +27,8 @@ export function place(
   opts: { side?: Side; align?: Align; offset?: number; margin?: number } = {}
 ): Placement {
   const z = uiZoom()
+  w *= z
+  h *= z
   const vw = window.innerWidth
   const vh = window.innerHeight
   const margin = opts.margin ?? 8
@@ -49,9 +55,11 @@ export function place(
   return { x: x / z, y: y / z, side, origin }
 }
 
-/** Place a menu at a point (context menus), flipping to stay on screen. */
+/** Place a menu (layout size w×h, as in place()) at a viewport point, flipping to stay on screen. */
 export function placeAtPoint(px: number, py: number, w: number, h: number, margin = 8): Placement {
   const z = uiZoom()
+  w *= z
+  h *= z
   const vw = window.innerWidth
   const vh = window.innerHeight
   let x = px

@@ -2,7 +2,7 @@
 // `downloads:changed`. Every row lives in one keyed list, so items glide between sections
 // (FLIP) as their status changes; removed rows fade out in place.
 import { Ban, CircleAlert, CircleCheck, Compass, Download, FolderOpen, FolderSearch, ListX, LoaderCircle, Play, RotateCw, Trash, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
 import type { DownloadItem } from '@shared/types'
 import { ghost } from '../../ghost'
 import { trackActions } from '../../lib/track-actions'
@@ -20,8 +20,8 @@ import { LoadingRing } from '../../ui/LoadingRing'
 import { OverlayHeader } from '../../ui/OverlayHeader'
 import { ProgressRing } from '../../ui/ProgressRing'
 import { ScrollArea } from '../../ui/ScrollArea'
-import { cx } from '../../ui/util'
-import { EmptyState, formatBytes, leavingStyle, plural, relativeTime, useAnimatedList, useNow } from '../library/common'
+import { cx, useEvent } from '../../ui/util'
+import { EmptyState, formatBytes, leavingStyle, plural, relativeTime, useAnimatedList, useNow, type PresenceEntry } from '../library/common'
 import './downloads.css'
 
 /** Props: open, phase ('entering' | 'open' | 'exiting' | 'closed'), close(), hue. */
@@ -44,6 +44,8 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'done', label: 'Completed' }
 ]
 const MAX_QUEUED = 60
+/** Completed rows listed (main keeps every finished row until "Clear"); the rest are counted. */
+const MAX_DONE = 100
 const revealLabel = isMac ? 'Reveal in Finder' : 'Show in folder'
 
 interface Rate {
@@ -56,7 +58,7 @@ interface Rate {
 type Row =
   | { type: 'header'; section: Section; count: number }
   | { type: 'item'; item: DownloadItem; index: number }
-  | { type: 'more'; count: number }
+  | { type: 'more'; count: number; section: Section }
 
 export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
   const [items, setItems] = useState<DownloadItem[] | null>(null)
@@ -115,9 +117,9 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
       const arr = groups[s.id]
       if (!arr.length) continue
       out.push({ key: `h:${s.id}`, data: { type: 'header', section: s.id, count: arr.length } })
-      const shown = s.id === 'queued' ? arr.slice(0, MAX_QUEUED) : arr
+      const shown = s.id === 'queued' ? arr.slice(0, MAX_QUEUED) : s.id === 'done' ? arr.slice(0, MAX_DONE) : arr
       shown.forEach((item, index) => out.push({ key: item.id, data: { type: 'item', item, index } }))
-      if (shown.length < arr.length) out.push({ key: 'more:queued', data: { type: 'more', count: arr.length - shown.length } })
+      if (shown.length < arr.length) out.push({ key: `more:${s.id}`, data: { type: 'more', count: arr.length - shown.length, section: s.id } })
     }
     return out
   }, [groups])
@@ -144,19 +146,19 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
         ? [groups.done.length ? `All done · ${plural(groups.done.length, 'file')} saved` : 'Nothing downloading', ...problems].filter(Boolean).join(' · ')
         : 'Nothing downloading'
 
-  // ---- actions -------------------------------------------------------------------------
-  const cancel = (d: DownloadItem) => {
+  // ---- actions (stable, so unchanged rows skip re-rendering on every progress broadcast) ----
+  const cancel = useEvent((d: DownloadItem) => {
     sfx.play('back', { volume: 0.7 })
-    void ghost().downloads.cancel(d.id)
-  }
-  const retry = (d: DownloadItem) => {
+    void ghost().downloads.cancel(d.id).catch(() => {})
+  })
+  const retry = useEvent((d: DownloadItem) => {
     sfx.play('confirm', { volume: 0.7 })
-    void ghost().downloads.retry(d.id)
-  }
-  const reveal = (d: DownloadItem) => {
-    if (d.path) void ghost().system.reveal(d.path)
-    else void ghost().downloads.reveal(d.id)
-  }
+    void ghost().downloads.retry(d.id).catch(() => {})
+  })
+  const reveal = useEvent((d: DownloadItem) => {
+    if (d.path) void ghost().system.reveal(d.path).catch(() => {})
+    else void ghost().downloads.reveal(d.id).catch(() => {})
+  })
   const clearFinished = () => {
     sfx.play('back', { volume: 0.7 })
     void ghost().downloads.clearFinished()
@@ -170,7 +172,7 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
     for (const d of groups.failed) void ghost().downloads.retry(d.id)
   }
 
-  const menu = (e: RMouseEvent, d: DownloadItem) => {
+  const menu = useEvent((e: RMouseEvent, d: DownloadItem) => {
     e.preventDefault()
     const s = SECTION_OF[d.status]
     const ic = (I: typeof Play) => <I size={15} strokeWidth={2} />
@@ -182,7 +184,8 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
       items.push({ label: revealLabel, icon: ic(FolderSearch), onSelect: () => reveal(d) })
     }
     openContextMenu({ x: e.clientX, y: e.clientY }, items)
-  }
+  })
+  const actions = useMemo<RowActions>(() => ({ cancel, retry, reveal, menu }), [cancel, retry, reveal, menu])
 
   return (
     <div className="dl">
@@ -218,7 +221,7 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
           </div>
           <div className="dl-overall__bar">
             <div className="dl-overall__fill" style={{ transform: `scaleX(${overall ?? 0})` }} />
-            {overall === null && <div className="dl-overall__indet g-keep-motion" />}
+            {pending.length > 0 && overall === null && <div className="dl-overall__indet g-keep-motion" />}
           </div>
         </div>
       </div>
@@ -282,58 +285,113 @@ export default function DownloadsOverlay({ open }: DownloadsOverlayProps) {
             if (data.type === 'more') {
               return (
                 <div key={key} {...common} className="dl-more">
-                  + {data.count.toLocaleString()} more queued
+                  + {data.count.toLocaleString()} more {data.section === 'done' ? 'saved' : 'queued'}
                 </div>
               )
             }
             const d = data.item
-            const s = SECTION_OF[d.status]
-            const rate = rates.current.get(d.id)
-            return (
-              <div key={key} {...common} className={cx('dl-item', `dl-item--${s}`)} onContextMenu={(e) => menu(e, d)} onDoubleClick={() => s === 'done' && reveal(d)}>
-                <ItemArt d={d} section={s} index={data.index} />
-                <div className="dl-item__text">
-                  <div className="dl-item__title g-ellipsis" title={d.title}>
-                    {d.title}
-                  </div>
-                  <div className="dl-item__sub g-ellipsis">{[d.gameName, d.albumTitle].filter(Boolean).join(' · ')}</div>
-                  {s === 'active' && (
-                    <>
-                      <div className="dl-item__bar">
-                        <div className="dl-item__fill" style={{ transform: `scaleX(${d.status === 'tagging' ? 1 : d.progress})` }} />
-                      </div>
-                      <div className="dl-item__stats tnum">{activeStats(d, rate)}</div>
-                    </>
-                  )}
-                  {s === 'done' && (
-                    <div className="dl-item__stats tnum">
-                      <CircleCheck className="dl-ok" /> Saved{d.totalBytes ? ` · ${formatBytes(d.totalBytes)}` : ''} · {relativeTime(d.createdAt, now)}
-                    </div>
-                  )}
-                  {s === 'failed' && (
-                    <div className={cx('dl-item__error', d.status === 'canceled' && 'dl-item__error--muted')} title={d.error ?? undefined}>
-                      {d.status === 'canceled' ? <Ban /> : <CircleAlert />}
-                      <span className="g-ellipsis">{d.status === 'canceled' ? 'Canceled' : d.error || 'Download failed'}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="dl-item__actions">
-                  {(s === 'active' || s === 'queued') && <IconButton size="sm" icon={<X />} label="Cancel" sound={false} onClick={() => cancel(d)} />}
-                  {s === 'done' && <IconButton size="sm" icon={<FolderSearch />} label={revealLabel} onClick={() => reveal(d)} />}
-                  {s === 'failed' && (
-                    <Button size="sm" variant="soft" icon={<RotateCw />} sound={false} onClick={() => retry(d)}>
-                      Retry
-                    </Button>
-                  )}
-                </div>
-              </div>
-            )
+            return <ItemRow key={key} d={d} index={data.index} entry={{ leaving, box }} bps={rates.current.get(d.id)?.bps ?? 0} now={now} actions={actions} />
           })}
         </div>
       </ScrollArea>
     </div>
   )
 }
+
+interface RowActions {
+  cancel(d: DownloadItem): void
+  retry(d: DownloadItem): void
+  reveal(d: DownloadItem): void
+  menu(e: RMouseEvent, d: DownloadItem): void
+}
+
+interface ItemRowProps {
+  d: DownloadItem
+  index: number
+  entry: Pick<PresenceEntry<unknown>, 'leaving' | 'box'>
+  /** Smoothed speed (active rows). */
+  bps: number
+  /** Clock for "saved 5 min ago" (completed rows). */
+  now: number
+  actions: RowActions
+}
+
+const sameItem = (a: DownloadItem, b: DownloadItem) =>
+  a === b ||
+  (a.id === b.id &&
+    a.status === b.status &&
+    a.progress === b.progress &&
+    a.bytes === b.bytes &&
+    a.totalBytes === b.totalBytes &&
+    a.error === b.error &&
+    a.path === b.path &&
+    a.title === b.title &&
+    a.cover === b.cover &&
+    a.gameName === b.gameName &&
+    a.albumTitle === b.albumTitle &&
+    a.createdAt === b.createdAt)
+
+/**
+ * One download. Memoised on what it shows: every downloads:changed (≤ 4/s while downloading)
+ * delivers fresh objects for the whole list, and re-rendering every queued/completed row with
+ * it cost far more than the few active rows that actually change.
+ */
+const ItemRow = memo(
+  function ItemRow({ d, index, entry, bps, now, actions }: ItemRowProps) {
+    const s = SECTION_OF[d.status]
+    return (
+      <div
+        data-flip={d.id}
+        data-leaving={entry.leaving || undefined}
+        style={entry.leaving ? leavingStyle(entry.box) : undefined}
+        className={cx('dl-item', `dl-item--${s}`)}
+        onContextMenu={(e) => actions.menu(e, d)}
+        onDoubleClick={() => s === 'done' && actions.reveal(d)}
+      >
+        <ItemArt d={d} section={s} index={index} />
+        <div className="dl-item__text">
+          <div className="dl-item__title g-ellipsis" title={d.title}>
+            {d.title}
+          </div>
+          <div className="dl-item__sub g-ellipsis">{[d.gameName, d.albumTitle].filter(Boolean).join(' · ')}</div>
+          {s === 'active' && (
+            <>
+              <div className="dl-item__bar">
+                <div className="dl-item__fill" style={{ transform: `scaleX(${d.status === 'tagging' ? 1 : d.progress})` }} />
+              </div>
+              <div className="dl-item__stats tnum">{activeStats(d, bps)}</div>
+            </>
+          )}
+          {s === 'done' && (
+            <div className="dl-item__stats tnum">
+              <CircleCheck className="dl-ok" /> Saved{d.totalBytes ? ` · ${formatBytes(d.totalBytes)}` : ''} · {relativeTime(d.createdAt, now)}
+            </div>
+          )}
+          {s === 'failed' && (
+            <div className={cx('dl-item__error', d.status === 'canceled' && 'dl-item__error--muted')} title={d.error ?? undefined}>
+              {d.status === 'canceled' ? <Ban /> : <CircleAlert />}
+              <span className="g-ellipsis">{d.status === 'canceled' ? 'Canceled' : d.error || 'Download failed'}</span>
+            </div>
+          )}
+        </div>
+        <div className="dl-item__actions">
+          {(s === 'active' || s === 'queued') && <IconButton size="sm" icon={<X />} label="Cancel" sound={false} onClick={() => actions.cancel(d)} />}
+          {s === 'done' && <IconButton size="sm" icon={<FolderSearch />} label={revealLabel} onClick={() => actions.reveal(d)} />}
+          {s === 'failed' && (
+            <Button size="sm" variant="soft" icon={<RotateCw />} sound={false} onClick={() => actions.retry(d)}>
+              Retry
+            </Button>
+          )}
+        </div>
+      </div>
+    )
+  },
+  (a, b) => {
+    if (a.index !== b.index || a.entry.leaving !== b.entry.leaving || a.entry.box !== b.entry.box || a.actions !== b.actions || !sameItem(a.d, b.d)) return false
+    const s = SECTION_OF[b.d.status]
+    return (s !== 'active' || a.bps === b.bps) && (s !== 'done' || a.now === b.now)
+  }
+)
 
 function ItemArt({ d, section, index }: { d: DownloadItem; section: Section; index: number }) {
   if (section === 'active') {
@@ -355,14 +413,14 @@ function ItemArt({ d, section, index }: { d: DownloadItem; section: Section; ind
   )
 }
 
-function activeStats(d: DownloadItem, rate: Rate | undefined) {
+function activeStats(d: DownloadItem, bps: number) {
   if (d.status === 'resolving') return 'Finding the best source…'
   if (d.status === 'tagging') return 'Writing tags & artwork…'
   const parts: string[] = []
   parts.push(d.totalBytes ? `${formatBytes(d.bytes)} / ${formatBytes(d.totalBytes)}` : formatBytes(d.bytes))
-  if (rate && rate.bps > 0) {
-    parts.push(`${formatBytes(rate.bps)}/s`)
-    if (d.totalBytes) parts.push(`${formatEta((d.totalBytes - d.bytes) / rate.bps)} left`)
+  if (bps > 0) {
+    parts.push(`${formatBytes(bps)}/s`)
+    if (d.totalBytes) parts.push(`${formatEta((d.totalBytes - d.bytes) / bps)} left`)
   }
   return parts.join(' · ')
 }

@@ -295,6 +295,7 @@ export function VolumeControl({ width = 110, size = 'md' }: { width?: number; si
 /** Live elapsed / remaining time; writes text only when the displayed second changes. */
 export function LiveTime({ kind, active = true, className }: { kind: 'elapsed' | 'remaining' | 'duration'; active?: boolean; className?: string }) {
   const el = useRef<HTMLSpanElement>(null)
+  const shown = useRef('')
   const text = () => {
     const s = usePlayer.getState()
     const d = s.durationMs ?? 0
@@ -303,12 +304,25 @@ export function LiveTime({ kind, active = true, className }: { kind: 'elapsed' |
     if (kind === 'elapsed') return formatTime(p)
     return d ? `-${formatTime(Math.max(0, d - p))}` : '–:––'
   }
-  useTicker(() => {
+  const write = () => {
     const n = el.current
     if (!n) return
+    // format only when the displayed second (or the duration) changed, not every frame
+    const s = usePlayer.getState()
+    const key = `${Math.floor(kind === 'duration' ? 0 : livePositionMs(s) / 1000)}|${s.durationMs ?? 0}`
+    if (key === shown.current) return
+    shown.current = key
     const t = text()
     if (n.textContent !== t) n.textContent = t
-  }, active)
+  }
+  // per frame only while the clock runs; otherwise on state pushes (seek, track change)
+  const playing = usePlayer((s) => s.status === 'playing')
+  useTicker(write, active && playing)
+  useEffect(() => {
+    if (!active || playing) return
+    write()
+    return usePlayer.subscribe(write)
+  }, [active, playing]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <span ref={el} className={cx('tnum', className)}>
       {text()}

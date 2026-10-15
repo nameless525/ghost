@@ -77,7 +77,8 @@ export function PlaylistsTab({ active, enterSeq }: PlaylistsTabProps) {
     if (didIntro.current && enterSeq === 0) return
     didIntro.current = true
     const els = Array.from(grid.current.querySelectorAll<HTMLElement>('[data-flip]')).slice(0, 18)
-    void stagger(els, (t) => t.clear().set({ opacity: 0, y: 26, scale: 0.94 }).fadeIn(260, 'outQuad').moveToY(0, 620, 'outQuint').scaleTo(1, 620, 'outQuint'), 28)
+    // x: 0 too: clear() keeps the current values, and a FLIP from the same commit may have left an x offset
+    void stagger(els, (t) => t.clear().set({ opacity: 0, x: 0, y: 26, scale: 0.94 }).fadeIn(260, 'outQuad').moveToY(0, 620, 'outQuint').scaleTo(1, 620, 'outQuint'), 28)
   }, [active, enterSeq, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = (p: Playlist) => {
@@ -114,7 +115,7 @@ export function PlaylistsTab({ active, enterSeq }: PlaylistsTabProps) {
       .scaleTo(1, 560, 'outQuint')
       .then(() => (art.style.zIndex = ''))
     const others = Array.from(grid.current?.querySelectorAll<HTMLElement>('[data-flip]') ?? []).filter((el) => !el.contains(art)).slice(0, 18)
-    void stagger(others, (t) => t.clear().set({ opacity: 0, y: 14 }).fadeIn(240, 'outQuad').moveToY(0, 520, 'outQuint'), 18, { delay: 60 })
+    void stagger(others, (t) => t.clear().set({ opacity: 0, x: 0, y: 14 }).fadeIn(240, 'outQuad').moveToY(0, 520, 'outQuint'), 18, { delay: 60 })
   }, [detail])
 
   useKeybinding('Escape', () => (detail ? back(null) : false), { priority: 5, when: () => active && !!detail })
@@ -187,8 +188,12 @@ export function PlaylistsTab({ active, enterSeq }: PlaylistsTabProps) {
                   onOpen={() => open(p)}
                   onKeyDown={(e) => onCardKey(e, p)}
                   artRef={(el) => {
-                    if (el && !leaving) arts.current.set(p.id, el)
-                    else if (!el && arts.current.get(p.id)?.isConnected === false) arts.current.delete(p.id)
+                    if (!el || leaving) return
+                    arts.current.set(p.id, el)
+                    // ref cleanup (React 19): the old null-call ran while the node was still connected, so deleted playlists stayed in the map
+                    return () => {
+                      if (arts.current.get(p.id) === el) arts.current.delete(p.id)
+                    }
                   }}
                 />
               </div>
@@ -223,7 +228,7 @@ interface CardProps {
   p: Playlist
   onOpen: () => void
   onKeyDown: (e: RKeyboardEvent) => void
-  artRef: (el: HTMLDivElement | null) => void
+  artRef: (el: HTMLDivElement | null) => void | (() => void)
 }
 
 function PlaylistCard({ p, onOpen, onKeyDown, artRef }: CardProps) {

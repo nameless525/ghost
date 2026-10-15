@@ -569,6 +569,9 @@
     translate 200ms var(--ease-out-quint);
   pointer-events: none;
 }
+.g-slider__tip:empty {
+  visibility: hidden;
+}
 .g-slider:hover .g-slider__tip,
 .g-slider.is-dragging .g-slider__tip {
   opacity: 1;
@@ -717,7 +720,8 @@
     0 0 0 1px rgb(255 255 255 / 0.08),
     0 20px 60px rgb(0 0 0 / 0.55),
     0 4px 14px rgb(0 0 0 / 0.35);
-  backdrop-filter: blur(16px) saturate(1.3);
+  /* no backdrop-filter: at 97% opacity it was invisible, but re-blurred the animated
+     background behind every open menu on every frame */
   outline: none;
   animation: g-pop-in 170ms var(--ease-out-quint) both;
 }

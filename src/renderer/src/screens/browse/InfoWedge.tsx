@@ -10,7 +10,7 @@ import { usePlayer } from '../../state/player'
 import { useSettings } from '../../state/settings'
 import { CoverArt } from '../../ui/CoverArt'
 import { IntensityBadge, SourceBadge } from '../../ui/Badges'
-import { formatTime } from '../../ui/format'
+import { formatSum, formatTime, sumKnown } from '../../ui/format'
 import { GhostMark } from '../../ui/GhostMark'
 
 import { LoadingRing } from '../../ui/LoadingRing'
@@ -51,7 +51,11 @@ interface View {
 }
 
 const uniq = <T,>(xs: T[]) => [...new Set(xs)]
-const sumMs = (as: Album[]) => as.reduce((s, a) => s + (a.totalMs ?? 0), 0)
+/** Totals over albums whose counts/lengths may be unknown (not yet crawled): "–", never 0. */
+const sumMs = (as: Album[]) => formatSum(sumKnown(as.map((a) => a.totalMs || null)), formatTime)
+const sumTracks = (as: Album[]) => formatSum(sumKnown(as.map((a) => a.trackCount)), (n) => n.toLocaleString())
+/** An album row's "tracks · length", leaving out what isn't known. */
+const albumMeta = (a: Album) => [a.trackCount != null ? String(a.trackCount) : null, a.totalMs ? formatTime(a.totalMs) : null].filter(Boolean).join(' · ')
 
 function yearSpan(years: (number | null)[]): string | null {
   const ys = years.filter((y): y is number => !!y)
@@ -144,21 +148,21 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
   const orig = g.kind === 'game' ? browseModel.originalTitle(g.gameId, g.title) : null
   const { title, alt } = pick(g.title, orig)
   const game = g.gameId ? browseModel.game(g.gameId) : null
-  const tracks = albums?.reduce((s, a) => s + (a.trackCount ?? 0), 0) ?? null
+  const tracks = albums ? sumTracks(albums) : '–'
   const composers = albums ? uniq(albums.flatMap((a) => a.composers)).slice(0, 3) : []
   const stats: Stat[] =
     g.kind === 'game'
       ? [
           { label: 'Albums', value: <span className="tnum">{albums?.length ?? g.albumCount}</span> },
-          { label: 'Tracks', value: <span className="tnum">{tracks ?? '–'}</span> },
-          { label: 'Length', value: <span className="tnum">{albums ? formatTime(sumMs(albums)) : '–'}</span> },
+          { label: 'Tracks', value: <span className="tnum">{tracks}</span> },
+          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span> },
           { label: 'Era', value: <span className="tnum">{(albums && yearSpan(albums.map((a) => a.year))) ?? g.year ?? '–'}</span> }
         ]
       : [
           { label: g.kind === 'album' ? 'Tracks' : 'Albums', value: <span className="tnum">{g.albumCount}</span> },
           { label: 'Games', value: <span className="tnum">{albums ? uniq(albums.map((a) => a.gameName ?? a.title)).length : '–'}</span> },
-          { label: 'Tracks', value: <span className="tnum">{tracks ?? '–'}</span> },
-          { label: 'Length', value: <span className="tnum">{albums ? formatTime(sumMs(albums)) : '–'}</span> }
+          { label: 'Tracks', value: <span className="tnum">{tracks}</span> },
+          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span> }
         ]
   const providers = albums ? uniq(albums.map((a) => a.provider)) : []
   const formats = albums ? uniq(albums.flatMap((a) => a.formats)) : []
@@ -222,7 +226,9 @@ export function InfoWedge() {
   const preview = usePlayer((s) => s.preview)
   const v = useMemo(() => (sel ? describe(sel, preferOrig) : null), [sel, preferOrig])
 
-  const catalogGames = useBrowse((s) => s.status?.games ?? null)
+  // only read while showing "no matches": catalog:status arrives several times a second while
+  // indexing, and the game count re-rendered the whole wedge each time
+  const catalogGames = useBrowse((s) => (!s.sel && !s.loading && s.total === 0 ? (s.status?.games ?? null) : null))
   const noMatch = !sel && !loading && total === 0 && !!text
   const hasFilters = useMemo(() => (noMatch ? parseSearch(text).filters.length > 0 : false), [noMatch, text])
 
@@ -319,15 +325,14 @@ export function InfoWedge() {
             {v.albums && v.albums.length > 0 && (
               <div className="bw__albums">
                 <div className="bw__albums-head">
-                  {plural(v.albums.length, 'album')} · {formatTime(sumMs(v.albums))}
+                  {plural(v.albums.length, 'album')}
+                  {v.albums.some((a) => a.totalMs) && <> · {sumMs(v.albums)}</>}
                 </div>
                 {v.albums.slice(0, 5).map((a) => (
                   <div key={a.id} className={cx('bw__album', a.id === v.albumId && 'bw__album--on')}>
                     <span className={`bc-kind bc-kind--${a.kind}`}>{KIND_LABEL[a.kind]}</span>
                     <span className="bw__album-title g-ellipsis">{preferOrig ? (a.titleOriginal ?? a.title) : a.title}</span>
-                    <span className="bw__album-meta tnum">
-                      {a.trackCount ?? '–'} · {a.totalMs ? formatTime(a.totalMs) : '–'}
-                    </span>
+                    <span className="bw__album-meta tnum">{albumMeta(a)}</span>
                   </div>
                 ))}
                 {v.albums.length > 5 && <div className="bw__albums-more">+{v.albums.length - 5} more</div>}

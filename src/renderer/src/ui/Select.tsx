@@ -2,11 +2,11 @@
 //
 //   <Select value={group} onChange={setGroup} options={[{ value: 'game', label: 'Game' }, …]} />
 import { Check, ChevronDown } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { sfx } from '../sound'
 import { place } from './floating'
-import { cx, hueStyle, uiZoom, type Hue, portalRoot } from './util'
+import { cx, hueStyle, uiZoom, useEvent, type Hue, portalRoot } from './util'
 
 export interface SelectOption<T extends string | number> {
   value: T
@@ -40,26 +40,33 @@ export function Select<T extends string | number>({ value, options, onChange, pl
   const [open, setOpen] = useState(false)
   const [closing, setClosing] = useState(false)
   const [active, setActive] = useState(-1)
+  // focus stays on the listbox: name the active option so screen readers follow the arrows
+  const optId = useId()
   const typed = useRef({ text: '', at: 0 })
   const selectedIndex = options.findIndex((o) => o.value === value)
   const selected = options[selectedIndex]
 
+  const closeTimer = useRef(0)
   const openMenu = () => {
     if (disabled) return
+    // a reopen within the close animation must not be shut by its pending timer
+    window.clearTimeout(closeTimer.current)
     setClosing(false)
     setOpen(true)
     setActive(Math.max(0, selectedIndex))
     sfx.play('select', { volume: 0.6 })
   }
-  const close = (refocus = true) => {
+  const close = useEvent((refocus = true) => {
     if (!open) return
     setClosing(true)
-    window.setTimeout(() => {
+    window.clearTimeout(closeTimer.current)
+    closeTimer.current = window.setTimeout(() => {
       setOpen(false)
       setClosing(false)
     }, 120)
     if (refocus) trigger.current?.focus({ preventScroll: true })
-  }
+  })
+  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
   const choose = (i: number) => {
     const o = options[i]
     if (!o || o.disabled) return
@@ -92,15 +99,21 @@ export function Select<T extends string | number>({ value, options, onChange, pl
       close(false)
     }
     const onBlur = () => close(false)
+    // the menu is fixed-positioned: an ancestor scrolling would leave it floating off its trigger
+    const onScroll = (e: Event) => {
+      if (!list.current?.contains(e.target as Node)) close(false)
+    }
     window.addEventListener('pointerdown', onDown, true)
     window.addEventListener('blur', onBlur)
     window.addEventListener('resize', onBlur)
+    window.addEventListener('scroll', onScroll, true)
     return () => {
       window.removeEventListener('pointerdown', onDown, true)
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('resize', onBlur)
+      window.removeEventListener('scroll', onScroll, true)
     }
-  })
+  }, [open, close])
 
   const move = (dir: 1 | -1) => {
     if (!options.length) return
@@ -170,6 +183,7 @@ export function Select<T extends string | number>({ value, options, onChange, pl
             ref={list}
             role="listbox"
             tabIndex={-1}
+            aria-activedescendant={active >= 0 ? `${optId}-${active}` : undefined}
             className={cx('g-popover', closing && 'g-popover--closing')}
             style={hueStyle(hue)}
             onKeyDown={onListKey}
@@ -177,6 +191,7 @@ export function Select<T extends string | number>({ value, options, onChange, pl
             {options.map((o, i) => (
               <button
                 key={String(o.value)}
+                id={`${optId}-${i}`}
                 type="button"
                 role="option"
                 aria-selected={o.value === value}

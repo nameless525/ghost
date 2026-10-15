@@ -86,14 +86,20 @@ export function focusables(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => !el.hasAttribute('inert') && el.offsetParent !== null)
 }
 
+/** Active focus traps, innermost (most recent) last: only that one handles Tab. */
+const traps: HTMLElement[] = []
+
 /**
  * Keep Tab focus inside `ref` while `active`; focuses the first focusable (or the container)
- * on activation and restores the previously focused element afterwards.
+ * on activation and restores the previously focused element afterwards. Traps nest (a dialog
+ * over a modal overlay): only the innermost one acts, otherwise the outer trap pulled focus back
+ * into itself and the inner one pushed it to its first element on every Tab.
  */
 export function useFocusTrap(ref: { current: HTMLElement | null }, active: boolean, opts?: { initialFocus?: boolean }): void {
   useEffect(() => {
     const root = ref.current
     if (!active || !root) return
+    traps.push(root)
     const previous = document.activeElement as HTMLElement | null
     let timer = 0
     if (opts?.initialFocus !== false) {
@@ -105,7 +111,7 @@ export function useFocusTrap(ref: { current: HTMLElement | null }, active: boole
       }, 30)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return
+      if (e.key !== 'Tab' || traps[traps.length - 1] !== root) return
       const list = focusables(root)
       if (list.length === 0) {
         e.preventDefault()
@@ -125,6 +131,8 @@ export function useFocusTrap(ref: { current: HTMLElement | null }, active: boole
     }
     document.addEventListener('keydown', onKey, true)
     return () => {
+      const i = traps.lastIndexOf(root)
+      if (i >= 0) traps.splice(i, 1)
       window.clearTimeout(timer)
       document.removeEventListener('keydown', onKey, true)
       if (previous && document.contains(previous) && root.contains(document.activeElement)) previous.focus({ preventScroll: true })

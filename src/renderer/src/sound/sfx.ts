@@ -45,7 +45,14 @@ const N = {
 
 const THROTTLE_MS: Partial<Record<SfxName, number>> = { hover: 45, tick: 28 }
 const DEFAULT_THROTTLE = 70
-const MAX_VOICES = 10
+/** Oscillators + noise sources (each bell partial is one): expand needs 13, confirm 12. */
+const MAX_VOICES = 32
+/**
+ * Suspend the context after this long without a cue. A running AudioContext keeps the audio
+ * thread (and Chromium's audio service) rendering silence for the whole session, idle or not.
+ * The next cue resumes it (a few ms of extra latency, once).
+ */
+const IDLE_SUSPEND_MS = 10000
 /** −18 dBFS at the default uiSoundVolume (0.6). */
 const REF_GAIN = Math.pow(10, -18 / 20)
 const REF_VOLUME = 0.6
@@ -63,6 +70,19 @@ interface Bus {
 let bus: Bus | null = null
 let voices = 0
 const lastPlayed = new Map<SfxName, number>()
+/** We suspended the context for idling (as opposed to the browser's autoplay gate). */
+let parked = false
+let idleTimer: ReturnType<typeof setTimeout> | undefined
+
+function parkWhenIdle(b: Bus): void {
+  clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => {
+    const c = b.ctx as AudioContext
+    if (c.state !== 'running') return
+    parked = true
+    void c.suspend().catch(() => {})
+  }, IDLE_SUSPEND_MS)
+}
 
 /** master ← (dry + reverb(wet)) on any context (live or offline). Polyphony is capped instead of compressed. */
 function buildBus(c: BaseAudioContext, gain: number, live: boolean): Bus {
@@ -118,7 +138,7 @@ useSettings.subscribe((s, p) => {
 if (typeof window !== 'undefined') {
   const resume = () => {
     const c = bus?.ctx as AudioContext | undefined
-    if (c && c.state === 'suspended') void c.resume()
+    if (c && c.state === 'suspended' && !parked) void c.resume()
   }
   window.addEventListener('pointerdown', resume, { capture: true })
   window.addEventListener('keydown', resume, { capture: true })
@@ -323,17 +343,21 @@ export const sfx = {
     lastPlayed.set(name, now)
     const b = ensure()
     if (!b) return
+    const v = (opts?.volume ?? 1) * LEVEL[name]
+    if (!Number.isFinite(v)) return
     const live = b.ctx as AudioContext
     if (live.state === 'suspended') {
-      void live.resume()
+      void live.resume().catch(() => {})
       // a cue fired before the first gesture would be silent anyway; skip it
-      if (name === 'hover') return
+      if (name === 'hover' && !parked) return
     }
+    parked = false
     try {
-      cues[name](b, (opts?.volume ?? 1) * LEVEL[name])
+      cues[name](b, v)
     } catch (err) {
       console.warn('[sfx] failed', name, err)
     }
+    parkWhenIdle(b)
   },
   /** Names of all cues (for a settings preview list). */
   names: Object.keys(cues) as SfxName[],

@@ -1,11 +1,25 @@
 import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import type { Plugin } from 'vite'
 
 const alias = {
   '@shared': resolve(__dirname, 'src/shared'),
   '@main': resolve(__dirname, 'src/main'),
   '@renderer': resolve(__dirname, 'src/renderer/src')
+}
+
+/**
+ * Fontsource lists a .woff fallback after every .woff2 subset; Chromium always takes the woff2, so
+ * the ~360 .woff copies (~5.5 MB) were dead weight in the package and in the startup CSS.
+ */
+const woff2Only: Plugin = {
+  name: 'ghost:woff2-only',
+  enforce: 'pre',
+  transform(code, id) {
+    if (!id.includes('@fontsource') || !/\.css($|\?)/.test(id)) return null
+    return { code: code.replace(/,\s*url\([^)]*\.woff\)\s*format\(['"]woff['"]\)/g, ''), map: null }
+  }
 }
 
 export default defineConfig({
@@ -30,7 +44,10 @@ export default defineConfig({
   },
   renderer: {
     resolve: { alias },
-    plugins: [react()],
-    server: { port: 5174 }
+    plugins: [react(), woff2Only],
+    server: { port: 5174 },
+    // electron-vite leaves the renderer unminified by default: minifying cuts the startup chunk
+    // from ~1.35 MB to under half, i.e. less to read, parse and compile on every cold launch.
+    build: { minify: 'esbuild' }
   }
 })

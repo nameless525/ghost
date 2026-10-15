@@ -123,7 +123,9 @@ export function VolumeMeter() {
       show(prev)
     })
 
-    // Alt+scroll anywhere
+    // Alt+scroll anywhere. The window-level non-passive wheel listener only exists while Alt is
+    // held: registered permanently, it made every wheel scroll in the app wait on the main thread
+    // (no compositor-threaded scrolling anywhere).
     const onWheel = (e: WheelEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey) return
       e.preventDefault()
@@ -131,7 +133,18 @@ export function VolumeMeter() {
       const d = wheelToVolume(e)
       if (d) volume.nudge(d)
     }
-    window.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    let wheelArmed = false
+    const armWheel = (on: boolean) => {
+      if (on === wheelArmed) return
+      wheelArmed = on
+      if (on) window.addEventListener('wheel', onWheel, { capture: true, passive: false })
+      else window.removeEventListener('wheel', onWheel, { capture: true })
+    }
+    const onKey = (e: KeyboardEvent) => armWheel(e.altKey)
+    const onBlur = () => armWheel(false)
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKey, true)
+    window.addEventListener('blur', onBlur)
     // scroll over the meter itself (no modifier needed)
     const onOwnWheel = (e: WheelEvent) => {
       if (!shown.current) return
@@ -144,7 +157,10 @@ export function VolumeMeter() {
     return () => {
       offCtl()
       offStore()
-      window.removeEventListener('wheel', onWheel, { capture: true })
+      armWheel(false)
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKey, true)
+      window.removeEventListener('blur', onBlur)
       el.removeEventListener('wheel', onOwnWheel)
       window.clearTimeout(hideTimer.current)
     }

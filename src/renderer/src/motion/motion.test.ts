@@ -93,3 +93,47 @@ describe('tween', async () => {
     await expect(p).resolves.toBeUndefined()
   })
 })
+
+describe('ticker', async () => {
+  const { ticker } = await import('./ticker')
+
+  it('a subscriber added mid-frame neither repeats nor skips the others', async () => {
+    const calls: string[] = []
+    const offs: (() => void)[] = []
+    let added = false
+    await new Promise<void>((resolve) => {
+      offs.push(
+        ticker.add(() => {
+          calls.push('a')
+          if (!added) {
+            added = true
+            offs.push(ticker.add(() => calls.push('b'), -10)) // sorts before 'a'
+          }
+        }, 0)
+      )
+      offs.push(
+        ticker.add(() => {
+          calls.push('c')
+          if (calls.filter((x) => x === 'c').length === 2) resolve()
+        }, 5)
+      )
+    })
+    offs.forEach((off) => off())
+    // frame 1: a, c ('b' joins from the next frame); frame 2: b, a, c
+    expect(calls).toEqual(['a', 'c', 'b', 'a', 'c'])
+  })
+
+  it('maxFps = 0 pauses the loop until raised', async () => {
+    let n = 0
+    const off = ticker.add(() => n++)
+    await new Promise((r) => setTimeout(r, 40))
+    ticker.maxFps = 0
+    const paused = n
+    await new Promise((r) => setTimeout(r, 60))
+    expect(n).toBe(paused)
+    ticker.maxFps = Infinity
+    await new Promise((r) => setTimeout(r, 40))
+    expect(n).toBeGreaterThan(paused)
+    off()
+  })
+})

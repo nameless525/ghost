@@ -8,6 +8,8 @@ import { BackgroundLayer } from './gfx/background'
 import { useMediaSession, usePlayerThemeSync } from './hooks'
 import { VolumeMeter } from './overlays/now-playing/VolumeMeter'
 import { applyDeepLinks, FpsMeter, GlobalKeys, initNotifications, OverlayHost, ScreenStack, ToastStack, Toolbar } from './shell'
+import { ErrorBoundary } from './shell/ErrorBoundary'
+import { whenIdle } from './shell/lazyModule'
 import { useSettings } from './state/settings'
 import { UIHosts } from './ui'
 
@@ -29,13 +31,19 @@ function useUiScale(): void {
 export default function App() {
   useEffect(() => startAccentDriver(), [])
   useEffect(() => initNotifications(), [])
+  // context menus read playlists synchronously ("Add to playlist"): fill the cache early
+  useEffect(() => whenIdle(() => void import('./lib/track-actions').then((m) => m.initPlaylistCache())), [])
   usePlayerThemeSync()
   useMediaSession()
   useUiScale()
 
+  // The chrome is contained too: a render error in, say, the toolbar's now-playing chip used to
+  // unmount the whole tree (a blank window); now only that piece disappears.
   return (
     <>
-      <BackgroundLayer />
+      <ErrorBoundary label="The background" silent>
+        <BackgroundLayer />
+      </ErrorBoundary>
       <div id="g-app" className="g-app">
         {showKit ? (
           <Suspense fallback={null}>
@@ -44,11 +52,17 @@ export default function App() {
         ) : (
           <ScreenStack />
         )}
-        <OverlayHost />
-        <Toolbar />
-        <ToastStack />
-        <VolumeMeter />
-        <FpsMeter />
+        <ErrorBoundary label="Overlays" silent>
+          <OverlayHost />
+        </ErrorBoundary>
+        <ErrorBoundary label="The toolbar" silent>
+          <Toolbar />
+        </ErrorBoundary>
+        <ErrorBoundary label="Notifications" silent>
+          <ToastStack />
+          <VolumeMeter />
+          <FpsMeter />
+        </ErrorBoundary>
         <UIHosts />
       </div>
       <GlobalKeys />

@@ -48,13 +48,23 @@ export function scrollToSmooth(el: HTMLElement | null, pos: number, horizontal =
   if (s.off) return
   const st = s
   st.off = ticker.add((dt) => {
+    // Content may have shrunk mid-scroll (target now unreachable) or the panel been hidden
+    // (display:none ignores writes): either used to keep this subscriber alive forever.
+    const max = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight
+    if (st.target > max) st.target = Math.max(0, max)
     const cur = horizontal ? el.scrollLeft : el.scrollTop
     const next = damp(cur, st.target, 55, dt)
-    const done = Math.abs(next - st.target) < 0.5
+    let done = Math.abs(next - st.target) < 0.5
     const v = done ? st.target : next
     if (horizontal) el.scrollLeft = v
     else el.scrollTop = v
-    if (done || !el.isConnected) {
+    if (!done && (horizontal ? el.scrollLeft : el.scrollTop) === cur) {
+      // the step was below a device pixel (or the write was ignored): land and stop
+      if (horizontal) el.scrollLeft = st.target
+      else el.scrollTop = st.target
+      done = true
+    }
+    if (done || !el.isConnected || el.clientHeight === 0) {
       st.off?.()
       st.off = null
     }
@@ -87,7 +97,8 @@ export const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(function S
     mo.observe(n, { childList: true })
     if (!smooth) return () => (ro.disconnect(), mo.disconnect())
     const onWheel = (e: WheelEvent) => {
-      if (e.ctrlKey) return
+      // a control inside (a focused slider) already used this wheel
+      if (e.ctrlKey || e.defaultPrevented) return
       // trackpads report small pixel deltas with momentum: leave them native
       const mouseWheel = e.deltaMode !== 0 || (Math.abs(e.deltaY) >= 40 && Number.isInteger(e.deltaY) && e.deltaX === 0)
       if (!mouseWheel) {

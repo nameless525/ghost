@@ -33,7 +33,7 @@ import { formatTime } from '../../ui/format'
 import { IconButton } from '../../ui/IconButton'
 import { ScrollArea } from '../../ui/ScrollArea'
 import { SegmentedControl } from '../../ui/SegmentedControl'
-import { cx, portalRoot } from '../../ui/util'
+import { cx, portalRoot, useEvent } from '../../ui/util'
 import { MiniEq } from './MiniEq'
 import { useStableQueue } from './store'
 import './queue.css'
@@ -201,6 +201,10 @@ export function QueueList({ active, tab: initialTab = 'next', className, compact
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && r.abs !== index) {
       e.preventDefault()
       remove(r)
+      // the focused row unmounts when the engine echoes the removal: hand focus to its neighbour
+      // instead of dropping it to <body>
+      const nextUid = (rows[pos + 1] ?? rows[pos - 1])?.item.uid
+      if (nextUid) window.setTimeout(() => viewport.current?.querySelector<HTMLElement>(`[data-uid="${nextUid}"]`)?.focus({ preventScroll: true }), 150)
     } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.metaKey && !e.ctrlKey) {
       e.preventDefault()
       e.stopPropagation()
@@ -218,6 +222,14 @@ export function QueueList({ active, tab: initialTab = 'next', className, compact
       requestAnimationFrame(() => viewport.current?.querySelector<HTMLElement>(`[data-uid="${uid}"]`)?.focus({ preventScroll: true }))
     }
   }
+
+  // stable per-row actions: inline closures per render defeated SortableRow's memo, so every
+  // visible row re-rendered on each scroll step of the virtual window
+  const jumpRow = useEvent((r: Row) => jump(r.abs))
+  const removeRow = useEvent((r: Row) => remove(r))
+  const menuRow = useEvent((r: Row, x: number, y: number) => openContextMenu({ x, y }, menu(r)))
+  const keyRow = useEvent((e: RKeyboardEvent<HTMLDivElement>, r: Row) => onRowKey(e, r))
+  const rowActions = useMemo<RowActions>(() => ({ jump: jumpRow, remove: removeRow, menu: menuRow, key: keyRow }), [jumpRow, removeRow, menuRow, keyRow])
 
   const clear = async () => {
     if (upNext <= 0 && index <= 0) return
@@ -288,18 +300,7 @@ export function QueueList({ active, tab: initialTab = 'next', className, compact
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
               <div className="np-queue__content" style={{ height: rows.length * ROW_H }}>
                 {visible.map((r) => (
-                  <SortableRow
-                    key={r.item.uid}
-                    row={r}
-                    top={(r.abs - base) * ROW_H}
-                    current={r.abs === index}
-                    active={active}
-                    dragging={dragId === r.item.uid}
-                    onJump={() => jump(r.abs)}
-                    onRemove={() => remove(r)}
-                    onMenu={(x, y) => openContextMenu({ x, y }, menu(r))}
-                    onKey={(e) => onRowKey(e, r)}
-                  />
+                  <SortableRow key={r.item.uid} row={r} top={(r.abs - base) * ROW_H} current={r.abs === index} active={active} dragging={dragId === r.item.uid} actions={rowActions} />
                 ))}
               </div>
             </SortableContext>
@@ -328,8 +329,14 @@ interface RowProps {
   pinned?: boolean
 }
 
-const SortableRow = memo(function SortableRow(props: RowProps & { top: number; dragging: boolean }) {
-  const { row, top, dragging } = props
+interface RowActions {
+  jump(r: Row): void
+  remove(r: Row): void
+  menu(r: Row, x: number, y: number): void
+  key(e: RKeyboardEvent<HTMLDivElement>, r: Row): void
+}
+
+const SortableRow = memo(function SortableRow({ row, top, current, active, dragging, actions }: { row: Row; top: number; current: boolean; active: boolean; dragging: boolean; actions: RowActions }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: row.item.uid })
   const style: CSSProperties = {
     top,
@@ -338,7 +345,13 @@ const SortableRow = memo(function SortableRow(props: RowProps & { top: number; d
   }
   return (
     <QueueRowView
-      {...props}
+      row={row}
+      current={current}
+      active={active}
+      onJump={() => actions.jump(row)}
+      onRemove={() => actions.remove(row)}
+      onMenu={(x, y) => actions.menu(row, x, y)}
+      onKey={(e) => actions.key(e, row)}
       nodeRef={setNodeRef}
       style={style}
       dragging={dragging}

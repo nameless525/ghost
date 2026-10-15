@@ -153,12 +153,18 @@ export function SecretField({ value, onSave, placeholder, secret = true, 'aria-l
     window.clearTimeout(timer.current)
     const clean = v.trim()
     if (clean === value) return
-    void Promise.resolve(onSave(clean)).then(() => {
-      setSaved(true)
-      sfx.play('confirm', { volume: 0.5 })
-      window.clearTimeout(savedTimer.current)
-      savedTimer.current = window.setTimeout(() => setSaved(false), 1800)
-    })
+    void Promise.resolve(onSave(clean)).then(
+      () => {
+        setSaved(true)
+        sfx.play('confirm', { volume: 0.5 })
+        window.clearTimeout(savedTimer.current)
+        savedTimer.current = window.setTimeout(() => setSaved(false), 1800)
+      },
+      (err: unknown) => {
+        sfx.play('error', { volume: 0.5 })
+        console.warn('[settings] save failed', err)
+      }
+    )
   }
 
   return (
@@ -189,6 +195,8 @@ export function SecretField({ value, onSave, placeholder, secret = true, 'aria-l
           } else if (e.key === 'Escape' && draft !== value) {
             e.preventDefault()
             e.stopPropagation()
+            // revert, and cancel the pending debounced save of the text being reverted
+            window.clearTimeout(timer.current)
             setDraft(value)
           }
         }}

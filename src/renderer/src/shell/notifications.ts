@@ -3,7 +3,9 @@
 // Sources: the main process `notify` event, and UI code via `notify({ … })`.
 // A notification with an id that's already known UPDATES that card in place (title, body,
 // progress, kind, image) and resets its auto-dismiss timer, so progress/streak cards never
-// duplicate. A card that was already dismissed comes back if it gets updated.
+// duplicate. A dismissed card comes back when it gets updated, except for in-between progress
+// updates (a dismissed download batch stays away until it finishes or fails). While the
+// notification centre is open, nothing new is toasted: the centre lists it.
 import { create } from 'zustand'
 import type { GhostNotification } from '@shared/types'
 import { ghost } from '../ghost'
@@ -43,6 +45,14 @@ export const useNotifications = create<NotificationsState>((set) => ({
 }))
 
 let localSeq = 0
+/** Cards the user dismissed (or that timed out) since their last update. */
+const dismissed = new Set<string>()
+useNotifications.subscribe((s, p) => {
+  if (s.toasts === p.toasts) return
+  const live = new Set(s.toasts.map((t) => t.id))
+  for (const t of p.toasts) if (!live.has(t.id)) dismissed.add(t.id)
+  if (dismissed.size > MAX_HISTORY * 2) dismissed.delete(dismissed.values().next().value!)
+})
 
 /** Show (or update, when `id` matches an existing card) a notification. Returns its id. */
 export function notify(n: Omit<GhostNotification, 'id'> & { id?: string }): string {
@@ -61,13 +71,20 @@ function receive(n: GhostNotification): void {
     const merged: Toast = base
       ? { ...base, ...n, rev: base.rev + 1, read: centreOpen || base.read }
       : { ...n, createdAt: now, rev: 0, read: centreOpen }
-    const toasts = existingToast ? s.toasts.map((t) => (t.id === n.id ? merged : t)) : [merged, ...s.toasts].slice(0, MAX_TOASTS)
+    const interim = n.kind === 'progress' && (n.progress ?? 0) < 1
+    const toasts = existingToast
+      ? s.toasts.map((t) => (t.id === n.id ? merged : t))
+      : centreOpen || (interim && dismissed.has(n.id))
+        ? s.toasts
+        : [merged, ...s.toasts].slice(0, MAX_TOASTS)
     const history = existingHist ? s.history.map((t) => (t.id === n.id ? merged : t)) : [merged, ...s.history].slice(0, MAX_HISTORY)
     return { toasts, history, unread: base || centreOpen ? s.unread : s.unread + 1 }
   })
+  if (useNotifications.getState().toasts.some((t) => t.id === n.id)) dismissed.delete(n.id)
   const isNew = !useNotifications.getState().history.find((t) => t.id === n.id && t.rev > 0)
   if (isNew) sfx.play(n.kind === 'error' ? 'error' : 'notify')
   else if (n.kind === 'success') sfx.play('notify', { volume: 0.6 })
+  else if (n.kind === 'error') sfx.play('error')
 }
 
 let installed = false

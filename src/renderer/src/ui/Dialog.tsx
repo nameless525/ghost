@@ -6,7 +6,7 @@
 //
 //   <Dialog open={open} onClose={() => setOpen(false)} title="Export" footer={<Button …/>}>…</Dialog>
 import { CircleAlert, CircleHelp, PenLine } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { tween } from '../motion/tween'
 import { pushModalScope } from '../shell/keys'
@@ -46,6 +46,7 @@ export function Dialog(props: DialogProps) {
 
 function DialogFrame({ open, onClose, title, icon, children, footer, hue, width = 440, dismissible = true, bare, className, onExited }: DialogProps & { onExited: () => void }) {
   const panel = useRef<HTMLDivElement>(null)
+  const titleId = useId()
   const [closing, setClosing] = useState(false)
   const close = useEvent(() => {
     if (dismissible) onClose()
@@ -84,6 +85,7 @@ function DialogFrame({ open, onClose, title, icon, children, footer, hue, width 
         ref={panel}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
         tabIndex={-1}
         className={cx('g-dialog', className)}
         style={{ width: `min(${width}px, 100%)` }}
@@ -100,7 +102,11 @@ function DialogFrame({ open, onClose, title, icon, children, footer, hue, width 
         {(title || icon) && (
           <div className="g-dialog__head">
             {icon && <div className="g-dialog__icon">{icon}</div>}
-            {title && <div className="g-dialog__title">{title}</div>}
+            {title && (
+              <div id={titleId} className="g-dialog__title">
+                {title}
+              </div>
+            )}
           </div>
         )}
         {children && (bare ? children : <div className={cx('g-dialog__body', icon && 'g-dialog__body--indented')}>{children}</div>)}

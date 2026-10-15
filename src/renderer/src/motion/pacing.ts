@@ -6,13 +6,22 @@
 //   focused + playing .......................... display rate
 //   focused, idle, not playing ................. 30 fps
 //   unfocused + playing ........................ 30 fps
-//   unfocused, not playing ..................... 12 fps
+//   unfocused, not playing ..................... 12 fps for 10 s, then paused (0 fps)
 //   hidden / minimised ......................... stopped (ticker handles visibility)
+// While paused, anything new that animates (a tween, toast, accent glide: any ticker.add) wakes
+// the loop at 12 fps for a couple of seconds, so it still plays out.
 import { usePlayer } from '../state/player'
 import { ticker } from './ticker'
 
 const ACTIVE_MS = 4000
+/** Unfocused and silent for this long: stop drawing entirely. */
+const PAUSE_AFTER_MS = 10000
+/** A new animation while paused runs at least this long. */
+const WAKE_MS = 2500
 let lastInput = performance.now()
+/** Last time focus was lost, or something new started animating. */
+let lastBlur = performance.now()
+let lastWake = 0
 let focused = typeof document !== 'undefined' ? document.hasFocus() : true
 let started = false
 
@@ -22,10 +31,12 @@ let override: number | null = null
 function decide(): number {
   if (override !== null) return override
   const playing = usePlayer.getState().status === 'playing'
-  const interacting = performance.now() - lastInput < ACTIVE_MS
+  const now = performance.now()
+  const interacting = now - lastInput < ACTIVE_MS
   if (focused && (interacting || playing)) return Infinity
   if (focused) return 30
-  return playing ? 30 : 12
+  if (playing) return 30
+  return now - Math.max(lastInput, lastBlur) < PAUSE_AFTER_MS || now - lastWake < WAKE_MS ? 12 : 0
 }
 
 // Infinite CSS animations run on the compositor at full display rate no matter what the ticker
@@ -37,6 +48,8 @@ const pausedByUs = new Set<Animation>()
 function sweepAnimations(lowPower: boolean): void {
   if (typeof document.getAnimations !== 'function') return
   if (lowPower) {
+    // animations of removed elements are cancelled ('idle'): don't hold on to them
+    for (const a of pausedByUs) if (a.playState === 'idle') pausedByUs.delete(a)
     for (const a of document.getAnimations()) {
       if (!(a instanceof CSSAnimation) || a.playState !== 'running' || KEEP.test(a.animationName)) continue
       if (a.effect?.getTiming().iterations !== Infinity) continue
@@ -70,8 +83,13 @@ export function initFramePacing(): void {
   })
   window.addEventListener('blur', () => {
     focused = false
+    lastBlur = performance.now()
     apply()
   })
+  ticker.onAdd = () => {
+    lastWake = performance.now()
+    if (ticker.maxFps === 0) apply()
+  }
   usePlayer.subscribe((s, prev) => {
     if (s.status !== prev.status) apply()
   })

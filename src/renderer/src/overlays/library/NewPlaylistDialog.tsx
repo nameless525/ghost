@@ -34,9 +34,13 @@ export function NewPlaylistDialog({ open, kind: initialKind, onClose, onCreated 
   const [tried, setTried] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const body = useRef<HTMLDivElement>(null)
+  // A ref, not just `busy`: Enter in the query field submitted twice in one render (the field's
+  // onSubmit, then the same keydown bubbling to the form), creating two playlists.
+  const submitting = useRef(false)
 
   useEffect(() => {
     if (!open) return
+    submitting.current = false
     setKind(initialKind)
     setName('')
     setDescription('')
@@ -60,10 +64,12 @@ export function NewPlaylistDialog({ open, kind: initialKind, onClose, onCreated 
 
   const submit = async () => {
     setTried(true)
+    if (submitting.current) return
     if (!valid || busy) {
       shake()
       return
     }
+    submitting.current = true
     setBusy(true)
     try {
       const p = await ghost().library.playlists.create(name.trim(), {
@@ -76,6 +82,7 @@ export function NewPlaylistDialog({ open, kind: initialKind, onClose, onCreated 
     } catch (err) {
       notify({ kind: 'error', title: 'Could not create playlist', body: String((err as Error)?.message ?? err) })
       setBusy(false)
+      submitting.current = false
     }
   }
 

@@ -15,6 +15,7 @@ import {
   Children,
   cloneElement,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -111,6 +112,8 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
   const el = useRef<HTMLDivElement>(null)
   // a submenu opened from the keyboard starts on its first actionable item
   const [active, setActive] = useState(() => (autoFocus && depth > 0 ? items.findIndex((i) => isAction(i) && !i.disabled) : -1))
+  // focus stays on the menu: name the active item so screen readers follow the arrows
+  const itemId = useId()
   const [sub, setSub] = useState<{ index: number; rect: DOMRect; focus: boolean } | null>(null)
   const hoverTimer = useRef(0)
 
@@ -175,6 +178,7 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
         ref={el}
         role="menu"
         tabIndex={-1}
+        aria-activedescendant={active >= 0 ? `${itemId}-${active}` : undefined}
         className="g-popover"
         style={{ zIndex: `calc(var(--z-menu) + ${depth})` }}
         onKeyDown={onKeyDown}
@@ -187,6 +191,7 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
           return (
             <button
               key={i}
+              id={`${itemId}-${i}`}
               type="button"
               role="menuitem"
               data-index={i}

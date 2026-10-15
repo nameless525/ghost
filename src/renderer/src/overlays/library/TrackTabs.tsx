@@ -13,7 +13,7 @@ import { IntensityBadge } from '../../ui/Badges'
 import { Button } from '../../ui/Button'
 import { openContextMenu } from '../../ui/ContextMenu'
 import { CoverArt } from '../../ui/CoverArt'
-import { formatTime } from '../../ui/format'
+import { formatSum, formatTime, sumKnown } from '../../ui/format'
 import { IconButton } from '../../ui/IconButton'
 import { LoadingRing } from '../../ui/LoadingRing'
 import { ScrollArea } from '../../ui/ScrollArea'
@@ -44,14 +44,15 @@ async function playAll(tracks: TrackView[], ctx: PlayContext, shuffle: boolean) 
 }
 
 function Summary({ tracks }: { tracks: TrackView[] }) {
-  const ms = tracks.reduce((s, t) => s + (t.durationMs ?? 0), 0)
+  // unknown lengths stay unknown: no "0 min", and a partly-known total reads "1 h 20 min+"
+  const ms = sumKnown(tracks.map((t) => t.durationMs || null))
   return (
     <span className="lib-toolbar__summary tnum">
       {plural(tracks.length, 'track')}
-      {ms > 0 && (
+      {ms && (
         <>
           <span className="lib-dot" />
-          {formatLong(ms)}
+          {formatSum(ms, formatLong)}
         </>
       )}
     </span>
@@ -138,7 +139,9 @@ export function HistoryTab({ live, active }: { live: Live<HistoryEntry[]>; activ
   }, [entries, now])
   const ids = useMemo(() => (entries ?? []).map((e) => e.track.id), [entries])
   const currentId = usePlayer((s) => s.current?.id ?? null)
-  const [sel, setSel] = useState<number>(-1)
+  // keyed by play (time + track), not by index: each new play shifts every index, which remounted
+  // all rows and moved the highlight to another track
+  const [sel, setSel] = useState<string | null>(null)
 
   const play = (i: number) => {
     sfx.play('confirm', { volume: 0.7 })
@@ -163,16 +166,17 @@ export function HistoryTab({ live, active }: { live: Live<HistoryEntry[]>; activ
                 {g.rows.map(({ e, i }) => {
                   const t = e.track
                   const today = isSameDay(e.playedAt, now)
+                  const key = `${e.playedAt}:${t.id}`
                   return (
                     <div
-                      key={`${e.playedAt}-${i}`}
+                      key={key}
                       role="listitem"
-                      className={cx('lib-hist__row', sel === i && 'lib-hist__row--sel', currentId === t.id && 'lib-hist__row--current')}
-                      onClick={() => setSel(i)}
+                      className={cx('lib-hist__row', sel === key && 'lib-hist__row--sel', currentId === t.id && 'lib-hist__row--current')}
+                      onClick={() => setSel(key)}
                       onDoubleClick={() => play(i)}
                       onContextMenu={(ev) => {
                         ev.preventDefault()
-                        setSel(i)
+                        setSel(key)
                         openContextMenu({ x: ev.clientX, y: ev.clientY }, trackMenuItems(t, { playList: { ids, index: i, context: HISTORY_CTX } }))
                       }}
                     >
@@ -209,7 +213,7 @@ export function HistoryTab({ live, active }: { live: Live<HistoryEntry[]>; activ
                             <span style={{ transform: `scaleX(${Math.min(1, e.msPlayed / t.durationMs)})` }} />
                           </span>
                         ) : null}
-                        {formatTime(t.durationMs)}
+                        {t.durationMs ? formatTime(t.durationMs) : '–:––'}
                       </span>
                       <span className={cx('lib-hist__liked', t.liked && 'lib-hist__liked--on')} aria-label={t.liked ? 'Liked' : undefined}>
                         <Heart />
@@ -241,13 +245,24 @@ export function DownloadedTab({ live, active }: { live: Live<TrackView[]>; activ
   // file paths come from the downloads list (finished items)
   useEffect(() => {
     if (!active) return
+    let live = true
     const apply = (list: DownloadItem[]) => {
+      if (!live) return
       const m = new Map<string, string>()
       for (const d of [...list].sort((a, b) => a.createdAt - b.createdAt)) if (d.status === 'done' && d.path) m.set(d.trackId, d.path)
-      setPaths(m)
+      // downloads:changed arrives ~4×/s while anything downloads: only re-render when a finished
+      // file actually appeared, moved or went away
+      setPaths((prev) => (prev.size === m.size && [...m].every(([k, v]) => prev.get(k) === v) ? prev : m))
     }
-    void ghost().downloads.list().then(apply)
-    return ghost().on('downloads:changed', apply)
+    ghost()
+      .downloads.list()
+      .then(apply)
+      .catch(() => {})
+    const off = ghost().on('downloads:changed', apply)
+    return () => {
+      live = false
+      off()
+    }
   }, [active])
 
   const reveal = (trackId: string) => {

@@ -4,7 +4,7 @@
 // overlays, focus trap, Esc / click-outside to close, open/close whooshes, mutual exclusion,
 // and the music low-pass (ghost().player.setOverlayFilter) while a modal overlay is open.
 // Contents are lazy components from src/renderer/src/overlays/*/index.tsx (OverlayProps).
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type LazyExoticComponent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ghost } from '../ghost'
 import { tween } from '../motion/tween'
 import { sfx } from '../sound'
@@ -14,6 +14,7 @@ import { LoadingRing } from '../ui/LoadingRing'
 import { cx, hueStyle, useFocusTrap } from '../ui/util'
 import { ErrorBoundary } from './ErrorBoundary'
 import { KeyScopeContext, registerKeybinding, type KeyScopeValue } from './keys'
+import { lazyModule, useLazyModule, whenIdle, type LazyModule } from './lazyModule'
 import type { OverlayPhase, OverlayProps } from './types'
 
 type Side = 'left' | 'right' | 'drop'
@@ -26,18 +27,25 @@ interface OverlayDef {
   /** CSS width. */
   width: string
   label: string
-  load: LazyExoticComponent<ComponentType<OverlayProps>>
+  /** Code-split contents (lazyModule.ts: no Suspense fallback throttle). */
+  load: LazyModule<OverlayProps>
 }
 
 export const OVERLAYS: Record<OverlayId, OverlayDef> = {
-  library: { side: 'right', modal: true, hue: 'library', width: 'clamp(560px, 50vw, 900px)', label: 'Library', load: lazy(() => import('../overlays/library')) },
-  downloads: { side: 'right', modal: true, hue: 'downloads', width: 'clamp(400px, 32vw, 520px)', label: 'Downloads', load: lazy(() => import('../overlays/downloads')) },
-  settings: { side: 'left', modal: true, hue: 'settings', width: 'clamp(500px, 38vw, 660px)', label: 'Settings', load: lazy(() => import('../overlays/settings')) },
-  nowPlaying: { side: 'drop', modal: false, hue: null, width: '460px', label: 'Now playing', load: lazy(() => import('../overlays/now-playing')) },
-  notifications: { side: 'right', modal: false, hue: 'notifications', width: '400px', label: 'Notifications', load: lazy(() => import('./NotificationCenter')) }
+  library: { side: 'right', modal: true, hue: 'library', width: 'clamp(560px, 50vw, 900px)', label: 'Library', load: lazyModule(() => import('../overlays/library')) },
+  downloads: { side: 'right', modal: true, hue: 'downloads', width: 'clamp(400px, 32vw, 520px)', label: 'Downloads', load: lazyModule(() => import('../overlays/downloads')) },
+  settings: { side: 'left', modal: true, hue: 'settings', width: 'clamp(500px, 38vw, 660px)', label: 'Settings', load: lazyModule(() => import('../overlays/settings')) },
+  nowPlaying: { side: 'drop', modal: false, hue: null, width: '460px', label: 'Now playing', load: lazyModule(() => import('../overlays/now-playing')) },
+  notifications: { side: 'right', modal: false, hue: 'notifications', width: '400px', label: 'Notifications', load: lazyModule(() => import('./NotificationCenter')) }
 }
 
 const IDS = Object.keys(OVERLAYS) as OverlayId[]
+
+/** Overlay contents once loaded; a ring (fading in after a beat) until then. */
+function OverlayContent({ def, props }: { def: OverlayDef; props: OverlayProps }) {
+  const Content = useLazyModule(def.load)
+  return Content ? <Content {...props} /> : <LoadingRing center />
+}
 
 /** Open order, most recent last. */
 let order: OverlayId[] = []
@@ -76,6 +84,25 @@ export function OverlayHost() {
       } else if (closed.length) sfx.play('close', { volume: closed.some((id) => OVERLAYS[id].modal) ? 1 : 0.6 })
     })
     return unsub
+  }, [])
+
+  // Warm every overlay's chunk while idle after startup (one per idle period, most used first),
+  // so no first open waits for a chunk. Screens warm first (ScreenStack).
+  useEffect(() => {
+    const queue: OverlayId[] = ['nowPlaying', 'library', 'settings', 'downloads', 'notifications']
+    let live = true
+    const next = () => {
+      const id = queue.shift()
+      if (!live || !id) return
+      void OVERLAYS[id].load
+        .load()
+        .catch(() => {})
+        .finally(() => whenIdle(next))
+    }
+    window.setTimeout(() => whenIdle(next), 1500)
+    return () => {
+      live = false
+    }
   }, [])
 
   // muffle the music behind modal overlays (osu!-style)
@@ -132,7 +159,8 @@ function OverlayPanel({ id, def, open }: { id: OverlayId; def: OverlayDef; open:
     let alive = true
     const update = () => queueMicrotask(() => alive && setIsTop(topOverlay() === id))
     update()
-    const unsub = useUI.subscribe(update)
+    // only overlay changes matter (accent/background updates arrive on every Browse step)
+    const unsub = useUI.subscribe((s, p) => s.overlays !== p.overlays && update())
     return () => {
       alive = false
       unsub()
@@ -191,7 +219,6 @@ function OverlayPanel({ id, def, open }: { id: OverlayId; def: OverlayDef; open:
   }, [open, def.modal, id, close])
 
   const scope = useMemo<KeyScopeValue>(() => ({ scope: 'overlay', id, isActive: () => topOverlay() === id }), [id])
-  const Content = def.load
   const props: OverlayProps = { open, phase, close, hue }
 
   return (
@@ -210,9 +237,7 @@ function OverlayPanel({ id, def, open }: { id: OverlayId; def: OverlayDef; open:
       <div ref={body} className="g-ov__body">
         <KeyScopeContext.Provider value={scope}>
           <ErrorBoundary label={def.label} compact>
-            <Suspense fallback={<LoadingRing center />}>
-              <Content {...props} />
-            </Suspense>
+            <OverlayContent def={def} props={props} />
           </ErrorBoundary>
         </KeyScopeContext.Provider>
       </div>

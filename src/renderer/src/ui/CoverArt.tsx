@@ -73,6 +73,13 @@ export const CoverArt = memo(function CoverArt({ src, size = 48, height, w, radi
     dropTimer.current = window.setTimeout(() => setLayers((ls) => (ls.length > 1 && ls[ls.length - 1]?.url === u ? ls.filter((l) => l.url === u) : ls)), 520)
   }, [])
 
+  // A failed current image drops the older layer too: it sat above the fallback and kept showing
+  // the previous art (e.g. the last track's cover) for as long as the new one was missing.
+  const onError = useCallback((u: string) => {
+    setFailed(u)
+    setLayers((ls) => (ls[ls.length - 1]?.url === u ? [] : ls.filter((l) => l.url !== u)))
+  }, [])
+
   const wCss = typeof size === 'number' ? `${size}px` : size
   const hCss = height === undefined ? wCss : typeof height === 'number' ? `${height}px` : height
   const r = radius ?? (typeof size === 'number' && size < 40 ? 6 : 10)
@@ -83,7 +90,7 @@ export const CoverArt = memo(function CoverArt({ src, size = 48, height, w, radi
       <div className={cx('g-cover__fallback', !showFallback && 'g-cover__fallback--hidden')}>
         <GhostMark headphones={false} />
       </div>
-      {layers.map((l) => (failed === l.url ? null : <CoverImg key={l.url} layer={l} alt={alt} lazy={lazy} onLoad={onLoad} onError={setFailed} />))}
+      {layers.map((l) => (failed === l.url ? null : <CoverImg key={l.url} layer={l} alt={alt} lazy={lazy} onLoad={onLoad} onError={onError} />))}
     </div>
   )
 })

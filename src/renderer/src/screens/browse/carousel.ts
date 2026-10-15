@@ -52,6 +52,9 @@ const FX_HALF = 55
 const ARC_R = 2.4
 const ARC_K = 1.0
 
+/** Free panels kept per type for reuse. */
+const POOL_MAX = 16
+
 export interface Sel {
   gi: number
   albumId: string | null
@@ -1049,6 +1052,12 @@ export class Carousel {
   }
 
   private releaseItem(it: Item): void {
+    // The pool only needs a screenful per type. Fast F2 spins briefly hold many panels at once,
+    // and without a cap that high-water mark stayed in the DOM for the rest of the session.
+    if (this.pool[it.type].length >= POOL_MAX) {
+      it.node.el.remove()
+      return
+    }
     resetPanel(it.node)
     it.node.el.classList.add('is-free')
     it.node.glow.style.opacity = ''

@@ -185,23 +185,41 @@ function isCommandLike(e: KeyboardEvent): boolean {
   return e.ctrlKey || e.metaKey || e.altKey || e.key === 'Escape' || /^F\d{1,2}$/.test(e.key)
 }
 
+/**
+ * Keys a text field handles itself even with modifiers: caret/word/line moves (⌘←, ⌥→, Ctrl+←…),
+ * deletion, clipboard, select-all and undo. Bindings must not take these from an input
+ * (⌘← in a search box used to skip the track instead of moving the caret).
+ */
+function isTextEditing(e: KeyboardEvent): boolean {
+  return /^(Arrow(Left|Right|Up|Down)|Home|End|PageUp|PageDown|Backspace|Delete)$/.test(e.key) || ((e.metaKey || e.ctrlKey) && /^Key[ACVXYZ]$/.test(e.code))
+}
+
 function onKeyDown(e: KeyboardEvent): void {
   if (e.defaultPrevented || e.isComposing) return
   const editable = isEditable(document.activeElement)
   const candidates: { b: Binding; w: number; p: number; h: KeyHandler; o: KeybindingOptions }[] = []
+  let heldRepeat = false
   for (const b of bindings) {
     const { handler, opts, ctx } = b.get()
     if (opts.enabled === false) continue
     if (!b.combos.some((c) => matches(c, e))) continue
-    if (e.repeat && opts.repeat === false) continue
-    if (editable && !opts.allowInInput && !isCommandLike(e)) continue
+    if (editable && !opts.allowInInput && (!isCommandLike(e) || isTextEditing(e))) continue
     const scope = opts.scope ?? ctx.scope
     if (modalDepth > 0 && scope !== 'modal') continue
     if (scope === ctx.scope && !ctx.isActive()) continue
     if (opts.when && !opts.when()) continue
+    if (e.repeat && opts.repeat === false) {
+      heldRepeat = true
+      continue
+    }
     candidates.push({ b, w: WEIGHT[scope], p: opts.priority ?? 0, h: handler, o: opts })
   }
-  if (!candidates.length) return
+  if (!candidates.length) {
+    // A held key whose binding doesn't repeat (Space, Enter…) is still ours: without this, the
+    // auto-repeats fell through to the browser and page-scrolled the focused list.
+    if (heldRepeat) e.preventDefault()
+    return
+  }
   candidates.sort((a, b) => b.w - a.w || b.p - a.p || b.b.seq - a.b.seq)
   for (const c of candidates) {
     if (c.h(e) === false) continue

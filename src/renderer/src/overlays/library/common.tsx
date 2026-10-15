@@ -261,30 +261,43 @@ export function useAnimatedList<T>(
     setSnap(view)
   }
 
-  // purge finished exits
+  // purge finished exits. Timed from the oldest exit: a list that re-renders more often than
+  // exitMs (Downloads, 4×/s while downloading) used to push the timer back forever.
   useEffect(() => {
     if (!snap.leaving.size) return
-    const t = window.setTimeout(() => {
-      const now = performance.now()
-      setSnap((s) => {
-        const leaving = new Map([...s.leaving].filter(([, v]) => now - v.at < exitMs - 5))
-        return leaving.size === s.leaving.size ? s : { ...s, leaving }
-      })
-    }, exitMs)
+    let oldest = Infinity
+    for (const v of snap.leaving.values()) oldest = Math.min(oldest, v.at)
+    const t = window.setTimeout(
+      () => {
+        const now = performance.now()
+        setSnap((s) => {
+          const leaving = new Map([...s.leaving].filter(([, v]) => now - v.at < exitMs - 5))
+          return leaving.size === s.leaving.size ? s : { ...s, leaving }
+        })
+      },
+      Math.max(0, oldest + exitMs - performance.now())
+    )
     return () => window.clearTimeout(t)
   }, [snap, exitMs])
 
   // FLIP after every commit
   useLayoutEffect(() => {
     const el = container.current
-    if (!el) return
+    // Hidden (a closed overlay is display:none, and still re-renders as it closes): every box
+    // would measure 0,0 and the next open would fly every row in from the corner. Keep the old.
+    if (!el || el.getClientRects().length === 0) return
+    // measure everything first, then write: reading offsets between tween writes forced a
+    // style recalc per moved row
     const seen = new Map<string, Box>()
+    const laid: [HTMLElement, string, Box][] = []
     for (const child of Array.from(el.children) as HTMLElement[]) {
       const k = child.dataset.flip
       if (!k || child.dataset.leaving === 'true') continue
       const box = { top: child.offsetTop, left: child.offsetLeft, width: child.offsetWidth, height: child.offsetHeight }
       seen.set(k, box)
-      if (opts.disabled) continue
+      laid.push([child, k, box])
+    }
+    for (const [child, k, box] of opts.disabled ? [] : laid) {
       const prev = boxes.current.get(k)
       if (prev === undefined) {
         if (first.current) continue

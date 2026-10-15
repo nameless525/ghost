@@ -76,6 +76,11 @@ const off = ticker.add((dt, now) => …, TickPriority.normal)                   
 ```
 `dt` is ms since the last frame (clamped to 100), `now` the rAF timestamp. Priorities run
 input → audio → physics → normal → tween → render. The loop sleeps when idle/hidden.
+Pacing (`motion/pacing.ts`) caps it: below the display rate it waits on a timer before asking
+for a frame, and when the window is unfocused and nothing plays it pauses entirely after 10 s
+(`ticker.maxFps = 0`); any new `ticker.add` (a tween, a toast) wakes it for a couple of seconds.
+PixiJS never runs its own loop: `gfx/pixiTicker.ts` stops `Ticker.system` and pumps it from
+ours, so don't use Pixi's `Application` / `Ticker.shared` — render from a `ticker.add` callback.
 
 ### Tweens (osu!framework transforms)
 ```ts
@@ -178,6 +183,9 @@ useScreenTransitions({
   exit:  ({ direction, other, el }) => stagger(…),   // awaited (max 1 s) before unmount
 })
 ```
+Screens and overlays are code-split with `shell/lazyModule.ts` (not `React.lazy` + `<Suspense>`:
+React holds content back for 300 ms after a Suspense fallback shows). Chunks are preloaded at
+idle, so first visits render in the same commit.
 Without `useScreenTransitions` the stack slides + fades the whole screen. Choreograph with
 staggered slides, never plain cross-fades. Screens are full-window and sit under the 44 px
 toolbar (`padding-top: var(--toolbar-h)`); on Play the toolbar auto-hides.

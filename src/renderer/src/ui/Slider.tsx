@@ -44,6 +44,9 @@ export interface SliderProps {
   'aria-label'?: string
 }
 
+/** Wheel distance (px) per step: one mouse notch; a trackpad swipe accumulates to it. */
+const WHEEL_NOTCH = 40
+
 export function Slider({
   value = 0,
   live,
@@ -71,7 +74,11 @@ export function Slider({
   const lastWritten = useRef(-1)
   const lastTick = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
-  const [hoverText, setHoverText] = useState('')
+  const tip = useRef<HTMLDivElement>(null)
+  /** Value of an ongoing wheel gesture (committed when it pauses). */
+  const wheelValue = useRef<number | null>(null)
+  const wheelAcc = useRef(0)
+  const wheelTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const range = max - min || 1
   const st = step ?? range / 100
   const withTicks = ticks ?? variant !== 'seek'
@@ -86,7 +93,7 @@ export function Slider({
 
   // controlled value → css
   useEffect(() => {
-    if (!dragging.current && !live) writeV(value)
+    if (!dragging.current && wheelValue.current === null && !live) writeV(value)
   })
 
   // live value → css, every frame (and at once when polling resumes, before the next paint)
@@ -94,11 +101,10 @@ export function Slider({
     if (liveActive && live && !dragging.current) writeV(live())
   }, [liveActive]) // eslint-disable-line react-hooks/exhaustive-deps
   useTicker(() => {
-    if (!dragging.current && live) writeV(live())
+    if (!dragging.current && wheelValue.current === null && live) writeV(live())
   }, !!live && liveActive)
 
-  const valueAt = (clientX: number) => {
-    const r = root.current!.getBoundingClientRect()
+  const valueAt = (clientX: number, r: DOMRect = root.current!.getBoundingClientRect()) => {
     const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width))
     let v = min + f * range
     if (step) v = Math.round((v - min) / step) * step + min
@@ -121,7 +127,7 @@ export function Slider({
     if (commit) onCommit?.(v)
   })
 
-  const current = () => (dragging.current ? dragValue.current : live ? live() : value)
+  const current = () => (dragging.current ? dragValue.current : (wheelValue.current ?? (live ? live() : value)))
 
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     if (disabled || e.button !== 0) return
@@ -135,10 +141,15 @@ export function Slider({
     emit(v, false)
   }
   const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    const v = valueAt(e.clientX)
     const r = root.current!.getBoundingClientRect()
+    const v = valueAt(e.clientX, r)
     root.current!.style.setProperty('--h', Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)).toFixed(4))
-    if (format) setHoverText(format(v))
+    // the hover tip is written directly: a React state here re-rendered the slider per pointermove
+    const t = tip.current
+    if (t && format) {
+      const text = format(v)
+      if (t.textContent !== text) t.textContent = text
+    }
     if (dragging.current) {
       tick(v)
       emit(v, false)
@@ -153,21 +164,39 @@ export function Slider({
     lastWritten.current = -1
   }
 
-  // wheel needs a non-passive listener to preventDefault page scroll
+  // Wheel (a non-passive listener, to preventDefault the scroll). Deltas accumulate, so a
+  // trackpad swipe moves about a step per mouse notch instead of one per event, and the commit
+  // (a settings write, a seek) waits for the gesture to pause instead of firing per event.
+  // In a scrolling panel an unfocused slider leaves the wheel to the panel.
+  const onWheel = useEvent((e: WheelEvent) => {
+    const el = root.current
+    if (!el || (document.activeElement !== el && el.closest('.g-scroll'))) return
+    e.preventDefault()
+    const d = e.deltaY || -e.deltaX
+    wheelAcc.current += e.deltaMode ? Math.sign(d) * WHEEL_NOTCH : d
+    if (Math.abs(wheelAcc.current) < WHEEL_NOTCH) return
+    const dir = -Math.sign(wheelAcc.current)
+    wheelAcc.current = 0
+    const v = Math.max(min, Math.min(max, current() + dir * wheelStep * range))
+    wheelValue.current = v
+    tick(v)
+    emit(v, false)
+    clearTimeout(wheelTimer.current)
+    wheelTimer.current = setTimeout(() => {
+      const w = wheelValue.current
+      if (w !== null) onCommit?.(w)
+      // keep showing the wheel's value until the commit has had time to come back (a seek's
+      // state push), so a live slider doesn't flick back to the old position for a frame
+      wheelTimer.current = setTimeout(() => (wheelValue.current = null), 250)
+    }, 160)
+  })
   useEffect(() => {
     const el = root.current
     if (!el || !wheelStep || disabled) return
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      const dir = -Math.sign(e.deltaY || -e.deltaX)
-      if (!dir) return
-      const v = Math.max(min, Math.min(max, current() + dir * wheelStep * range))
-      tick(v)
-      emit(v, true)
-    }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  })
+  }, [wheelStep, disabled, onWheel])
+  useEffect(() => () => clearTimeout(wheelTimer.current), [])
 
   const onKeyDown = (e: RKeyboardEvent<HTMLDivElement>) => {
     if (disabled) return
@@ -231,7 +260,7 @@ export function Slider({
         <div className="g-slider__fill" />
       </div>
       <div className="g-slider__thumb" />
-      {format && hoverText && <div className="g-slider__tip">{hoverText}</div>}
+      {format && <div ref={tip} className="g-slider__tip" />}
     </div>
   )
 }

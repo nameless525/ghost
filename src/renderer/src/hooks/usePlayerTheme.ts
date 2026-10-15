@@ -11,11 +11,12 @@ export const trackArt = (t: PlayerState['current']): string | null => t?.hero ??
 
 export function usePlayerThemeSync(): void {
   useEffect(() => {
-    let lastId: string | null | undefined
+    let lastKey: string | undefined
     const apply = (s: PlayerState) => {
-      const id = s.current?.id ?? null
-      if (id === lastId) return
-      lastId = id
+      // keyed on the art/accent too: enrichment can fill them in for the track already playing
+      const key = s.current ? `${s.current.id}|${s.current.accent}|${trackArt(s.current)}` : ''
+      if (key === lastKey) return
+      lastKey = key
       if (!s.current) return
       const ui = useUI.getState()
       ui.setAccent(s.current.accent ?? DEFAULT_ACCENT)

@@ -15,6 +15,7 @@ import { usePlayer } from '../../state/player'
 import { accentNow } from '../../theme/accent'
 import { mixNumber } from '../../theme/color'
 import { uiZoom } from '../../ui/util'
+import { adoptPixiTicker } from '../pixiTicker'
 import { Burst } from './burst'
 import { RadialVisualizer } from './radial'
 import { ScopeVisualizer } from './scope'
@@ -118,6 +119,7 @@ export class VisualizerStage {
       return
     }
     this.renderer = r
+    adoptPixiTicker()
     r.canvas.classList.add('pl-vis__gl')
     const tex = (this.tex = makeTextures())
     this.layers = { radial: new RadialVisualizer(tex), skyline: new SkylineVisualizer(tex), scope: new ScopeVisualizer(tex) }
@@ -151,6 +153,11 @@ export class VisualizerStage {
     this.presence = 0
     this.shown = false
     this.renderer?.canvas.classList.remove('pl-vis__gl--ready')
+    // The renderer outlives the Play screen (no WebGL context churn), but its full-window drawing
+    // buffers (~12 MB each at 1.5x) needn't: shrink them while detached. The next tick after
+    // attach() resizes back (layoutDirty).
+    if (this.renderer && (this.renderer.width > 1 || this.renderer.height > 1)) this.renderer.resize(1, 1, 1)
+    this.layoutDirty = true
   }
 
   private mount(): void {

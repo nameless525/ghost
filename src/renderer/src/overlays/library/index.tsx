@@ -38,7 +38,8 @@ export default function LibraryOverlay({ open }: LibraryOverlayProps) {
   useEffect(() => initPlaylistCache(), [])
   const playlistCount = usePlaylistCache((s) => s.playlists.length)
   const liked = useLive(() => ghost().library.liked(), ['likes'], open)
-  const history = useLive(() => ghost().library.history(300), ['history', 'likes'], open && visited.has('history'))
+  // refetched (300 rows) on every play: only while its tab is showing; it catches up on return
+  const history = useLive(() => ghost().library.history(300), ['history', 'likes'], open && tab === 'history')
   const downloaded = useLive(() => ghost().library.downloaded(), ['downloaded', 'likes'], open)
 
   const select = (t: TabId) => {

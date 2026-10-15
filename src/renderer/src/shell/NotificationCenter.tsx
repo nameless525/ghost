@@ -1,5 +1,6 @@
 // The notification centre overlay: everything received this session.
 import { Bell, CircleAlert, CircleCheck, Info, LoaderCircle, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Button } from '../ui/Button'
 import { CoverArt } from '../ui/CoverArt'
 import { OverlayHeader } from '../ui/OverlayHeader'
@@ -17,9 +18,22 @@ function ago(ts: number): string {
   return `${h} h ago`
 }
 
-export default function NotificationCenter(_props: OverlayProps) {
+/** Re-render every `ms` while `active` (relative times; the overlay stays mounted when closed). */
+function useTick(ms: number, active: boolean): void {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    tick((n) => n + 1)
+    const t = window.setInterval(() => tick((n) => n + 1), ms)
+    return () => window.clearInterval(t)
+  }, [ms, active])
+}
+
+export default function NotificationCenter({ open }: OverlayProps) {
   const history = useNotifications((s) => s.history)
   const clear = useNotifications((s) => s.clearHistory)
+  // "just now" used to stay "just now" for as long as the session lasted
+  useTick(30000, open)
   return (
     <div className="g-ncenter">
       <OverlayHeader

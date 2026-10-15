@@ -125,21 +125,25 @@ function NowPlayingChip() {
   const playing = status === 'playing'
   const busy = status === 'loading' || status === 'buffering'
 
-  useTicker(
-    () => {
-      const el = bar.current
-      if (!el) return
-      const s = usePlayer.getState()
-      const f = s.durationMs ? Math.min(1, livePositionMs(s) / s.durationMs) : 0
-      // ~half a device pixel per step on the chip: a write every ~150 ms, not every frame
-      const v = (Math.round(f * 1024) / 1024).toFixed(4)
-      if (el.dataset.v !== v) {
-        el.dataset.v = v
-        el.style.transform = `scaleX(${v})`
-      }
-    },
-    !!current
-  )
+  const writeProgress = () => {
+    const el = bar.current
+    if (!el) return
+    const s = usePlayer.getState()
+    const f = s.durationMs ? Math.min(1, livePositionMs(s) / s.durationMs) : 0
+    // ~half a device pixel per step on the chip: a write every ~150 ms, not every frame
+    const v = (Math.round(f * 1024) / 1024).toFixed(4)
+    if (el.dataset.v !== v) {
+      el.dataset.v = v
+      el.style.transform = `scaleX(${v})`
+    }
+  }
+  // per frame only while the position moves; otherwise on state pushes (seek, track change)
+  useTicker(writeProgress, !!current && playing)
+  useEffect(() => {
+    if (!current || playing) return
+    writeProgress()
+    return usePlayer.subscribe(writeProgress)
+  }, [current, playing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className={cx('g-np-chip', open && 'g-np-chip--open', !current && 'g-np-chip--empty')} data-overlay-toggle="nowPlaying">

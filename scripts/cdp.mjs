@@ -8,7 +8,10 @@
 //   node scripts/cdp.mjs click <x> <y>                 click at CSS px
 //   node scripts/cdp.mjs wheel <x> <y> <dy>            mouse wheel at CSS px (dy > 0 scrolls down)
 //   node scripts/cdp.mjs logs                          print buffered console errors (installs hook)
+//   node scripts/cdp.mjs metrics                       Performance.getMetrics as JSON (task/script/style/layout totals)
 //   node scripts/cdp.mjs viewport <w> <h> [secs]       emulate a smaller window while it runs (background it)
+//   node scripts/cdp.mjs focus [secs]                  emulate a focused window while it runs (background it):
+//                                                      keeps frames coming even when the real window is covered
 import { writeFileSync } from 'node:fs'
 
 const port = process.env.CDP_PORT || 9223
@@ -81,6 +84,20 @@ if (cmd === 'eval') {
     process.once('SIGTERM', () => (clearTimeout(t), r()))
   })
   await send('Emulation.clearDeviceMetricsOverride')
+} else if (cmd === 'metrics') {
+  await send('Performance.enable')
+  const r = await send('Performance.getMetrics')
+  console.log(JSON.stringify(Object.fromEntries(r.result.metrics.map((m) => [m.name, m.value]))))
+} else if (cmd === 'focus') {
+  const secs = Number(args[0] || 600)
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true })
+  console.log('focus emulation', `for ${secs}s`)
+  await new Promise((r) => {
+    const t = setTimeout(r, secs * 1000)
+    process.once('SIGINT', () => (clearTimeout(t), r()))
+    process.once('SIGTERM', () => (clearTimeout(t), r()))
+  })
+  await send('Emulation.setFocusEmulationEnabled', { enabled: false })
 } else if (cmd === 'logs') {
   const r = await send('Runtime.evaluate', {
     returnByValue: true,

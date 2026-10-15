@@ -649,8 +649,8 @@
   height: 32px;
   margin: 0 -16px;
   padding: 0 28px;
+  /* 94% opaque: a backdrop blur here re-blurred the list on every scroll frame, unseen */
   background: rgb(var(--bg-2-rgb) / 0.94);
-  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line-1);
   color: var(--fg-4);
   font-size: var(--fs-2xs);

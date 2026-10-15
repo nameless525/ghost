@@ -21,10 +21,22 @@ let cacheInit = false
 export function initPlaylistCache(): void {
   if (cacheInit) return
   cacheInit = true
-  const load = () => ghost().library.playlists.list().then((playlists) => usePlaylistCache.setState({ playlists, loaded: true }))
-  void load()
+  // Bursts of changes (reorders, multi-track undo) refetch once; a slower older response never
+  // overwrites a newer one.
+  let seq = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const load = () => {
+    const my = ++seq
+    ghost()
+      .library.playlists.list()
+      .then((playlists) => my === seq && usePlaylistCache.setState({ playlists, loaded: true }))
+      .catch((err: unknown) => console.warn('[playlists] list failed', err))
+  }
+  load()
   ghost().on('library:changed', (e) => {
-    if (e.kind === 'playlists') void load()
+    if (e.kind !== 'playlists') return
+    clearTimeout(timer)
+    timer = setTimeout(load, 80)
   })
 }
 

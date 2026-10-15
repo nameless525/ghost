@@ -83,11 +83,17 @@ export function useMediaSession(): void {
 
     let lastMetaKey = ''
     let artBlob: string | null = null
+    // position state: sent on track/status/duration changes and seeks only (the OS extrapolates
+    // in between), not on every 1 Hz heartbeat / volume step (each is an IPC + an OS update)
+    let posKey = ''
+    let posSent = 0
+    let posAt = 0
     const apply = (s: PlayerState) => {
       want = isPlayingish(s)
       sync()
       const t = s.current
-      ms.playbackState = !t ? 'none' : s.status === 'paused' || s.status === 'idle' || s.status === 'error' ? 'paused' : 'playing'
+      const pb: MediaSessionPlaybackState = !t ? 'none' : s.status === 'paused' || s.status === 'idle' || s.status === 'error' ? 'paused' : 'playing'
+      if (ms.playbackState !== pb) ms.playbackState = pb
       const key = t ? `${t.id}|${t.cover}` : ''
       if (key !== lastMetaKey) {
         lastMetaKey = key
@@ -113,11 +119,20 @@ export function useMediaSession(): void {
             .catch(() => {})
       }
       if (t && s.durationMs && s.durationMs > 0) {
-        try {
-          const dur = s.durationMs / 1000
-          ms.setPositionState({ duration: dur, playbackRate: 1, position: Math.min(dur, Math.max(0, livePositionMs(s) / 1000)) })
-        } catch {
-          /* position > duration races */
+        const pos = livePositionMs(s)
+        const now = performance.now()
+        const k = `${t.id}|${s.status}|${s.durationMs}`
+        const predicted = posSent + (s.status === 'playing' ? now - posAt : 0)
+        if (k !== posKey || Math.abs(pos - predicted) > 1000) {
+          posKey = k
+          posSent = pos
+          posAt = now
+          try {
+            const dur = s.durationMs / 1000
+            ms.setPositionState({ duration: dur, playbackRate: 1, position: Math.min(dur, Math.max(0, pos / 1000)) })
+          } catch {
+            /* position > duration races */
+          }
         }
       }
     }

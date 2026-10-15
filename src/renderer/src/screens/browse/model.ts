@@ -10,6 +10,23 @@ import { ghost } from '../../ghost'
 
 export const PAGE_SIZE = 100
 
+// Cache bounds. The model lives for the whole session, and random jumps (F2) through a 93k-game
+// catalog would otherwise keep every page, album list and track list ever seen (details were
+// never dropped, not even on a new query). Evicted entries simply refetch when needed again.
+/** Pages of groups kept per query (the ones nearest the carousel's view survive). */
+const MAX_PAGES = 48
+/** Album lists (per group) kept per query. */
+const MAX_ALBUM_LISTS = 300
+/** Album details (track lists), least recently used dropped first. */
+const MAX_DETAILS = 160
+const MAX_GAMES = 600
+
+/** Map insertion order as recency: move `key` to the back. */
+function touch<K, V>(m: Map<K, V>, key: K, v: V): void {
+  m.delete(key)
+  m.set(key, v)
+}
+
 export interface BrowseQueryState {
   text: string
   group: GroupBy
@@ -54,6 +71,8 @@ export class BrowseModel {
   private games = new Map<string, Game | null>()
   private gamesPending = new Set<string>()
   private listeners = new Set<Listener>()
+  /** Centre of the last ensureGroups() range: page eviction keeps what's near it. */
+  private focusPage = 0
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn)
@@ -110,6 +129,7 @@ export class BrowseModel {
     const last = Math.max(0, Math.ceil(this.total / PAGE_SIZE) - 1)
     const a = Math.max(0, Math.floor(from / PAGE_SIZE))
     const b = Math.min(last, Math.floor(Math.max(from, to) / PAGE_SIZE))
+    this.focusPage = (a + b) >> 1
     for (let p = a; p <= b; p++) {
       if ((!this.pages.has(p) || this.stalePages.has(p)) && this.pagePending.get(p) !== this.gen) void this.loadPage(p)
     }
@@ -131,6 +151,7 @@ export class BrowseModel {
       this.pagePending.delete(p)
       this.stalePages.delete(p)
       this.pages.set(p, res.groups)
+      this.trimPages(p)
       const totalChanged = this.total !== res.total
       this.total = res.total
       this.loading = false
@@ -145,6 +166,18 @@ export class BrowseModel {
         this.emit({ type: 'total', total: 0 })
       }
       this.emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  /** Drop the pages farthest from the view (never the one just loaded or its neighbours). */
+  private trimPages(keep: number): void {
+    if (this.pages.size <= MAX_PAGES) return
+    const far = [...this.pages.keys()]
+      .filter((p) => Math.abs(p - this.focusPage) > 2 && p !== keep)
+      .sort((x, y) => Math.abs(y - this.focusPage) - Math.abs(x - this.focusPage))
+    for (const p of far.slice(0, this.pages.size - MAX_PAGES)) {
+      this.pages.delete(p)
+      this.stalePages.delete(p)
     }
   }
 
@@ -179,6 +212,7 @@ export class BrowseModel {
   albumsFor(key: string): Album[] | undefined {
     const have = this.albums.get(key)
     if ((!have || this.staleAlbums.has(key)) && this.albumsPending.get(key) !== this.gen) void this.loadAlbums(key)
+    if (have) touch(this.albums, key, have)
     return have
   }
 
@@ -196,7 +230,8 @@ export class BrowseModel {
       if (gen !== this.gen) return null
       this.albumsPending.delete(key)
       this.staleAlbums.delete(key)
-      this.albums.set(key, list)
+      touch(this.albums, key, list)
+      this.trim(this.albums, MAX_ALBUM_LISTS, this.staleAlbums)
       this.emit({ type: 'albums', key })
       return list
     } catch (err) {
@@ -213,11 +248,21 @@ export class BrowseModel {
   detailFor(albumId: string): AlbumDetail | undefined {
     const have = this.details.get(albumId)
     if ((!have || this.staleDetails.has(albumId)) && !this.detailsPending.has(albumId)) void this.loadDetail(albumId)
+    if (have) touch(this.details, albumId, have)
     return have
   }
 
   peekDetail(albumId: string): AlbumDetail | undefined {
     return this.details.get(albumId)
+  }
+
+  /** Keep `m` to `max` entries, dropping the least recently stored/used. */
+  private trim<V>(m: Map<string, V>, max: number, stale?: Set<string>): void {
+    for (const k of m.keys()) {
+      if (m.size <= max) break
+      m.delete(k)
+      stale?.delete(k)
+    }
   }
 
   loadDetail(albumId: string): Promise<AlbumDetail | null> {
@@ -230,7 +275,8 @@ export class BrowseModel {
       .then((d) => {
         this.detailsPending.delete(albumId)
         this.staleDetails.delete(albumId)
-        this.details.set(albumId, d)
+        touch(this.details, albumId, d)
+        this.trim(this.details, MAX_DETAILS, this.staleDetails)
         this.emit({ type: 'detail', albumId })
         return d
       })
@@ -275,6 +321,7 @@ export class BrowseModel {
         .then((g) => {
           this.gamesPending.delete(gameId)
           this.games.set(gameId, g)
+          this.trim(this.games, MAX_GAMES)
           this.emit({ type: 'game', gameId })
         })
         .catch(() => {

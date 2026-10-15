@@ -124,9 +124,12 @@ export function ToastStack() {
           tm = { rev: t.rev, left: total, total }
           timers.current.set(t.id, tm)
         }
-        if (!hovered.current && Number.isFinite(tm.left)) tm.left -= dt
-        const bar = els.current.get(t.id)?.querySelector<HTMLElement>('.g-toast__timer')
-        if (bar) {
+        const timed = Number.isFinite(tm.left)
+        if (!hovered.current && timed) tm.left -= dt
+        // the timer bar is the card's last child (no per-frame querySelector); untimed cards
+        // (progress) only need it written once
+        const bar = els.current.get(t.id)?.lastElementChild as HTMLElement | null | undefined
+        if (bar && (timed || bar.dataset.v === undefined)) {
           const f = Number.isFinite(tm.total) ? Math.max(0, tm.left / tm.total) : 0
           const s = f.toFixed(3)
           if (bar.dataset.v !== s) {

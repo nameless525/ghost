@@ -193,7 +193,7 @@ html.reduce-motion .lx-empty__shadow {
     var(--shadow-pop),
     0 0 0 1px rgb(var(--accent-rgb) / 0.3),
     0 0 30px rgb(var(--accent-rgb) / 0.15);
-  backdrop-filter: blur(14px);
+  /* 96% opaque: no backdrop blur (it re-ran on every frame of the slide and of scrolling behind) */
   pointer-events: auto;
   overflow: hidden;
 }

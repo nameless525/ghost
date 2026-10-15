@@ -24,8 +24,9 @@ export function GlobalKeys() {
     },
     { scope: 'global', repeat: false }
   )
-  useKeybinding('Mod+ArrowLeft', () => void ghost().player.prev(), { scope: 'global' })
-  useKeybinding('Mod+ArrowRight', () => void ghost().player.next(), { scope: 'global' })
+  // no auto-repeat: holding the keys flooded the engine with skips
+  useKeybinding('Mod+ArrowLeft', () => void ghost().player.prev().catch(() => {}), { scope: 'global', repeat: false })
+  useKeybinding('Mod+ArrowRight', () => void ghost().player.next().catch(() => {}), { scope: 'global', repeat: false })
   useKeybinding('Mod+L', () => useUI.getState().toggleOverlay('library'), { scope: 'global', repeat: false })
   useKeybinding('Mod+O', () => useUI.getState().toggleOverlay('settings'), { scope: 'global', repeat: false })
   useKeybinding('F6', () => useUI.getState().toggleOverlay('nowPlaying'), { scope: 'global', repeat: false })

@@ -118,7 +118,8 @@ function EmptyState() {
   const total = useBrowse((s) => s.total)
   const loading = useBrowse((s) => s.loading)
   const query = browseModel.query.text
-  const status = useBrowse((s) => s.status)
+  // only while the empty state shows: catalog:status ticks several times a second while indexing
+  const status = useBrowse((s) => (s.total === 0 && !s.loading ? s.status : null))
   const ref = useRef<HTMLDivElement>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [suggestions, setSuggestions] = useState<string[]>([])
@@ -315,12 +316,16 @@ export default function BrowseScreen(props: BrowseScreenProps) {
   // ---- album details for the wedge once the selection rests
   useEffect(() => {
     let t = 0
-    return useBrowse.subscribe((s, p) => {
+    const off = useBrowse.subscribe((s, p) => {
       if (s.sel?.id === p.sel?.id) return
       window.clearTimeout(t)
       const a = s.sel?.album
       if (a && !s.sel?.detail) t = window.setTimeout(() => void browseModel.loadDetail(a.id), 150)
     })
+    return () => {
+      off()
+      window.clearTimeout(t)
+    }
   }, [])
 
   // ---- osu!-style previews: rest on a selection for 400 ms while nothing is playing

@@ -10,45 +10,29 @@
 //
 // Without it the stack slides/fades the whole screen. Exits are awaited (max 1 s) before
 // the screen unmounts; enters flip lifecycle to 'active' when they finish (max 1.2 s).
-import {
-  createContext,
-  lazy,
-  Suspense,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-  type LazyExoticComponent
-} from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { tween } from '../motion/tween'
 import { anyModalOverlay, useUI, type ScreenId } from '../state/ui'
 import { LoadingRing } from '../ui/LoadingRing'
 import { cx } from '../ui/util'
 import { ErrorBoundary } from './ErrorBoundary'
 import { KeyScopeContext, type KeyScopeValue } from './keys'
+import { lazyModule, useLazyModule, whenIdle } from './lazyModule'
 import { screenDepth } from './navigation'
 import type { NavDirection, ScreenLifecycle, ScreenProps } from './types'
 
-const loaders: Record<ScreenId, () => Promise<{ default: ComponentType<ScreenProps> }>> = {
-  title: () => import('../screens/title'),
-  browse: () => import('../screens/browse'),
-  play: () => import('../screens/play')
-}
-
-const SCREENS: Record<ScreenId, LazyExoticComponent<ComponentType<ScreenProps>>> = {
-  title: lazy(loaders.title),
-  browse: lazy(loaders.browse),
-  play: lazy(loaders.play)
+// Code-split screens (see lazyModule.ts for why not React.lazy + Suspense).
+const SCREENS = {
+  title: lazyModule<ScreenProps>(() => import('../screens/title')),
+  browse: lazyModule<ScreenProps>(() => import('../screens/browse')),
+  play: lazyModule<ScreenProps>(() => import('../screens/play'))
 }
 
 const SCREEN_LABELS: Record<ScreenId, string> = { title: 'The title screen', browse: 'Browse', play: 'The player' }
 
-/** Warm the chunk for a screen (e.g. on hover of a button that navigates there). */
+/** Warm the chunk for a screen (e.g. on hover of a button that navigates there, and at boot). */
 export function preloadScreen(id: ScreenId): void {
-  void loaders[id]().catch(() => {})
+  void SCREENS[id].load().catch(() => {})
 }
 
 export interface TransitionContext {
@@ -114,10 +98,7 @@ export function ScreenStack() {
   }, [screen])
 
   // warm the other screens once the first one is up
-  useEffect(() => {
-    const idle = (window as Window & { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 800))
-    idle(() => (Object.keys(loaders) as ScreenId[]).forEach(preloadScreen))
-  }, [])
+  useEffect(() => whenIdle(() => (Object.keys(SCREENS) as ScreenId[]).forEach(preloadScreen)), [])
 
   return (
     <div className="g-screens">
@@ -136,6 +117,18 @@ export function ScreenStack() {
 function MountProbe({ onMount }: { onMount: () => void }) {
   useLayoutEffect(onMount, []) // eslint-disable-line react-hooks/exhaustive-deps
   return null
+}
+
+/** The screen once its chunk is here (normally preloaded: then it renders in the same commit). */
+function LazyScreen({ id, props, onMount }: { id: ScreenId; props: ScreenProps; onMount: () => void }) {
+  const Screen = useLazyModule(SCREENS[id])
+  if (!Screen) return <LoadingRing center box />
+  return (
+    <>
+      <Screen {...props} />
+      <MountProbe onMount={onMount} />
+    </>
+  )
 }
 
 const SLIDE = 72
@@ -161,7 +154,6 @@ function ScreenFrame({ entry, onEntered, onExited }: { entry: Entry; onEntered: 
   const mounted = useRef(false)
   const lifecycle = useRef(entry.lifecycle)
   lifecycle.current = entry.lifecycle
-  const Screen = SCREENS[entry.id]
 
   const props: ScreenProps = useMemo(
     () => ({ lifecycle: entry.lifecycle, direction: entry.direction, from: entry.from, to: entry.to }),
@@ -227,10 +219,7 @@ function ScreenFrame({ entry, onEntered, onExited }: { entry: Entry; onEntered: 
         <TransitionsContext.Provider value={registry}>
           <ScreenContext.Provider value={props}>
             <ErrorBoundary label={SCREEN_LABELS[entry.id]}>
-              <Suspense fallback={<LoadingRing center box />}>
-                <Screen {...props} />
-                <MountProbe onMount={runEnter} />
-              </Suspense>
+              <LazyScreen id={entry.id} props={props} onMount={runEnter} />
             </ErrorBoundary>
           </ScreenContext.Provider>
         </TransitionsContext.Provider>

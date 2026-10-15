@@ -10,6 +10,8 @@ interface Props {
   children: ReactNode
   /** Compact layout for overlay panels. */
   compact?: boolean
+  /** Render nothing instead of the card (app chrome: toolbar, toasts, background). */
+  silent?: boolean
 }
 
 interface State {
@@ -30,6 +32,7 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     const { error } = this.state
     if (!error) return this.props.children
+    if (this.props.silent) return null
     return (
       <div className="g-crash" data-compact={this.props.compact || undefined}>
         <div className="g-crash__card">

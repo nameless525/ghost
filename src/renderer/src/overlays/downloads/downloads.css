@@ -74,7 +74,8 @@
   transition: transform 500ms var(--ease-out-quint);
   overflow: hidden;
 }
-/* the sheen slides with a transform (compositor) instead of animating background-position */
+/* the sheen slides with a transform (compositor) instead of animating background-position;
+   only while something downloads (it used to run forever inside the collapsed, empty bar) */
 .dl-overall__fill::after {
   content: '';
   position: absolute;
@@ -83,6 +84,8 @@
   left: 0;
   width: 40%;
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
+}
+.dl-overall--on .dl-overall__fill::after {
   animation: dl-sheen 1.8s linear infinite;
 }
 .dl-overall__indet {

@@ -39,14 +39,20 @@ export function SnackHost({ host }: { host: string }) {
     if (current) setShown(current)
   }, [current])
 
+  /** Snack whose action already ran (one-shot: a double-click ran Undo twice). */
+  const acted = useRef<number | null>(null)
+
   const dismiss = () => {
+    // Only this snack: a newer one arriving mid-exit clears this tween (which fires the callback),
+    // and the old unconditional setShown(null) hid the new snack for good.
+    const id = shown?.id
     void tween(el.current)
       .clear()
       .fadeOut(160, 'outQuad')
       .moveToY(24, 260, 'outQuint')
       .then(() => {
-        setShown(null)
-        if (useSnacks.getState().current?.id === shown?.id) useSnacks.setState({ current: null })
+        setShown((s) => (s?.id === id ? null : s))
+        if (useSnacks.getState().current?.id === id) useSnacks.setState({ current: null })
       })
   }
 
@@ -84,6 +90,8 @@ export function SnackHost({ host }: { host: string }) {
             className={cx('lx-snack__action')}
             onPointerEnter={() => sfx.play('hover')}
             onClick={() => {
+              if (acted.current === shown.id) return
+              acted.current = shown.id
               sfx.play('confirm', { volume: 0.7 })
               shown.action!.onClick()
               dismiss()

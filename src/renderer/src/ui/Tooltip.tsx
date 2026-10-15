@@ -67,6 +67,8 @@ export interface TooltipProps {
 
 export function Tooltip({ content, shortcut, side = 'bottom', delay = 450, disabled, children }: TooltipProps) {
   const ref = useRef<HTMLElement | null>(null)
+  /** Last mounted node: React clears `ref` before unmount cleanups run. */
+  const node = useRef<HTMLElement | null>(null)
   const timer = useRef(0)
   const child = Children.only(children)
   const props = (isValidElement(child) ? child.props : {}) as Record<string, unknown> & { ref?: Ref<HTMLElement> }
@@ -93,11 +95,19 @@ export function Tooltip({ content, shortcut, side = 'bottom', delay = 450, disab
   useEffect(() => {
     if (disabled) hide()
   }, [disabled]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => hide, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // Unmounting hides only our own bubble: api.hide(null) (ref is already cleared by then) hid
+  // whatever tooltip was showing elsewhere whenever any tooltipped row/toast unmounted.
+  useEffect(
+    () => () => {
+      window.clearTimeout(timer.current)
+      if (node.current) api.hide(node.current)
+    },
+    []
+  )
 
   const call = (name: string, e: unknown) => (props[name] as ((e: unknown) => void) | undefined)?.(e)
   return cloneElement(child as ReactElement<Record<string, unknown>>, {
-    ref: mergeRefs(ref, props.ref),
+    ref: mergeRefs(ref, (el: HTMLElement | null) => void (el && (node.current = el)), props.ref),
     onPointerEnter: (e: unknown) => {
       call('onPointerEnter', e)
       show()
@@ -147,7 +157,8 @@ export function TooltipHost() {
 
   useLayoutEffect(() => {
     const node = el.current
-    if (!node || !shown) return
+    // fading out: stay put (a detached anchor measures as a zero rect at the top-left)
+    if (!node || !shown || !tip) return
     const r = shown.anchor.getBoundingClientRect()
     const p = place(r, node.offsetWidth, node.offsetHeight, { side: shown.side, offset: 8 })
     node.style.left = `${p.x}px`

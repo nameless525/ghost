@@ -98,6 +98,14 @@ function blurToCanvas(img: ImageBitmap, quality: 'low' | 'high'): HTMLCanvasElem
   return c
 }
 
+/** Position/size/tint a sprite (per frame; no allocation). */
+function place(sp: Sprite, x: number, y: number, w: number, h: number, tint: number): void {
+  sp.position.set(x, y)
+  sp.tint = tint
+  sp.width = w
+  sp.height = h
+}
+
 function destroyEntry(e: ArtEntry): void {
   e.dead = true
   e.blurred.destroy(true)
@@ -262,12 +270,8 @@ export class ArtLayer {
       // blurred alpha: the configured blur amount, but never uncover a sharp copy that isn't in yet
       const sharpShown = this.blur < 0.995 && !!s.art.sharp
       const bAlpha = 1 - (1 - this.blur) * (s.art.sharp ? easings.inOutSine(s.sharpIn) : 0)
-      for (const sp of [s.sharp, s.blurred]) {
-        sp.position.set(x, y)
-        sp.tint = tint
-        sp.width = dw
-        sp.height = dh
-      }
+      place(s.sharp, x, y, dw, dh, tint)
+      place(s.blurred, x, y, dw, dh, tint)
       s.blurred.alpha = bAlpha
       s.sharp.visible = sharpShown
       s.blurred.visible = bAlpha > 0.005

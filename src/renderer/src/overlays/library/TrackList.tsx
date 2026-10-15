@@ -18,7 +18,7 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { CircleCheck, Clock, Download, GripVertical, Heart, Star, Trash } from 'lucide-react'
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type MouseEvent as RMouseEvent, type ReactNode, type RefObject } from 'react'
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type MouseEvent as RMouseEvent, type ReactNode, type RefObject } from 'react'
 import type { PlayContext, TrackView } from '@shared/types'
 import { trackActions, trackMenuItems, tracksMenuItems } from '../../lib/track-actions'
 import { tween } from '../../motion/tween'
@@ -92,6 +92,8 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
   const rootRef = useRef<HTMLDivElement>(null)
   const [range, setRange] = useState<[number, number]>([0, Math.min(items.length, 24)])
   const [sel, setSel] = useState<ReadonlySet<string>>(() => new Set())
+  /** Option ids: focus stays on the listbox, aria-activedescendant names the cursor row. */
+  const optPrefix = useId()
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [likes, setLikes] = useState<Record<string, boolean>>({})
   const anchor = useRef<string | null>(null)
@@ -113,11 +115,18 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
     view = { items, exiting, entering: entering.size ? entering : snap.entering, intro: snap.intro || (snap.items.length === 0 && items.length > 0) }
     setSnap(view)
   }
+  // Cleared a fixed time after the animations started, not after the latest change: lists that
+  // update faster than that (Downloaded, while downloading) kept removed rows around forever.
+  const pendingSince = useRef(0)
+  const pending = snap.exiting.size > 0 || snap.entering.size > 0 || snap.intro
+  if (!pending) pendingSince.current = 0
+  else if (!pendingSince.current) pendingSince.current = performance.now()
   useEffect(() => {
-    if (!snap.exiting.size && !snap.entering.size && !snap.intro) return
-    const t = window.setTimeout(() => setSnap((s) => ({ ...s, exiting: new Map(), entering: new Set(), intro: false })), snap.intro ? 900 : 320)
+    if (!pending) return
+    const delay = Math.max(0, (snap.intro ? 900 : 320) - (performance.now() - pendingSince.current))
+    const t = window.setTimeout(() => setSnap((s) => ({ ...s, exiting: new Map(), entering: new Set(), intro: false })), delay)
     return () => window.clearTimeout(t)
-  }, [snap])
+  }, [snap, pending])
 
   // fresh data replaces optimistic like toggles; prune selection
   useEffect(() => {
@@ -267,16 +276,24 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
     const next = !withLike(t).liked
     setLikes((m) => ({ ...m, [t.id]: next }))
     sfx.play(next ? 'toggleOn' : 'toggleOff', { volume: 0.8 })
-    void trackActions.toggleLike(t.id).then((v) => {
-      setLikes((m) => ({ ...m, [t.id]: v }))
-      onLikeChange?.(t, v)
-    })
+    void trackActions.toggleLike(t.id).then(
+      (v) => {
+        setLikes((m) => ({ ...m, [t.id]: v }))
+        onLikeChange?.(t, v)
+      },
+      () => {
+        // failed: drop the optimistic heart
+        setLikes((m) => ({ ...m, [t.id]: !next }))
+        sfx.play('error', { volume: 0.5 })
+      }
+    )
   }
 
   const removeKeys = (ks: string[]) => {
     if (!onRemove || !ks.length) return
     const firstIdx = Math.min(...ks.map((k) => indexOf.get(k) ?? Infinity))
-    const remaining = items.filter((i) => !ks.includes(i.key))
+    const gone = new Set(ks)
+    const remaining = items.filter((i) => !gone.has(i.key))
     const next = remaining[Math.min(firstIdx, remaining.length - 1)]
     setSel(next ? new Set([next.key]) : new Set())
     anchor.current = cursor.current = next?.key ?? null
@@ -375,7 +392,10 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
         sensors={sensors}
         collisionDetection={closestCenter}
         modifiers={[lockToY]}
-        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        // WhileDragging (dnd-kit's default): with Always, every row mounting/unmounting in the
+        // virtualised window re-measured every droppable during render and handed SortableContext
+        // a new rect map, re-rendering all visible rows on each scroll step, drag or not.
+        measuring={{ droppable: { strategy: MeasuringStrategy.WhileDragging } }}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onDragCancel={() => setActiveKey(null)}
@@ -387,6 +407,7 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
             role="listbox"
             aria-multiselectable
             aria-label={context.title}
+            aria-activedescendant={cursor.current && sel.has(cursor.current) ? `${optPrefix}${cursor.current}` : undefined}
             tabIndex={0}
             style={{ height: items.length * ROW_H }}
             onKeyDown={onKeyDown}
@@ -394,6 +415,7 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
             {rendered.map(({ item, index, exiting }) => (
               <Row
                 key={exiting ? `x:${item.key}` : item.key}
+                optId={exiting ? undefined : `${optPrefix}${item.key}`}
                 item={item}
                 index={index}
                 track={withLike(item.track)}
@@ -415,6 +437,7 @@ export function TrackList({ items, scrollRef, context, onPlay, sortable = false,
 }
 
 interface RowProps {
+  optId?: string
   item: TrackListItem
   index: number
   track: TrackView
@@ -428,7 +451,7 @@ interface RowProps {
   api: (action: 'click' | 'dbl' | 'menu' | 'like', index: number, e?: RMouseEvent) => void
 }
 
-const Row = memo(function Row({ item, index, track, selected, sortable, exiting, entering, introDelay, dragging, rowExtra, api }: RowProps) {
+const Row = memo(function Row({ optId, item, index, track, selected, sortable, exiting, entering, introDelay, dragging, rowExtra, api }: RowProps) {
   const { listeners, setNodeRef, transform, transition, isSorting } = useSortable({
     id: item.key,
     disabled: !sortable,
@@ -455,6 +478,7 @@ const Row = memo(function Row({ item, index, track, selected, sortable, exiting,
         style={style}
         className={cx('tl-row', selected && 'tl-row--sel', playState && 'tl-row--current', dragging && 'tl-row--dragging')}
         role="option"
+        id={optId}
         aria-selected={selected}
         {...(sortable ? pointerListeners : {})}
         onClick={(e) => api('click', index, e)}
@@ -491,7 +515,7 @@ const Row = memo(function Row({ item, index, track, selected, sortable, exiting,
           <span className="tl-c tl-c--int">
             <IntensityBadge value={track.analysis?.intensity ?? null} size="sm" />
           </span>
-          <span className="tl-c tl-c--len tnum">{formatTime(track.durationMs)}</span>
+          <span className="tl-c tl-c--len tnum">{track.durationMs ? formatTime(track.durationMs) : '–:––'}</span>
           <span className="tl-c tl-c--like">
             <button
               type="button"
