@@ -16,7 +16,12 @@
 use std::path::{Path, PathBuf};
 
 fn vendor() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor").canonicalize().expect("native/vendor missing")
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor").canonicalize().expect("native/vendor missing");
+    // On Windows canonicalize() returns the verbatim `\\?\C:\...` form, which cl.exe can't open.
+    match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(s) if !s.starts_with("UNC") => PathBuf::from(s),
+        _ => p,
+    }
 }
 
 fn files_in(dir: &Path, ext: &str) -> Vec<PathBuf> {

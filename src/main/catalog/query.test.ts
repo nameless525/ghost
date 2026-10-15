@@ -230,6 +230,9 @@ function rng(seed: number) {
 }
 
 describe('performance with ~80k albums', () => {
+  // Shared CI machines are slower and noisier than a desktop: the budgets there get 3x headroom
+  // (they still catch real regressions, which are usually 10x or worse).
+  const SLACK = process.env.CI ? 3 : 1
   const N_GAMES = 40_000
   const db = memoryDb()
   const repo = new CatalogRepo(db)
@@ -300,7 +303,7 @@ describe('performance with ~80k albums', () => {
     const ms = time(() => qe.browse(query))
     const page = qe.browse(query)
     console.log(`[perf] ${_label.padEnd(28)} ${ms.toFixed(2).padStart(7)} ms  total=${page.total}`)
-    expect(ms).toBeLessThan(30)
+    expect(ms).toBeLessThan(30 * SLACK)
   })
 
   it('cold bucket aggregations (first page of a non-game grouping, cache empty)', () => {
@@ -314,7 +317,7 @@ describe('performance with ~80k albums', () => {
       }
       ts.sort((a, b) => a - b)
       console.log(`[perf] cold ${group.padEnd(10)} buckets ${ts[1].toFixed(2)} ms`)
-      expect(ts[1]).toBeLessThan(150)
+      expect(ts[1]).toBeLessThan(150 * SLACK)
     }
   })
 
@@ -323,8 +326,8 @@ describe('performance with ~80k albums', () => {
     const a = time(() => qe.groupAlbums(g.key, { text: 'dragon', group: 'game', sort: 'title' }))
     const r = time(() => qe.random('platform=snes'))
     console.log(`[perf] groupAlbums ${a.toFixed(2)} ms, random ${r.toFixed(2)} ms`)
-    expect(a).toBeLessThan(10)
-    expect(r).toBeLessThan(30)
+    expect(a).toBeLessThan(10 * SLACK)
+    expect(r).toBeLessThan(30 * SLACK)
   })
 
   it('full recluster stays reasonable', async () => {

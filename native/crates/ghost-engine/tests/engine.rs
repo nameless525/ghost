@@ -101,7 +101,15 @@ fn events_state_trackinfo_and_cache_complete_over_http() {
     let (engine, sink) = offline(&dir, 48_000);
     let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![("X-Test".into(), "1".into())], cache_key: "events-a".into(), format_hint: None, extras: Default::default() };
     engine.set_current(track("t1", spec), 0, true);
-    let (out, evs) = collect_until_ended(&engine, &sink, Duration::from_secs(30));
+    let (out, mut evs) = collect_until_ended(&engine, &sink, Duration::from_secs(30));
+    // The render outruns real time, so the cache may finish writing a little after the track ends.
+    let cache_done = |evs: &[EngineEvent]| evs.iter().any(|e| matches!(e, EngineEvent::CacheComplete { .. }));
+    let (events, t0) = (engine.events(), std::time::Instant::now());
+    while !cache_done(&evs) && t0.elapsed() < Duration::from_secs(5) {
+        if let Ok(e) = events.recv_timeout(Duration::from_millis(50)) {
+            evs.push(e);
+        }
+    }
     assert_eq!(out.len() / 2, 96_000, "2 s at 48 kHz");
     let states: Vec<PlaybackState> = evs.iter().filter_map(|e| if let EngineEvent::State { state, .. } = e { Some(*state) } else { None }).collect();
     assert_eq!(states.first(), Some(&PlaybackState::Loading), "{states:?}");

@@ -156,6 +156,7 @@ describe('performance', () => {
         `filter "b" ${filter1.toFixed(2)} ms, "battle chrono mitsuda" ${filter3.toFixed(2)} ms, no match ${miss.toFixed(2)} ms`
     )
     expect(matchIndices(texts, queryWords('battle chrono mitsuda')).length).toBeGreaterThan(0)
-    expect(filter3).toBeLessThan(16)
+    // a frame's worth, with headroom on shared CI machines
+    expect(filter3).toBeLessThan(process.env.CI ? 48 : 16)
   })
 })
