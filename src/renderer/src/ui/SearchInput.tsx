@@ -70,7 +70,8 @@ export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(funct
 
   const onKeyDown = (e: RKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      onSubmit?.(value)
+      // Plain Enter submits; with a modifier it's someone else's shortcut (e.g. ⌘↵ Search online).
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) onSubmit?.(value)
     } else if (e.key === 'Escape') {
       if (onEscape) onEscape()
       else if (value) {

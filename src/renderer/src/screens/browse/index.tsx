@@ -397,13 +397,23 @@ export default function BrowseScreen(props: BrowseScreenProps) {
       // The empty state / external results live between the search panel and the footer too.
       host.style.setProperty('--browse-top', `${top}px`)
       host.style.setProperty('--browse-bottom', `${bottom}px`)
+      // Toasts stack top-right, where Search online sits: in Browse they start under the search panel.
+      const app = document.getElementById('g-app')
+      if (app) {
+        let y = top
+        for (let n: HTMLElement | null = host; n && n !== app; n = n.offsetParent as HTMLElement | null) y += n.offsetTop
+        app.style.setProperty('--toasts-top', `${y + 4}px`)
+      }
     }
     measure()
     const ro = new ResizeObserver(measure)
     if (searchWrap.current) ro.observe(searchWrap.current)
     if (footerWrap.current) ro.observe(footerWrap.current)
     if (host) ro.observe(host)
-    return () => ro.disconnect()
+    return () => {
+      ro.disconnect()
+      document.getElementById('g-app')?.style.removeProperty('--toasts-top')
+    }
   }, [])
 
   // ---- typing anywhere searches (osu!); Q/L/P stay commands while the box isn't focused

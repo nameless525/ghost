@@ -377,11 +377,11 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 - Full-bleed art behind a visualizer layer. Visualizer modes: radial disc, spectrum skyline, oscilloscope, and per-channel scopes for chiptunes (one scope per hardware voice, with mute/solo; later milestone).
 - **Kiai mode** during detected high-energy sections: stronger beat flashes, a burst of pixel particles, accent saturation turned up.
 - Bottom seek bar draws the track's energy curve.
-- Controls fade in on mouse movement and hide after 2 s of idle. Esc returns to Browse.
+- Controls fade in on mouse movement and hide after 3 s of idle. Esc returns to Browse.
 
 **Music controller overlay**, the analogue of osu!'s Now Playing overlay.
 - Drops down from the toolbar on any screen: cover, title, seek bar, transport, shuffle/repeat/loop mode, volume.
-- A drawer slides out with the queue (drag to reorder, "up next", history).
+- A drawer slides out with the queue (drag to reorder, "up next", history), with a search field (/ or Ctrl+F) that filters by title, game, album or composer; Enter plays the picked result.
 
 **Library overlay**, slides in from the right, blue hue.
 - Tabs: Playlists · Liked · History · Downloaded.
@@ -424,6 +424,7 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 | Ctrl+O | Settings |
 | F6 | Music controller |
 | Alt+J | Toggle original / romanized titles |
+| / or Ctrl+F (queue open) | Search the queue |
 | ? | Keyboard shortcuts (every key, by screen; also in Settings → Interface) |
 
 ### 7.6 Search syntax

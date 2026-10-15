@@ -547,7 +547,8 @@
 /* ---------------------------------------------------------------- toasts */
 .g-toasts {
   position: absolute;
-  top: calc(var(--toolbar-h) + 10px);
+  /* Browse sets --toasts-top (under its search panel, so toasts don't cover Search online). */
+  top: var(--toasts-top, calc(var(--toolbar-h) + 10px));
   right: 12px;
   z-index: var(--z-toast);
   width: 344px;

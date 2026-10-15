@@ -82,8 +82,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 34px 28px;
+  gap: 4px;
+  /* compact: at a large UI scale the drawer can be short, and the buttons must stay in view */
+  padding: 22px 24px 16px;
   text-align: center;
   color: var(--fg-3);
   font-size: var(--fs-sm);
@@ -97,9 +98,9 @@
 .np-queue__empty-icon {
   display: grid;
   place-items: center;
-  width: 46px;
-  height: 46px;
-  margin-bottom: 6px;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 4px;
   border-radius: 14px;
   background: rgb(var(--accent-rgb) / 0.12);
   color: var(--accent-hi);
@@ -118,10 +119,10 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 .np-queue--compact .np-queue__empty {
-  padding: 20px 24px;
+  padding: 14px 20px 10px;
 }
 
 /* ---- rows ---- */

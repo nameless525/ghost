@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.3.2 (2026-10-14)
+
+### Search online, where you search
+- **"Search online"** (formerly "Search elsewhere") is a button right beside the catalog search box instead of in the footer, where it was also hidden in windows narrower than 1280 px. With text typed it searches online for that text straight away (⌘↵ from anywhere in Browse). When few games match, it glows.
+- In Browse, notices appear under the search panel instead of on top of the button.
+
+### Search the queue
+- The queue (on the Play screen and in Now Playing) has a search field.
+  - It matches title, game, album and composer, ignoring case, accents and punctuation.
+  - It highlights matches, shows how many tracks match on each tab, and offers to show matches that are in another tab.
+  - Keys: / or ⌘F to search, ↑/↓ to pick, Enter to play, Esc to clear.
+  - It stays instant on queues of thousands of tracks.
+
+### Clearer for a first-time user
+- **Browse:**
+  - The footer reads Random · Add to queue · Add to playlist · Download · More · Play. "Rewind" moved into Random (right-click or Shift+F2).
+  - The cryptic "try platform=snes…" chips became a **Filters** popover with plain examples that insert into the search.
+  - Hovering explains:
+    - "+" totals, BPM, intensity, loudness;
+    - format badges and album kinds (OST, GAMERIP…);
+    - the original-title line, which also toggles the titles.
+  - "Era" is now "Released". The cover has a Preview button, and the Preview badge stops the preview.
+  - Online results say "Strong / Good / Possible match" instead of a percentage.
+- **Keyboard shortcuts sheet:** press ? anywhere, or open it from Settings → Interface.
+- **One vocabulary everywhere:** menus read Play · Play next · Add to queue · Add to playlist · Like / Liked · Download. Shortcut hints only appear where the key really does that.
+- **Title screen:** the menu is Browse, Library, Settings. The disabled "Radio · Coming soon" entry is gone.
+- **Settings:** options are explained in plain words (normalization, gapless, crossfade, looping, quality…). The "Library" section is now "Downloads", and Re-index asks first.
+- **Library and Downloads:**
+  - Clearer empty states and tooltips.
+  - A "Saved to <folder>" footer, and one "Clear finished" button.
+  - Double-click plays a finished download.
+- **Play screen:**
+  - The loop-mode button only appears for tracks that have loop points, with a plain explanation.
+  - Unanalysed tracks don't show an empty intensity badge.
+  - Controls stay 3 s before hiding.
+- **Fewer notices:** confirmations of things you just did ("Added to queue") pop up briefly but don't fill the notification centre.
+
+### Fixed
+- **Error dialogs from test builds:** a build started from another folder showed an "A JavaScript error occurred in the main process" dialog about the app icon. A missing icon is now harmless. Any other stray background error shows as a notice instead of a blocking system dialog.
+- **First launch:** the "Setting up your catalog" notice was lost because it was sent before the window had loaded.
+- **Composer credits:** some games listed "Arranged by" or "Arranged :" as their composers (credits mis-filed on the source page). Only composers are kept now, and existing albums are cleaned once.
+- **Large UI scale (150%):**
+  - Browse overlapped itself and cut off footer labels.
+  - The catalog activity popover was misplaced.
+  - The queue's "no matches" buttons were cut off.
+- **Play screen:**
+  - Focusing the queue search while the drawer slid in shifted the screen sideways.
+  - An invisible pause button sat in the middle of the screen in the Skyline and Scope visualizers.
+  - The Skyline visualizer drew over the chiptune channel strip.
+- **Browse:**
+  - A track list that failed to load said "Enter tries again" (Enter starts playback); it now retries on click.
+  - A catalog read error showed "Your catalog is empty".
+- **Notices:**
+  - Undoing a playlist removal showed one notice per track.
+  - Downloading a playlist showed two cards.
+  - Downloading one track from a menu showed nothing.
+  - A track still downloading was reported as "Already downloaded".
+- **Menus** opened from controls at the bottom of the screen covered their own button.
+
 ## 0.3.1 (2026-10-14)
 
 ### Fixed
