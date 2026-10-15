@@ -770,6 +770,12 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
    */
   async function upgradeIndexes(): Promise<void> {
     try {
+      const credits = repo.cleanStoredCredits()
+      if (credits) {
+        log(`cleaned the composer credits of ${credits} albums / tracks`)
+        repo.revision++
+        notify()
+      }
       if (repo.ftsStale()) {
         const t0 = now()
         if (!(await repo.rebuildFts(writerPause, () => stopped))) return

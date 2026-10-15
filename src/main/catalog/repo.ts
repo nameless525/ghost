@@ -9,6 +9,7 @@ import type { DB } from '../db'
 import type { OfflineAnalysisResult } from '../engine/types'
 import type { AlbumHit, PlatformRef, ProviderAlbum, ProviderTrackFile } from '../providers/types'
 import { LOSSLESS_FORMATS } from '../providers/types'
+import { cleanCredits } from '../providers/credits'
 import { ftsFold, GAME_ALIASES, searchAliases, TITLE_ALIASES } from './aliases'
 import { baseTitle, clusterKeys, franchiseGuess, gameKey, headKey, keyOf, kindRank, MERGEABLE_KINDS, pickGameName, sortKey } from './normalize'
 import { CLUSTER_VERSION, ensureCatalogSchema, FTS_VERSION, recountCatalog, UNKNOWN_INTENSITY, UNKNOWN_LEN, UNKNOWN_YEAR } from './schema'
@@ -131,6 +132,9 @@ export interface TrackRow {
   intensity: number | null
   lufs: number | null
 }
+
+/** Bump when cleanCredits changes, so stored composer lists are cleaned again (cleanStoredCredits). */
+const CREDITS_VERSION = 1
 
 export const TRACK_VIEW_COLUMNS = `
   t.id, t.album_id, t.disc, t.number, t.title, t.title_original, t.duration_ms, t.composers, t.files, t.locator,
@@ -523,6 +527,37 @@ export class CatalogRepo {
     }
   }
 
+  /**
+   * Once per CREDITS_VERSION: clean composer credits stored before cleanCredits existed (some
+   * KHInsider "Composed by" fields held arrangers or bare headings like "Arranged :"). Only rows
+   * that can be affected are read. Returns how many albums and tracks changed.
+   */
+  cleanStoredCredits(): number {
+    if (this.meta('credits_version') === String(CREDITS_VERSION)) return 0
+    const suspect = `(composers LIKE '%by%' OR composers LIKE '%:%' OR composers LIKE '%：%' OR composers LIKE '%rrang%' OR composers LIKE '%yric%' OR composers LIKE '%erform%')`
+    const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+    let n = 0
+    this.tx(() => {
+      for (const r of this.all<{ id: number; composers: string }>(`SELECT id, composers FROM albums WHERE ${suspect}`)) {
+        const before = j<string[]>(r.composers, [])
+        const after = cleanCredits(before)
+        if (same(before, after)) continue
+        this.run(`UPDATE albums SET composers = ? WHERE id = ?`, JSON.stringify(after), r.id)
+        this.writeComposers(r.id, after)
+        n++
+      }
+      for (const r of this.all<{ id: number; composers: string }>(`SELECT id, composers FROM tracks WHERE ${suspect}`)) {
+        const before = j<string[]>(r.composers, [])
+        const after = cleanCredits(before)
+        if (same(before, after)) continue
+        this.run(`UPDATE tracks SET composers = ? WHERE id = ?`, JSON.stringify(after), r.id)
+        n++
+      }
+      this.setMeta('credits_version', String(CREDITS_VERSION))
+    })
+    return n
+  }
+
   private writeComposers(albumId: number, names: string[]): void {
     this.run(`DELETE FROM album_composers WHERE album_id = ?`, albumId)
     for (const n of names) this.run(`INSERT OR IGNORE INTO album_composers(album_id, name_fold, name) VALUES (?, ?, ?)`, albumId, foldText(n), n)
@@ -552,6 +587,8 @@ export class CatalogRepo {
     const prev = this.get<{ platforms: string; cover: string | null; year: number | null; added_at: number | null }>(`SELECT platforms, cover, year, added_at FROM albums WHERE id = ?`, albumId)
     if (!prev) throw new Error(`album ${albumId} vanished`)
     const platforms = d.platforms.length ? d.platforms : null
+    // Composers only, whatever the source put in its credits field (see providers/credits.ts).
+    const composers = cleanCredits(d.composers)
     const year = d.year ?? prev.year
     const addedAt = d.addedAt ?? prev.added_at
     this.run(
@@ -574,7 +611,7 @@ export class CatalogRepo {
       d.catalogNo,
       JSON.stringify(d.developers),
       JSON.stringify(d.publishers),
-      JSON.stringify(d.composers),
+      JSON.stringify(composers),
       d.cover,
       d.thumb,
       JSON.stringify(d.images),
@@ -592,7 +629,7 @@ export class CatalogRepo {
       albumId
     )
     if (platforms) this.writePlatforms(albumId, platforms)
-    this.writeComposers(albumId, d.composers)
+    this.writeComposers(albumId, composers)
 
     const existing = new Map(this.all<{ id: number; locator: string }>(`SELECT id, locator FROM tracks WHERE album_id = ?`, albumId).map((r) => [r.locator, r.id]))
     const seen = new Set<string>()
@@ -608,7 +645,7 @@ export class CatalogRepo {
           i,
           t.title,
           t.durationMs,
-          JSON.stringify(t.composers),
+          JSON.stringify(cleanCredits(t.composers)),
           files,
           id
         )
@@ -621,7 +658,7 @@ export class CatalogRepo {
           i,
           t.title,
           t.durationMs,
-          JSON.stringify(t.composers),
+          JSON.stringify(cleanCredits(t.composers)),
           t.locator,
           files
         )

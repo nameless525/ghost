@@ -4,7 +4,7 @@ import type { AlbumDetail, ID, TaskProgress, TrackView } from '@shared/types'
 import { ghost } from '../../ghost'
 import { playlistSubmenu, trackActions } from '../../lib/track-actions'
 import { navigate } from '../../shell/navigation'
-import { notify } from '../../shell/notifications'
+import { notify, useNotifications } from '../../shell/notifications'
 import { sfx } from '../../sound'
 import { usePlayer } from '../../state/player'
 import { useTasks } from '../../state/progress'
@@ -176,7 +176,7 @@ export async function playSelection(sel: SelInfo | null): Promise<void> {
     } else {
       const d = await albumOf(sel, onAlbum)
       if (!d || !d.tracks.length) {
-        notify({ kind: 'info', title: 'Nothing to play yet', body: sel.album?.title ?? sel.group?.title })
+        notify({ kind: 'info', title: 'Nothing to play yet', body: sel.album?.title ?? sel.group?.title, ephemeral: true })
         return
       }
       await trackActions.playAlbum(d.album.id, 0)
@@ -224,29 +224,21 @@ let downloadSeq = 0
 
 export async function downloadSelection(sel: SelInfo | null): Promise<void> {
   if (!sel) return
-  const title = sel.track?.title ?? sel.album?.title ?? sel.group?.title ?? 'Selection'
-  if (sel.track?.downloaded) {
-    notify({ kind: 'info', title: 'Already downloaded', body: title })
-    return
-  }
-  const image = sel.track?.cover ?? sel.album?.cover ?? sel.group?.cover ?? null
-  if (sel.track || albumAtHand(sel)) {
-    await guarded('Couldn’t start the download', async () => {
-      if (sel.track) await trackActions.download({ trackIds: [sel.track.id] })
-      else {
-        const d = await albumOf(sel)
-        if (!d) return
-        await trackActions.download({ albumId: d.album.id })
-      }
-      notify({ kind: 'info', title: 'Download queued', body: title, image })
-    })
+  // The shared notices: "Download queued" for one track; an album's batch card (and "Already
+  // downloaded") come from the downloads service itself.
+  if (sel.track) return trackActions.downloadWithNotice({ trackIds: [sel.track.id] }, { title: sel.track.title, cover: sel.track.cover })
+  if (albumAtHand(sel)) {
+    const d = await albumOf(sel)
+    if (d) await trackActions.downloadWithNotice({ albumId: d.album.id }, d.tracks.length === 1 ? { title: d.tracks[0].title, cover: d.album.cover } : undefined)
     return
   }
   // The album's track list has to be fetched first (a source page, a chiptune set): a progress card
-  // right away that follows the fetch and becomes the "Download queued" notice.
+  // right away that follows the fetch, then hands over to the service's batch card.
+  const title = sel.album?.title ?? sel.group?.title ?? 'Selection'
+  const image = sel.album?.cover ?? sel.group?.cover ?? null
   const id = `browse-download-${++downloadSeq}`
   const w = beginAction('download', sel.id, previewAlbumId(sel))
-  notify({ id, kind: 'progress', title: 'Preparing download', body: title, image })
+  notify({ id, kind: 'progress', title: 'Preparing download', body: title, image, ephemeral: true })
   let stop = followAlbum(previewAlbumId(sel), id, title, image)
   try {
     const d = await albumOf(sel, (albumId) => {
@@ -256,11 +248,12 @@ export async function downloadSelection(sel: SelInfo | null): Promise<void> {
     })
     stop()
     if (!d || !d.tracks.length) {
-      notify({ id, kind: 'info', title: 'Nothing to download yet', body: title, image })
+      notify({ id, kind: 'info', title: 'Nothing to download yet', body: title, image, ephemeral: true })
       return
     }
     await trackActions.download({ albumId: d.album.id })
-    notify({ id, kind: 'info', title: 'Download queued', body: title, image })
+    if (d.tracks.length === 1) notify({ id, kind: 'info', title: 'Download queued', body: d.tracks[0].title, image, ephemeral: true })
+    else useNotifications.getState().dismiss(id)
   } catch (err) {
     sfx.play('error')
     notify({ id, kind: 'error', title: 'Couldn’t start the download', body: err instanceof Error ? err.message : String(err), image })
@@ -280,7 +273,7 @@ function followAlbum(albumId: ID | null, id: string, title: string, image: strin
     last = t
     if (!t || t.done) return
     // measured (a chiptune set's bytes) fills the card's bar; otherwise it sweeps
-    notify({ id, kind: 'progress', title: 'Preparing download', body: `${title} · ${t.label}${t.detail ? ` (${t.detail})` : ''}`, image, progress: t.fraction ?? undefined })
+    notify({ id, kind: 'progress', title: 'Preparing download', body: `${title} · ${t.label}${t.detail ? ` (${t.detail})` : ''}`, image, progress: t.fraction ?? undefined, ephemeral: true })
   }
   // the fetch may already be running (a preview started it)
   show(useTasks.getState()[key])
@@ -291,7 +284,7 @@ export async function likeSelection(sel: SelInfo | null): Promise<void> {
   const t = sel?.track
   if (!t) {
     sfx.play('error', { volume: 0.4 })
-    notify({ kind: 'info', title: 'Select a track to like it' })
+    notify({ kind: 'info', title: 'Select a track to like it', ephemeral: true })
     return
   }
   const liked = !t.liked

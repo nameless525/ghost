@@ -14,6 +14,7 @@
 //    pointing at *.vgmtreasurechest.com (any HTTP client, supports Range).
 
 import type { CheerioAPI } from 'cheerio'
+import { cleanCredits } from './credits'
 import { childElements, findAll, findFirst, fragmentText, linkWithHref, loadHtml, tag, textOf, type DomNode } from './html'
 import type { AlbumKind, AudioFormat } from '../../shared/types'
 import { NetError } from '../net/errors'
@@ -482,7 +483,7 @@ export function parseAlbumPage(html: string, slug: string): ProviderAlbum {
   for (const f of Object.keys(totalSizes) as AudioFormat[]) if (!formats.includes(f)) formats.push(f)
 
   const idm = /\/cp\/add_album\/(\d+)/.exec(html)
-  const composers = infoComposers.length ? infoComposers : extractComposers(description)
+  const composers = cleanCredits(infoComposers.length ? infoComposers : extractComposers(description))
   const titleOriginal = altTitles.find((t) => NON_LATIN.test(t)) ?? null
   return {
     provider: KH_ID,
