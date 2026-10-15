@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { broadcast, ipcStats, registerIpc } from './ipc'
@@ -25,6 +26,32 @@ watchChildren()
 
 let handle: ServicesHandle | null = null
 
+// A stray exception must not put up Electron's blocking "JavaScript error" dialog: log it and say
+// so in the app (once per message a minute). The app keeps running, as it did behind that dialog.
+const reported = new Map<string, number>()
+function reportMainError(kind: string, e: unknown): void {
+  const err = e instanceof Error ? e : new Error(String(e))
+  console.error(`[main] ${kind}:`, err)
+  const now = Date.now()
+  if ((reported.get(err.message) ?? 0) > now - 60_000) return
+  if (reported.size > 50) reported.clear()
+  reported.set(err.message, now)
+  if (!app.isReady()) return
+  broadcast('notify', { id: `main-error-${now}`, kind: 'error', title: 'Something went wrong', body: err.message })
+}
+process.on('uncaughtException', (e) => reportMainError('uncaught exception', e))
+// Rejections only get logged (Node's default): many are harmless (an aborted request).
+process.on('unhandledRejection', (e) => console.error('[main] unhandled rejection:', e))
+
+/**
+ * The app icon for unpackaged runs (packaged builds carry their own). Looked up next to the app
+ * and next to the build output, since a build can be run from any folder; null when there is none,
+ * so a missing icon never stops the app.
+ */
+const devIcon: string | null = app.isPackaged
+  ? null
+  : ([join(app.getAppPath(), 'resources/icon.png'), join(here, '../../resources/icon.png')].find((p) => existsSync(p)) ?? null)
+
 /** Where the renderer lives: the dev server, or the bundled index.html. */
 const rendererUrl = (): string => process.env.ELECTRON_RENDERER_URL || pathToFileURL(join(here, '../renderer/index.html')).href
 
@@ -38,7 +65,7 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#0f0d17',
     title: 'GHOST',
-    icon: app.isPackaged ? undefined : join(app.getAppPath(), 'resources/icon.png'),
+    icon: devIcon ?? undefined,
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 16, y: 14 },
     titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#e8e4f8', height: 40 },
@@ -103,7 +130,15 @@ app.whenReady().then(async () => {
   // After the window (its page can't request ghost-art:// before this task ends).
   handleArtProtocol()
   // Dev only (~20 ms to decode the icon): after the window, off its critical path.
-  if (!app.isPackaged && process.platform === 'darwin') setImmediate(() => app.dock?.setIcon(join(app.getAppPath(), 'resources/icon.png')))
+  if (devIcon && process.platform === 'darwin') {
+    setImmediate(() => {
+      try {
+        app.dock?.setIcon(devIcon)
+      } catch (e) {
+        console.warn('[main] dev dock icon:', (e as Error).message)
+      }
+    })
+  }
   setTimeout(() => void migrateLegacyCache(), 10_000).unref()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
