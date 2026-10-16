@@ -17,9 +17,9 @@
 import type { AlbumKind, AudioFormat, ExternalAlbumHit } from '../../shared/types'
 import { baseTitle } from '../catalog/normalize'
 import { NetError } from '../net/errors'
-import { GHOST_USER_AGENT } from '../net/http'
+import { GHOST_USER_AGENT, type HttpClient } from '../net/http'
 import { HostLimiter } from '../net/limiter'
-import { cleanTrackTitle, combineScore, durationFit, KNOWN_LABELS, looksNumbered, penaltyHits, titleSimilarity, tokens } from './match'
+import { cleanTrackTitle, combineScore, durationFit, KNOWN_LABELS, looksNumbered, otherCut, penaltyHits, titleSimilarity, tokens } from './match'
 import type {
   AlbumHit,
   CanonicalTrack,
@@ -40,6 +40,13 @@ export const IA_ID = 'archive'
 export const IA_BASE = 'https://archive.org'
 const CACHE_TTL_MS = 6 * 3600_000
 const CACHE_MAX = 64
+/**
+ * A fallback match below this isn't offered: it would play in place of the track and stop the search
+ * at later providers. An exact title passes even 15 s or more off (a game rip's looped track against
+ * the CD's), but not with a not-the-original marker ("remix", "piano") unless the length matches,
+ * nor does a title missing half its words without a close length.
+ */
+export const IA_MIN_CONFIDENCE = 0.5
 
 /** Collections that hold game soundtracks. */
 export const IA_GAME_COLLECTIONS = ['folksoundomy_gamesoundtracks', 'hifidelity_soundtracks']
@@ -182,8 +189,8 @@ export function searchUrl(q: string, rows = 30): string {
   return `${IA_BASE}/advancedsearch.php?${p.toString()}`
 }
 
-/** An item whose format list includes one of these has a playable audio file (Opus-only and archive-only items don't). */
-const PLAYABLE_ITEM_FORMATS = /flac|mp3|ogg vorbis|wave|apple lossless|^aac$|^m4a$|^mpeg-?4 audio$|^advanced audio coding$/i
+/** An item whose format list includes one of these has a playable audio file (archive-only items don't). */
+const PLAYABLE_ITEM_FORMATS = /flac|mp3|ogg vorbis|wave|apple lossless|^opus$|^aac$|^m4a$|^mpeg-?4 audio$|^advanced audio coding$/i
 
 export function hasPlayableAudio(formats: string | string[] | undefined): boolean {
   return arr(formats).some((f) => PLAYABLE_ITEM_FORMATS.test(f) && !NOT_AUDIO_LABEL.test(f.toLowerCase()))
@@ -246,6 +253,12 @@ function stem(name: string): string {
 function prefixTrackNo(name: string): number | null {
   const p = DISC_TRACK_PREFIX.exec(stem(name))
   return p ? Number(p[2]) : null
+}
+
+/** "05 Title" / "05. Title" / "05 - Title": a leading track number in a file name. */
+function leadingNo(name: string): number | null {
+  const m = /^(\d{1,3})(?:\s*[.)_-]\s*|\s+)\S/.exec(stem(name))
+  return m ? Number(m[1]) : null
 }
 
 /** A folder that only names a format / quality ("FLAC", "MP3 320kbps", "24bit-96kHz", "64kbps"). */
@@ -352,36 +365,42 @@ export function parseMetadata(identifier: string, json: IaMetadata): ProviderAlb
       f,
       disc: discOf(f),
       no: trackNo(f.track) ?? fmts.map((x) => trackNo(x.track)).find((x) => x != null) ?? prefixTrackNo(f.name),
+      // Untagged, in a set whose file names are numbered: the name's number.
+      fileNo: numbered ? leadingNo(f.name) : null,
       title: t ? t.trim() : cleanTrackTitle(stem(f.name).replace(/_/g, ' '), { names, numbered }),
       durationMs,
       fmts,
       composer: fmts.map((x) => x.artist ?? x.creator).find(Boolean) ?? null
     }
   })
-  rows.sort((a, b) => a.disc - b.disc || (a.no ?? 1e6) - (b.no ?? 1e6) || natural.compare(a.f.name, b.f.name))
-  // Tag numbers that repeat within a disc (several discs tagged without disc numbers, a set of
-  // alternate takes) can't be shown as-is: number those discs by position instead. When the tags
-  // name different totals ("3/28", "3/37": discs merged without disc tags) their order means
-  // nothing either, so such a disc is ordered by file name.
+  rows.sort((a, b) => a.disc - b.disc || (a.no ?? a.fileNo ?? 1e6) - (b.no ?? b.fileNo ?? 1e6) || natural.compare(a.f.name, b.f.name))
+  // Numbers that repeat within a disc (several discs tagged without disc numbers, a set of
+  // alternate takes, a tag that clashes with another file's name) can't be shown as-is: number
+  // those discs by position instead. When the tags name different totals ("3/28", "3/37": discs
+  // merged without disc tags) their order means nothing either, so such a disc is ordered by file name.
   const seenNo = new Map<number, Set<number>>()
   const totals = new Map<number, Set<string>>()
   const renumber = new Set<number>()
   for (const r of rows) {
-    if (r.no == null) continue
+    const no = r.no ?? r.fileNo
+    if (no == null) continue
     const s = seenNo.get(r.disc) ?? new Set<number>()
-    if (s.has(r.no)) renumber.add(r.disc)
-    s.add(r.no)
+    if (s.has(no)) renumber.add(r.disc)
+    s.add(no)
     seenNo.set(r.disc, s)
     const total = /(?:\/|\bof\s+)(\d+)/.exec(r.f.track ?? '')?.[1]
     if (total) totals.set(r.disc, (totals.get(r.disc) ?? new Set()).add(total))
   }
   const byName = new Set([...renumber].filter((d) => (totals.get(d)?.size ?? 0) > 1))
-  if (byName.size) rows.sort((a, b) => a.disc - b.disc || (byName.has(a.disc) ? 0 : (a.no ?? 1e6) - (b.no ?? 1e6)) || natural.compare(a.f.name, b.f.name))
+  if (byName.size) rows.sort((a, b) => a.disc - b.disc || (byName.has(a.disc) ? 0 : (a.no ?? a.fileNo ?? 1e6) - (b.no ?? b.fileNo ?? 1e6)) || natural.compare(a.f.name, b.f.name))
   const perDisc = new Map<number, number>()
+  const top = new Map<number, number>()
   const tracks: ProviderTrack[] = rows.map((r) => {
     const n = (perDisc.get(r.disc) ?? 0) + 1
     perDisc.set(r.disc, n)
-    const number = renumber.has(r.disc) ? n : (r.no ?? n)
+    // Files without a number sort last and continue after the disc's highest one: none repeats.
+    const number = renumber.has(r.disc) ? n : (r.no ?? r.fileNo ?? (top.get(r.disc) ?? 0) + 1)
+    top.set(r.disc, Math.max(top.get(r.disc) ?? 0, number))
     const streams = r.fmts.map((x) => streamOf(identifier, x, iaAudioFormat(x.format, x.name)!, r.durationMs))
     return {
       disc: r.disc,
@@ -788,7 +807,10 @@ export function parseIndexPage(json: IaIndexResponse, c: IaIndexCollection, page
 // Provider
 
 export interface ArchiveProviderOptions {
+  /** Fetches the JSON APIs directly (tests), instead of in archive.org's turn with its covers (`http`). */
   fetch?: typeof fetch
+  /** The app's scheduler: archive.org's API calls and its cover art share one per-host limit. */
+  http?: Pick<HttpClient, 'fetchBytes'>
   now?: () => number
   log?: (msg: string) => void
   /** Collections crawled as catalog sections (default IA_INDEX_COLLECTIONS; [] = no index). */
@@ -810,7 +832,9 @@ export class ArchiveProvider implements IndexProvider {
   readonly findTrackMode = 'fallback' as const
 
   private readonly fetchImpl: typeof fetch
+  private readonly http: Pick<HttpClient, 'fetchBytes'> | null
   private readonly now: () => number
+  /** Interactive lookups when fetching directly (through `http`, archive.org's own limit applies). */
   private readonly limiter = new HostLimiter({ concurrency: 2, spacingMs: 250 })
   /** Background index crawl: one request at a time, ≥1 s apart, separate from interactive lookups. */
   private readonly indexLimiter: HostLimiter
@@ -819,6 +843,7 @@ export class ArchiveProvider implements IndexProvider {
 
   constructor(opts: ArchiveProviderOptions = {}) {
     this.fetchImpl = opts.fetch ?? fetch
+    this.http = opts.fetch ? null : (opts.http ?? null)
     this.now = opts.now ?? Date.now
     this.collections = opts.indexCollections ?? IA_INDEX_COLLECTIONS
     this.indexLimiter = new HostLimiter({ concurrency: 1, spacingMs: opts.indexSpacingMs ?? 1000 })
@@ -833,35 +858,55 @@ export class ArchiveProvider implements IndexProvider {
       this.cache.set(url, c)
       return c.value as Promise<T>
     }
-    const limiter = how.limiter ?? this.limiter
-    const value = limiter.schedule(async () => {
-      const timeout = AbortSignal.timeout(how.timeoutMs ?? 20_000)
-      let res: Response
-      try {
-        res = await this.fetchImpl(url, { headers: { 'User-Agent': GHOST_USER_AGENT, Accept: 'application/json' }, signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout })
-      } catch (e) {
-        if (opts.signal?.aborted) throw new NetError('aborted', 'request aborted', { url })
-        if (timeout.aborted) throw new NetError('timeout', `timed out fetching ${url}`, { url })
-        throw new NetError('network', `network error fetching ${url}: ${(e as Error).message}`, { url, cause: e })
-      }
-      if (res.status === 404) throw new NetError('not_found', `not found: ${url}`, { status: 404, url })
-      if (res.status === 429 || res.status === 503) {
-        this.limiter.pause(10_000)
-        this.indexLimiter.pause(60_000)
-      }
-      if (!res.ok) throw new NetError('http', `HTTP ${res.status} from ${url}`, { status: res.status, url })
-      try {
-        return (await res.json()) as T
-      } catch (e) {
-        throw new NetError('parse', `Internet Archive sent something that isn't JSON (${url})`, { url, cause: e })
-      }
-    }, opts.priority ?? 1, opts.signal)
+    const run = () => (this.http ? this.viaHttp<T>(this.http, url, opts, how) : this.viaFetch<T>(url, opts, how))
+    // Through `http` the host's turn paces interactive calls; the index crawl keeps its slower lane.
+    const limiter = how.limiter ?? (this.http ? null : this.limiter)
+    const value = limiter ? limiter.schedule(run, opts.priority ?? 1, opts.signal) : run()
     if (!useCache) return value
     value.catch(() => this.cache.delete(url))
     this.cache.set(url, { at: this.now(), value })
     // Parsed metadata of a big item can run to megabytes: keep a modest number.
     if (this.cache.size > CACHE_MAX) this.cache.delete(this.cache.keys().next().value!)
     return value
+  }
+
+  private async viaFetch<T>(url: string, opts: ProviderCallOptions, how: FetchHow): Promise<T> {
+    const timeout = AbortSignal.timeout(how.timeoutMs ?? 20_000)
+    let res: Response
+    try {
+      res = await this.fetchImpl(url, { headers: { 'User-Agent': GHOST_USER_AGENT, Accept: 'application/json' }, signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout })
+    } catch (e) {
+      if (opts.signal?.aborted) throw new NetError('aborted', 'request aborted', { url })
+      if (timeout.aborted) throw new NetError('timeout', `timed out fetching ${url}`, { url })
+      throw new NetError('network', `network error fetching ${url}: ${(e as Error).message}`, { url, cause: e })
+    }
+    if (res.status === 404) throw new NetError('not_found', `not found: ${url}`, { status: 404, url })
+    if (res.status === 429 || res.status === 503) {
+      this.limiter.pause(10_000)
+      this.indexLimiter.pause(60_000)
+    }
+    if (!res.ok) throw new NetError('http', `HTTP ${res.status} from ${url}`, { status: res.status, url })
+    try {
+      return (await res.json()) as T
+    } catch (e) {
+      throw new NetError('parse', `Internet Archive sent something that isn't JSON (${url})`, { url, cause: e })
+    }
+  }
+
+  private async viaHttp<T>(http: Pick<HttpClient, 'fetchBytes'>, url: string, opts: ProviderCallOptions, how: FetchHow): Promise<T> {
+    let bytes: Buffer
+    try {
+      bytes = (await http.fetchBytes(url, { headers: { Accept: 'application/json' }, priority: opts.priority ?? 1, signal: opts.signal, timeoutMs: how.timeoutMs ?? 20_000, retries: 0 })).bytes
+    } catch (e) {
+      // (the host's own limiter already waits out a 429)
+      if (e instanceof NetError && (e.status === 429 || e.status === 503)) this.indexLimiter.pause(60_000)
+      throw e
+    }
+    try {
+      return JSON.parse(bytes.toString('utf8')) as T
+    } catch (e) {
+      throw new NetError('parse', `Internet Archive sent something that isn't JSON (${url})`, { url, cause: e })
+    }
   }
 
   /** A full first read of the index (for the setup time estimate). */
@@ -914,10 +959,11 @@ export class ArchiveProvider implements IndexProvider {
       }
       for (const tr of album.tracks) {
         const title = titleSimilarity(t.title, tr.title, { context: [game, album.title, t.albumTitle] })
-        if (title < 0.5) continue
+        if (title < 0.5 || otherCut(t.durationMs, tr.durationMs)) continue
         const duration = durationFit(t.durationMs, tr.durationMs)
         const lossless = tr.files.some((f) => LOSSLESS_FORMATS.has(f.format))
         const confidence = combineScore({ title, duration, trust: 0.5, quality: lossless ? 1 : 0.6, penalties: penaltyHits(`${tr.title} ${album.title}`, [t.title, t.albumTitle, t.gameName]) })
+        if (confidence < IA_MIN_CONFIDENCE) continue
         out.push({ provider: IA_ID, locator: tr.locator, title: tr.title, durationMs: tr.durationMs, confidence })
       }
     }

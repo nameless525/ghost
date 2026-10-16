@@ -12,7 +12,7 @@
 use std::ffi::{c_char, c_int, c_long, c_void, CString};
 
 use crate::source::{AudioSource, LengthHint, LoopInfo, SourceError, SourceMeta};
-use crate::{cstr_opt, extension_of, file_name_of, ms_to_frames, nezplug, OpenOptions, DEFAULT_LENGTH_MS};
+use crate::{cstr_opt, extension_of, ms_to_frames, nezplug, OpenOptions, DEFAULT_LENGTH_MS};
 
 #[repr(C)]
 struct MusicEmu {
@@ -59,6 +59,7 @@ extern "C" {
     fn gme_voice_name(emu: *const MusicEmu, i: c_int) -> *const c_char;
     fn gme_mute_voices(emu: *mut MusicEmu, muting_mask: c_int);
     fn gme_type_extension(t: GmeType) -> *const c_char;
+    fn gme_ignore_silence(emu: *mut MusicEmu, ignore: c_int);
 }
 
 fn check(err: GmeErr, what: &str) -> Result<(), SourceError> {
@@ -143,6 +144,19 @@ fn check_vgm_clocks(data: &[u8]) -> Result<(), SourceError> {
     Ok(())
 }
 
+/// Whether libgme's info gives `track` its own length or loop (a playlist line, NSFE / SPC tags):
+/// the same fields [`GmeSource::open`] times the track by.
+fn has_timing(emu: *mut MusicEmu, track: c_int) -> bool {
+    let mut info: *mut GmeInfo = std::ptr::null_mut();
+    if !unsafe { gme_track_info(emu, &mut info, track) }.is_null() || info.is_null() {
+        return false;
+    }
+    let i = unsafe { &*info };
+    let timed = (i.loop_length > 0 && i.intro_length >= 0) || i.length > 0;
+    unsafe { gme_free_info(info) };
+    timed
+}
+
 /// Furthest frame `gme_seek_samples` can reach (`2 * frame` must fit a C int).
 const MAX_SEEK_FRAME: u64 = (c_int::MAX / 2) as u64;
 
@@ -222,12 +236,20 @@ impl GmeSource {
         // A NEZPlug playlist line for exactly this track: load just that line, so the emulator's
         // track 0 is our sub-song and its info carries the playlist's name and timing.
         unsafe { gme_set_autoload_playback_limit(emu, 0) };
-        let file = file_name_of(name);
         let zero_based_decimal = ty_ext == "kss";
+        // libgme skips up to 2 s of leading silence and ends a track after 6 s of it. A track the
+        // engine times (VGM header, playlist line, tags) is timed from its true start and may hold
+        // long quiet passages, so it plays as written; an untimed one keeps libgme's detection,
+        // the only end a short jingle has.
+        let vgm = vgm_timing(&data);
+        let ignore_silence = |track: c_int| unsafe { gme_ignore_silence(emu, (vgm.is_some() || has_timing(emu, track)) as c_int) };
         let mut started = false;
-        if let Some(m3u) = nezplug::playlist_for(&opts.playlists, file, subsong, zero_based_decimal) {
-            let ok = unsafe { gme_load_m3u_data(emu, m3u.as_ptr() as *const c_void, m3u.len() as c_long) }.is_null();
-            if ok && unsafe { gme_track_count(emu) } >= 1 && unsafe { gme_start_track(emu, 0) }.is_null() {
+        if let Some(m3u) = nezplug::playlist_for(&opts.playlists, name, subsong, zero_based_decimal) {
+            let ok = unsafe { gme_load_m3u_data(emu, m3u.as_ptr() as *const c_void, m3u.len() as c_long) }.is_null() && unsafe { gme_track_count(emu) } >= 1;
+            if ok {
+                ignore_silence(0);
+            }
+            if ok && unsafe { gme_start_track(emu, 0) }.is_null() {
                 src.track = 0;
                 started = true;
             } else {
@@ -237,6 +259,7 @@ impl GmeSource {
             }
         }
         if !started {
+            ignore_silence(src.track);
             check(unsafe { gme_start_track(emu, src.track) }, "libgme start")?;
         }
 
@@ -263,7 +286,7 @@ impl GmeSource {
         };
         let ms = |v: c_int| ms_to_frames(v.max(0) as u64, rate);
 
-        if let Some((total, looped)) = vgm_timing(&data) {
+        if let Some((total, looped)) = vgm {
             match looped {
                 Some(l) => src.loop_info = Some(LoopInfo { start: total - l, end: total }),
                 None => src.hint = Some(LengthHint { length: total, fade: Some(0) }),
@@ -359,8 +382,8 @@ impl AudioSource for GmeSource {
         self.mask = mask;
         self.apply_mask();
         if self.pos == 0 && !self.ended {
-            // start_track already rendered the first block (silence skipping); render it again
-            // muted, so a track that starts muted is muted from its first sample.
+            // start_track may already have rendered the first block (skipping leading silence);
+            // render it again muted, so a track that starts muted is muted from its first sample.
             let _ = unsafe { gme_start_track(self.emu, self.track) };
             self.apply_mask();
         }

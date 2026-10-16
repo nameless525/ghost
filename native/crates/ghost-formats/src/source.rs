@@ -72,6 +72,13 @@ impl std::error::Error for SourceError {}
 pub trait AudioSource: Send {
     fn sample_rate(&self) -> u32;
     fn channels(&self) -> usize;
+    /// Speaker positions of the channels as a WAVE (`WAVEFORMATEXTENSIBLE`) channel mask: one bit
+    /// per channel, channels in ascending bit order (bit 0 front left, 1 front right, 2 front
+    /// centre, 3 LFE, 4/5 back left/right, 9/10 side left/right, ...). `None` when unknown: the
+    /// downmix then assumes the usual layout for the channel count.
+    fn channel_mask(&self) -> Option<u32> {
+        None
+    }
     /// Fill `out` (interleaved, `channels()` per frame) with up to `out.len() / channels()` frames.
     /// Returns frames written; `Ok(0)` means end of stream.
     fn read(&mut self, out: &mut [f32]) -> Result<usize, SourceError>;

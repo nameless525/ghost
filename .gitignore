@@ -21,3 +21,6 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+
+# Private review notes: never committed
+docs/CODE_REVIEW*.md

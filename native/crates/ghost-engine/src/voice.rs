@@ -42,6 +42,9 @@ pub struct VoiceShared {
     pub end_pos: AtomicU64,
     /// Estimated track length in device frames (from the container), or u64::MAX.
     pub est_end: AtomicU64,
+    /// The track's length follows the loop settings (loop points or a play-length hint), so
+    /// `est_end` changes with them. Set by the worker once the source is open.
+    pub loop_bound: AtomicBool,
     /// Track position just past the last frame the worker pushed into the ring (Release, after
     /// `origin`; 0 until the first push).
     pub write_pos: AtomicU64,
@@ -82,6 +85,7 @@ impl VoiceShared {
             origin_set: AtomicBool::new(false),
             end_pos: AtomicU64::new(u64::MAX),
             est_end: AtomicU64::new(u64::MAX),
+            loop_bound: AtomicBool::new(false),
             write_pos: AtomicU64::new(0),
             play_state: AtomicU8::new(PLAY_WAITING),
             stall_pos: AtomicU64::new(0),
@@ -92,6 +96,11 @@ impl VoiceShared {
 
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Release);
+        self.wake();
+    }
+
+    /// Wake the worker if it waits for ring space (it then sees cancellation or new settings).
+    pub fn wake(&self) {
         if let Some(t) = self.thread.lock().as_ref() {
             t.unpark();
         }
@@ -212,10 +221,18 @@ impl Voice {
     }
 
     /// Frames left until the end of the track (exact once the worker hit EOF, else estimated).
+    /// Before the start, counted from where it will start.
     pub fn remaining(&self) -> Option<u64> {
         let end = self.shared.end_pos.load(Ordering::Acquire);
-        let end = if end != u64::MAX { end } else { self.shared.est_end.load(Ordering::Relaxed) };
-        (end != u64::MAX).then(|| end.saturating_sub(self.pos))
+        let end = if end != u64::MAX { end } else { self.shared.est_end.load(Ordering::Acquire) };
+        let pos = if self.started { self.pos } else { self.shared.origin.load(Ordering::Acquire) };
+        (end != u64::MAX).then(|| end.saturating_sub(pos))
+    }
+
+    /// Enough is buffered to start: the prefill, or everything there will ever be.
+    #[inline]
+    pub fn can_start(&self, prefill: usize, offline: bool) -> bool {
+        self.available() >= prefill || self.eof() || (offline && self.failed())
     }
 
     /// Try to start playback once enough audio is buffered. Returns true when started now.
@@ -223,9 +240,7 @@ impl Voice {
         if self.started {
             return false;
         }
-        let avail = self.available();
-        let done = self.eof() || (offline && self.failed());
-        if avail >= prefill || done {
+        if self.can_start(prefill, offline) {
             // The worker publishes `origin` before pushing its first frame.
             self.pos = if self.shared.origin_set.load(Ordering::Acquire) { self.shared.origin.load(Ordering::Acquire) } else { 0 };
             self.started = true;

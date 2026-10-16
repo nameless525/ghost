@@ -4,7 +4,7 @@
 import { ListMusic, ListPlus, Play, Sparkles } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as RKeyboardEvent } from 'react'
 import type { Playlist } from '@shared/types'
-import { initPlaylistCache, usePlaylistCache } from '../../lib/track-actions'
+import { initPlaylistCache, usePlaylistCache, watchPlaylistCache } from '../../lib/track-actions'
 import { stagger, tween } from '../../motion/tween'
 import { useKeybinding } from '../../shell/keys'
 import { sfx } from '../../sound'
@@ -21,7 +21,24 @@ import { Mosaic } from './Mosaic'
 import { NewPlaylistDialog, type PlaylistKind } from './NewPlaylistDialog'
 import { PlaylistDetailView } from './PlaylistDetail'
 
-type SortKey = 'recent' | 'name' | 'tracks' | 'length'
+export type SortKey = 'recent' | 'name' | 'tracks' | 'length'
+
+/** The Filter field shows from this many playlists on. */
+const FILTER_FROM = 6
+
+/**
+ * The cards in grid order. Without the field (under FILTER_FROM playlists) nothing is filtered:
+ * deleting down to five while filtering hid playlists with no way left to clear the filter.
+ */
+export function shownPlaylists(playlists: Playlist[], filter: string, sort: SortKey): Playlist[] {
+  const f = playlists.length >= FILTER_FROM ? filter.trim().toLowerCase() : ''
+  const list = f ? playlists.filter((p) => p.name.toLowerCase().includes(f) || p.description?.toLowerCase().includes(f) || p.query?.toLowerCase().includes(f)) : [...playlists]
+  if (sort === 'name') list.sort((a, b) => a.name.localeCompare(b.name))
+  else if (sort === 'tracks') list.sort((a, b) => b.trackCount - a.trackCount)
+  else if (sort === 'length') list.sort((a, b) => b.durationMs - a.durationMs)
+  else list.sort((a, b) => b.updatedAt - a.updatedAt)
+  return list
+}
 
 export interface PlaylistsTabProps {
   /** Tab visible and overlay open. */
@@ -48,16 +65,13 @@ export function PlaylistsTab({ active, enterSeq }: PlaylistsTabProps) {
   const landing = useRef<{ id: string; from: DOMRect } | null>(null)
 
   useEffect(() => initPlaylistCache(), [])
+  // the cards' counts follow likes, downloads and catalog changes while they show
+  useEffect(() => (active ? watchPlaylistCache() : undefined), [active])
 
-  const shown = useMemo(() => {
-    const f = filter.trim().toLowerCase()
-    const list = f ? playlists.filter((p) => p.name.toLowerCase().includes(f) || p.description?.toLowerCase().includes(f) || p.query?.toLowerCase().includes(f)) : [...playlists]
-    if (sort === 'name') list.sort((a, b) => a.name.localeCompare(b.name))
-    else if (sort === 'tracks') list.sort((a, b) => b.trackCount - a.trackCount)
-    else if (sort === 'length') list.sort((a, b) => b.durationMs - a.durationMs)
-    else list.sort((a, b) => b.updatedAt - a.updatedAt)
-    return list
-  }, [playlists, filter, sort])
+  const filterable = playlists.length >= FILTER_FROM
+  // the field went away (down to five): so does its filter, rather than coming back with it
+  if (!filterable && filter) setFilter('')
+  const shown = useMemo(() => shownPlaylists(playlists, filter, sort), [playlists, filter, sort])
 
   const entries = useMemo(() => shown.map((p) => ({ key: p.id, data: p })), [shown])
   const cards = useAnimatedList(grid, entries, { enter: 'pop', exitMs: 280 })
@@ -140,7 +154,7 @@ export function PlaylistsTab({ active, enterSeq }: PlaylistsTabProps) {
             <span className="lib-narrow-hide">Smart playlist</span>
           </Button>
           <div className="lib-toolbar__spacer" />
-          {playlists.length > 5 && <SearchInput value={filter} onChange={setFilter} placeholder="Filter" className="lib-toolbar__search" />}
+          {filterable && <SearchInput value={filter} onChange={setFilter} placeholder="Filter" className="lib-toolbar__search" />}
           {playlists.length > 1 && (
             <Select<SortKey>
               value={sort}

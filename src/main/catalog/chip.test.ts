@@ -7,7 +7,7 @@ import type { ArchiveListing, EngineSource } from '../engine/types'
 import { NetError } from '../net/errors'
 import type { HttpClient, PageResult } from '../net/http'
 import { ProviderRegistry } from '../providers'
-import { ChipProvider, joshwPageSets, joshwSource, parseVgmripsListing, type ChipSet } from '../providers/chip'
+import { CHIP_ID, ChipProvider, JOSHW_SOURCES, joshwPageSets, joshwSource, parseVgmripsListing, type ChipSet, type JoshwSource } from '../providers/chip'
 import { ChipIndexer } from './chip'
 import type { CatalogService } from './index'
 import { QueryEngine } from './query'
@@ -257,5 +257,115 @@ describe('Chip index + album detail through the catalog service', () => {
     // a second open is served from the DB
     await svc.album(albumId)
     expect(inspected.length).toBe(1)
+  })
+})
+
+describe('the joshw.info opt-in (Settings → Sources) takes effect while running', () => {
+  /** Listings answered without a network: every joshw host has one letter page, vgmrips one page. */
+  class FakeChip extends ChipProvider {
+    requests: string[] = []
+    /** Holds this host's listing until `release` resolves. */
+    hold: { host: string; reached: () => void; release: Promise<void> } | null = null
+    constructor() {
+      super({ http: fakeHttp({}) })
+    }
+    async joshwPages(src: JoshwSource) {
+      this.requests.push(src.host)
+      if (this.hold?.host === src.host) {
+        this.hold.reached()
+        await this.hold.release
+      }
+      return [{ path: '/a/', group: null }]
+    }
+    async fetchJoshwPage(src: JoshwSource, page: { path: string; group: string | null }) {
+      this.requests.push(`${src.host}${page.path}`)
+      return { sets: [], skipped: 0 }
+    }
+    async fetchVgmripsPage(page: number) {
+      this.requests.push(`vgmrips ${page}`)
+      return { sets: [], skipped: 0, totalPages: 1 }
+    }
+  }
+  const allJoshw = JOSHW_SOURCES.flatMap((s) => [s.host, `${s.host}/a/`])
+  const joshwRequests = (chip: FakeChip) => chip.requests.filter((r) => r.includes('joshw'))
+
+  function service(db: ReturnType<typeof memoryDb>, chip: FakeChip, crawlJoshw: boolean) {
+    const base = defaultSettings('/tmp/ghost-dl')
+    let settings: Settings = { ...base, sources: { ...base.sources, crawlJoshw } }
+    const listeners = new Set<() => void>()
+    const svc = createCatalogService(
+      {
+        db,
+        broadcast: (() => {}) as never,
+        getSettings: () => settings,
+        onSettingsChanged: (fn) => {
+          listeners.add(fn)
+          return () => listeners.delete(fn)
+        }
+      },
+      { registry: new ProviderRegistry().register(chip), startDelayMs: 0, disableEnrichment: true, disableLocalScan: true, chip: { pageDelayMs: 0 }, log: () => {} }
+    )
+    const setJoshw = (on: boolean) => {
+      settings = { ...settings, sources: { ...settings.sources, crawlJoshw: on } }
+      for (const fn of listeners) fn()
+    }
+    /** Until the chiptune index has nothing running. */
+    const idle = () => until(async () => !(await svc.sources()).find((x) => x.id === CHIP_ID)!.indexing)
+    return { svc, setJoshw, idle }
+  }
+
+  it('turning it on lists joshw.info right away, even just after a vgmrips-only pass', async () => {
+    const chip = new FakeChip()
+    const { svc, setJoshw, idle } = service(memoryDb(), chip, false)
+    svc.start()
+    try {
+      await until(() => chip.requests.includes('vgmrips 0'))
+      await idle()
+      expect(chip.requests).toEqual(['vgmrips 0'])
+      setJoshw(true)
+      await until(() => chip.requests.includes('kss.joshw.info/a/'))
+      await idle()
+      expect(joshwRequests(chip)).toEqual(allJoshw)
+    } finally {
+      svc.stop()
+    }
+  })
+
+  it('a restart with it newly on lists joshw.info, though vgmrips is fresh', async () => {
+    const db = memoryDb()
+    const chip = new FakeChip()
+    const before = service(db, chip, false)
+    before.svc.start()
+    await until(() => chip.requests.includes('vgmrips 0'))
+    await before.idle()
+    before.svc.stop()
+
+    const after = service(db, chip, true)
+    after.svc.start()
+    try {
+      await until(() => chip.requests.includes('kss.joshw.info/a/'))
+      await after.idle()
+      expect(joshwRequests(chip)).toEqual(allJoshw)
+    } finally {
+      after.svc.stop()
+    }
+  })
+
+  it('turning it off mid-listing stops joshw.info requests; vgmrips is still read', async () => {
+    const chip = new FakeChip()
+    let release!: () => void
+    const reached = new Promise<void>((r) => (chip.hold = { host: 'nsf.joshw.info', reached: r, release: new Promise<void>((x) => (release = x)) }))
+    const { svc, setJoshw, idle } = service(memoryDb(), chip, true)
+    svc.start()
+    try {
+      await reached
+      setJoshw(false)
+      release() // the listing in flight still arrives
+      await until(() => chip.requests.includes('vgmrips 0'))
+      await idle()
+      expect(chip.requests).toEqual(['nsf.joshw.info', 'vgmrips 0'])
+    } finally {
+      svc.stop()
+    }
   })
 })

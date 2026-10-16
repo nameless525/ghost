@@ -36,6 +36,9 @@ export class PlaylistNotFoundError extends Error {
 }
 
 export class Playlists implements PlaylistsAPI {
+  /** Per manual playlist, the item uids the last `get()` left out because their track left the catalog. */
+  private readonly hidden = new Map<ID, Set<string>>()
+
   constructor(
     private readonly lib: Library,
     private readonly catalog: LibraryCatalog,
@@ -54,6 +57,15 @@ export class Playlists implements PlaylistsAPI {
 
   private items(id: ID): ItemRow[] {
     return this.db.prepare('SELECT uid, track_id, position, added_at FROM playlist_items WHERE playlist_id = ? ORDER BY position ASC, rowid ASC').all(id) as unknown as ItemRow[]
+  }
+
+  /**
+   * The stored rows `get()` showed, in order. Positions from the UI (moveItem, addTracks) index
+   * into that list, so they must skip the rows it hid.
+   */
+  private shown(id: ID, rows: ItemRow[]): ItemRow[] {
+    const hidden = this.hidden.get(id)
+    return hidden ? rows.filter((it) => !hidden.has(it.uid)) : rows
   }
 
   private touch(id: ID): void {
@@ -131,10 +143,14 @@ export class Playlists implements PlaylistsAPI {
     const rows = this.items(id)
     const tracks = new Map((await this.lib.fetchTracks(rows.map((i) => i.track_id))).map((t) => [t.id, t]))
     const items: PlaylistItem[] = []
+    const hidden = new Set<string>()
     for (const it of rows) {
       const track = tracks.get(it.track_id)
       if (track) items.push({ uid: it.uid, track, addedAt: it.added_at })
+      else hidden.add(it.uid)
     }
+    if (hidden.size) this.hidden.set(id, hidden)
+    else this.hidden.delete(id)
     return { playlist: this.meta(r, items.map((i) => i.track)), items }
   }
 
@@ -184,22 +200,30 @@ export class Playlists implements PlaylistsAPI {
       this.db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(id)
       this.db.prepare('DELETE FROM playlists WHERE id = ?').run(id)
     })
+    this.hidden.delete(id)
     this.changed(id)
   }
 
   async duplicate(id: ID): Promise<Playlist> {
     const r = this.row(id)
     const name = `${r.name} (copy)`
-    if (r.kind === 'smart') return this.create(name, { query: r.query ?? undefined, description: r.description ?? undefined })
-    return this.create(name, { trackIds: this.items(id).map((i) => i.track_id), description: r.description ?? undefined })
+    // A copy is for editing: a smart playlist's holds what its query finds now, as a manual (hand-sortable) list.
+    const trackIds = r.kind === 'smart' ? await this.smartIds(r.query) : this.items(id).map((i) => i.track_id)
+    return this.create(name, { trackIds, description: r.description ?? undefined })
   }
 
+  /** `position`: an index into `get()`'s items (inserted before the item shown there); default the end. */
   async addTracks(id: ID, trackIds: ID[], position?: number): Promise<void> {
     const r = this.row(id)
     if (r.kind === 'smart') throw new Error('Smart playlists are defined by their search query; edit the query instead.')
     if (!trackIds.length) return
-    const count = (this.db.prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ?').get(id) as { n: number }).n
-    const at = position === undefined || position === null ? count : Math.max(0, Math.min(count, Math.floor(position)))
+    const rows = this.items(id)
+    let at = rows.length
+    if (position !== undefined && position !== null) {
+      const shown = this.shown(id, rows)
+      const i = Math.max(0, Math.floor(position))
+      if (i < shown.length) at = shown[i].position
+    }
     tx(this.db, () => {
       this.db.prepare('UPDATE playlist_items SET position = position + ? WHERE playlist_id = ? AND position >= ?').run(trackIds.length, id, at)
       this.insertItems(id, trackIds, at, this.lib.now())
@@ -231,15 +255,20 @@ export class Playlists implements PlaylistsAPI {
     this.changed(id)
   }
 
+  /** `from` / `to`: indices into `get()`'s items. */
   async moveItem(id: ID, from: number, to: number): Promise<void> {
     const r = this.row(id)
     if (r.kind === 'smart') throw new Error('Smart playlists are ordered by their query.')
     const rows = this.items(id)
-    if (from < 0 || from >= rows.length) return
-    const dest = Math.max(0, Math.min(rows.length - 1, to))
+    const shown = this.shown(id, rows)
+    if (from < 0 || from >= shown.length) return
+    const dest = Math.max(0, Math.min(shown.length - 1, to))
     if (dest === from) return
-    const [moved] = rows.splice(from, 1)
-    rows.splice(dest, 0, moved)
+    const moved = shown[from]
+    const anchor = shown[dest]
+    rows.splice(rows.indexOf(moved), 1)
+    // As a move within the shown list: right after the new upper neighbour going down, before the lower one going up.
+    rows.splice(rows.indexOf(anchor) + (dest > from ? 1 : 0), 0, moved)
     tx(this.db, () => {
       const upd = this.db.prepare('UPDATE playlist_items SET position = ? WHERE uid = ?')
       rows.forEach((it, i) => {
@@ -252,13 +281,21 @@ export class Playlists implements PlaylistsAPI {
 
   async exportM3U(id: ID): Promise<string> {
     const detail = await this.get(id)
-    return exportPlaylistM3U({
+    const { path, needDownload } = await exportPlaylistM3U({
       name: detail.playlist.name,
       tracks: detail.items.map((i) => i.track),
       dir: expandHome(this.lib.getSettings().library.downloadDir),
       localPath: (tid) => this.lib.downloadedPath(tid),
-      resolve: async (tid) => (await this.catalog.resolveSources(tid, { quality: this.lib.getSettings().sources.quality }))[0] ?? null
+      resolve: (tid) => this.catalog.resolveSources(tid, { quality: this.lib.getSettings().sources.quality })
     })
+    if (needDownload)
+      this.broadcast('notify', {
+        id: `pl-m3u-${id}`,
+        kind: 'info',
+        title: `Left ${needDownload} track${needDownload === 1 ? '' : 's'} out of the M3U`,
+        body: 'Chapters of longer videos and tracks inside chip archives or multi-song files only play in GHOST. Download them, then export again.'
+      })
+    return path
   }
 
   // ---------------------------------------------------------------------------

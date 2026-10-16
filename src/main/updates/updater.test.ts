@@ -1,11 +1,41 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import type { GhostNotification, UpdateState } from '../../shared/types'
 import type { InstallTarget } from './install'
 import { CHECK_EVERY_MS, STARTUP_DELAY_MS, Updater, type UpdaterDeps } from './updater'
+
+// state.json writes, watched: how many are in progress at once, and a gate that holds them.
+const stateWrites = vi.hoisted(() => ({ active: 0, peak: 0, gate: null as Promise<void> | null }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  const isTmp = (p: unknown) => String(p).endsWith('state.json.tmp')
+  return {
+    ...fs,
+    writeFile: async (...a: Parameters<typeof fs.writeFile>) => {
+      if (!isTmp(a[0])) return fs.writeFile(...a)
+      stateWrites.active++
+      stateWrites.peak = Math.max(stateWrites.peak, stateWrites.active)
+      try {
+        await stateWrites.gate
+        return await fs.writeFile(...a)
+      } catch (e) {
+        stateWrites.active--
+        throw e
+      }
+    },
+    rename: async (...a: Parameters<typeof fs.rename>) => {
+      if (!isTmp(a[0])) return fs.rename(...a)
+      try {
+        return await fs.rename(...a)
+      } finally {
+        stateWrites.active--
+      }
+    }
+  }
+})
 
 const dirs: string[] = []
 afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })))
@@ -27,13 +57,28 @@ function release(version: string, sha = SHA) {
 
 const CHANGELOG = `# Changelog\n\n## 0.5.0 (2026-10-20)\n- Five.\n\n## 0.4.1 (2026-10-18)\n- Four one.\n\n## 0.4.0 (2026-10-15)\n- Four.\n`
 
-function setup(o: { latest?: () => object | null; auto?: boolean; target?: InstallTarget; dir?: string; existingProfile?: boolean; current?: string; now?: () => number } = {}) {
+function setup(
+  o: {
+    latest?: () => object | null | Promise<object | null>
+    /** The installer download's response (default: BYTES). */
+    installer?: (url: string) => Response | Promise<Response>
+    prepare?: UpdaterDeps['prepare']
+    verify?: UpdaterDeps['verify']
+    auto?: boolean
+    target?: InstallTarget
+    dir?: string
+    existingProfile?: boolean
+    current?: string
+    now?: () => number
+  } = {}
+) {
   const dir = o.dir ?? mkdtempSync(join(tmpdir(), 'ghost-updater-'))
   if (!o.dir) dirs.push(dir)
   const states: UpdateState[] = []
   const notes: GhostNotification[] = []
   const launched: [string, boolean][] = []
   const fetched: string[] = []
+  const logs: string[] = []
   let quits = 0
   let auto = o.auto ?? true
   const latest = o.latest ?? (() => release('0.5.0'))
@@ -48,24 +93,31 @@ function setup(o: { latest?: () => object | null; auto?: boolean; target?: Insta
     fetch: async (url) => {
       fetched.push(url)
       if (url.includes('/releases/latest')) {
-        const r = latest()
+        const r = await latest()
         return r ? new Response(JSON.stringify(r)) : new Response('', { status: 404 })
       }
+      if (o.installer) return o.installer(url)
       return new Response(BYTES, { headers: { 'content-length': String(BYTES.length) } })
     },
     dir,
     getAuto: () => auto,
     onState: (s) => states.push(s),
     notify: (n) => notes.push(n),
-    prepare: async (file, version) => `${file}.prepared-${version}`,
+    prepare: o.prepare ?? (async (file, version) => `${file}.prepared-${version}`),
+    verify:
+      o.verify ??
+      (async (prepared) => {
+        if (!existsSync(prepared)) throw new Error('gone')
+      }),
     launch: (prepared, reopen) => void launched.push([prepared, reopen]),
     quit: () => void quits++,
     readChangelog: async () => CHANGELOG,
     existingProfile: o.existingProfile ?? true,
-    now: o.now
+    now: o.now,
+    log: (m) => void logs.push(m)
   }
   const u = new Updater(deps)
-  return { u, dir, states, notes, launched, fetched, quits: () => quits, setAuto: (v: boolean) => (auto = v), deps }
+  return { u, dir, states, notes, launched, fetched, logs, quits: () => quits, setAuto: (v: boolean) => (auto = v), deps }
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 30))
@@ -189,7 +241,7 @@ describe('Updater', () => {
     expect(existsSync(prepared)).toBe(false)
   })
 
-  it('checks 20 s after launch, then once every 24 hours', async () => {
+  it('checks 20 s after every launch, then once every 24 hours', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'Date'] })
     const t = setup({ now: () => Date.now(), latest: () => release('0.4.0') })
     await t.u.start(true)
@@ -210,6 +262,18 @@ describe('Updater', () => {
     expect(checks()).toBe(2)
     await finished(2)
     t.u.stop()
+
+    // Launched again an hour later: it checks again (20 s in), though a day hasn't passed.
+    await vi.advanceTimersByTimeAsync(3600_000)
+    const again = setup({ dir: t.dir, now: () => Date.now(), latest: () => release('0.4.0') })
+    await again.u.start(true)
+    const againChecks = () => again.fetched.filter((u) => u.includes('/releases/latest')).length
+    await vi.advanceTimersByTimeAsync(STARTUP_DELAY_MS - 1000)
+    expect(againChecks()).toBe(0)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(againChecks()).toBe(1)
+    while (!again.states.some((s) => s.status === 'idle' && s.lastCheckedAt != null)) await new Promise((r) => setImmediate(r))
+    again.u.stop()
   })
 
   it('release notes after an update: since the version last run, once', async () => {
@@ -233,6 +297,224 @@ describe('Updater', () => {
     const fresh2 = setup({ dir: fresh.dir, current: '0.5.0' })
     await fresh2.u.start(false)
     expect(await fresh2.u.whatsNew()).toBeNull()
+  })
+
+  it('a newer release that fails to get ready leaves the one already waiting intact and installable', async () => {
+    let v = '0.5.0'
+    const t = setup({
+      latest: () => release(v),
+      // A real folder for each prepared release; 0.6.0's preparation fails half-way.
+      prepare: async (file, version) => {
+        const dir = `${file}.prepared-${version}`
+        mkdirSync(dir, { recursive: true })
+        if (version === '0.6.0') throw new Error('ditto failed: No space left on device')
+        return dir
+      }
+    })
+    await t.u.start(false)
+    await t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('ready'))
+    const a = join(t.dir, 'GHOST-0.5.0-mac-arm64.dmg.prepared-0.5.0')
+    v = '0.6.0'
+    await t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('error'))
+    expect(existsSync(a)).toBe(true)
+    expect(existsSync(join(t.dir, 'GHOST-0.6.0-mac-arm64.dmg'))).toBe(false)
+    // after a restart, 0.5.0 is still the one to install
+    const again = setup({ dir: t.dir })
+    await again.u.start(false)
+    expect(again.u.state()).toMatchObject({ status: 'ready', latest: { version: '0.5.0' } })
+    again.u.onQuit()
+    expect(again.launched).toEqual([[a, false]])
+  })
+
+  it('a release waiting from before a restart is checked again, and dropped (never installed) when it no longer checks out', async () => {
+    const t = setup({ prepare: async (file, version) => (mkdirSync(`${file}.prepared-${version}`), `${file}.prepared-${version}`) })
+    await t.u.start(false)
+    await t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('ready'))
+    const again = setup({
+      dir: t.dir,
+      verify: async () => {
+        throw new Error('the disk image holds GHOST 0.6.0, not 0.5.0')
+      }
+    })
+    again.u.onQuit() // (quitting before it's checked: nothing to install yet)
+    await again.u.start(false)
+    expect(again.u.state()).toMatchObject({ status: 'idle', latest: null })
+    expect(readdirSync(t.dir)).toEqual(['state.json'])
+    again.u.onQuit()
+    expect(again.launched).toEqual([])
+    expect(again.logs.join('\n')).toMatch(/can’t be installed: the disk image holds GHOST 0\.6\.0/)
+  })
+
+  it('updater actions at once write state.json one at a time, and each ends up in it', async () => {
+    const t = setup({ auto: false })
+    await t.u.start(false)
+    let open!: () => void
+    stateWrites.gate = new Promise((r) => (open = r))
+    stateWrites.peak = 0
+    try {
+      const seen = t.u.whatsNewSeen()
+      const checked = t.u.check()
+      await vi.waitFor(() => expect(t.fetched.some((u) => u.includes('/releases/latest'))).toBe(true))
+      await new Promise((r) => setImmediate(r))
+      await t.u.dismiss().catch(() => {})
+      open()
+      await seen
+      expect((await checked).status).toBe('available')
+      await t.u.dismiss()
+      expect(stateWrites.peak).toBe(1)
+      expect(JSON.parse(readFileSync(join(t.dir, 'state.json'), 'utf8'))).toMatchObject({ lastSeenVersion: '0.4.0', dismissed: '0.5.0', lastCheckedAt: expect.any(Number) })
+      expect(t.logs).toEqual([])
+    } finally {
+      stateWrites.gate = null
+    }
+  })
+
+  it('a state.json that can’t be written never leaves the updater checking or downloading', async () => {
+    const t = setup()
+    await t.u.start(false)
+    // (a folder where state.json goes: every save fails)
+    rmSync(join(t.dir, 'state.json'))
+    mkdirSync(join(t.dir, 'state.json'))
+    expect((await t.u.check()).status).not.toBe('checking')
+    await vi.waitFor(() => expect(t.u.state().status).toBe('ready'))
+    await t.u.whatsNewSeen()
+    expect(t.logs.some((m) => /couldn’t save its state/.test(m))).toBe(true)
+  })
+
+  it('a download whose file can’t be written fails at once (no stray exception), and a retry works without a restart', async () => {
+    let cancelled = 0
+    let first = true
+    const t = setup({
+      installer: () => {
+        if (!first) return new Response(BYTES, { headers: { 'content-length': String(BYTES.length) } })
+        first = false
+        // The updates folder disappears while the body is still arriving (slowly: one chunk, then nothing).
+        rmSync(t.dir, { recursive: true, force: true })
+        const body = new ReadableStream<Uint8Array>({
+          start: (c) => c.enqueue(BYTES.subarray(0, 1000)),
+          pull: () => new Promise<void>(() => {}),
+          cancel: () => void cancelled++
+        })
+        return new Response(body, { headers: { 'content-length': String(BYTES.length) } })
+      }
+    })
+    await t.u.start(false)
+    await t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('error'))
+    expect(t.u.state().error).toMatch(/ENOENT/)
+    expect(cancelled).toBe(1)
+    expect(t.notes.at(-1)).toMatchObject({ kind: 'error', title: 'Couldn’t update GHOST to 0.5.0' })
+    await t.u.download()
+    expect(t.u.state().status).toBe('ready')
+    expect(readdirSync(t.dir).filter((n) => n.endsWith('.part'))).toEqual([])
+  })
+
+  it('quitting installs the release already waiting while a check for a newer one is still going', async () => {
+    let hold: Promise<void> | null = null
+    let answer!: () => void
+    let v = '0.5.0'
+    let slow: (() => void) | null = null
+    const t = setup({
+      latest: async () => {
+        await hold
+        return release(v)
+      },
+      installer: async () => {
+        if (v === '0.6.0') await new Promise<void>((r) => (slow = r))
+        return new Response(BYTES, { headers: { 'content-length': String(BYTES.length) } })
+      },
+      prepare: async (file, version) => (mkdirSync(`${file}.prepared-${version}`), `${file}.prepared-${version}`)
+    })
+    await t.u.start(false)
+    await t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('ready'))
+    const a = join(t.dir, 'GHOST-0.5.0-mac-arm64.dmg.prepared-0.5.0')
+    // a recheck that hasn't answered yet (up to its 20 s timeout)
+    hold = new Promise((r) => (answer = r))
+    v = '0.6.0'
+    const rechecked = t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('checking'))
+    // …or that found 0.6.0 and is downloading it
+    answer()
+    await rechecked
+    await vi.waitFor(() => expect(t.u.state().status).toBe('downloading'))
+    await vi.waitFor(() => expect(slow).not.toBeNull())
+    t.u.onQuit()
+    expect(t.launched).toEqual([[a, false]])
+    // 0.6.0 finishing afterwards leaves the release being installed alone
+    slow!()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('ready'))
+    expect(existsSync(a)).toBe(true)
+    t.u.onQuit()
+    expect(t.launched).toHaveLength(1)
+  })
+
+  it('quitting during a recheck that never answers still installs the release waiting', async () => {
+    const t = setup({ prepare: async (file, version) => (mkdirSync(`${file}.prepared-${version}`), `${file}.prepared-${version}`) })
+    await t.u.start(false)
+    await t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('ready'))
+    ;(t.deps as { fetch: UpdaterDeps['fetch'] }).fetch = () => new Promise<Response>(() => {})
+    void t.u.check()
+    await vi.waitFor(() => expect(t.u.state().status).toBe('checking'))
+    t.u.onQuit()
+    expect(t.launched).toEqual([[join(t.dir, 'GHOST-0.5.0-mac-arm64.dmg.prepared-0.5.0'), false]])
+  })
+
+  it('a failed download is tried again two hours later (then four), not a day later', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+    const t = setup({ now: () => Date.now(), latest: () => release('0.5.0', 'f'.repeat(64)) })
+    await t.u.start(true)
+    const checks = () => t.fetched.filter((u) => u.includes('/releases/latest')).length
+    const failures = () => t.notes.filter((n) => n.kind === 'error').length
+    const failed = async (n: number) => {
+      while (failures() < n) await new Promise((r) => setImmediate(r))
+    }
+    await vi.advanceTimersByTimeAsync(STARTUP_DELAY_MS + 1000)
+    expect(checks()).toBe(1)
+    await failed(1)
+    await vi.advanceTimersByTimeAsync(2 * 3600_000 - 60_000)
+    expect(checks()).toBe(1)
+    // (the clock is looked at every 30 minutes)
+    await vi.advanceTimersByTimeAsync(31 * 60_000)
+    expect(checks()).toBe(2)
+    await failed(2)
+    await vi.advanceTimersByTimeAsync(4 * 3600_000 - 60_000)
+    expect(checks()).toBe(2)
+    await vi.advanceTimersByTimeAsync(31 * 60_000)
+    expect(checks()).toBe(3)
+    await failed(3)
+    t.u.stop()
+  })
+
+  it('a launch while a failed download waits for its retry checks, but fetches the installer again only once it is due', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+    const latest = () => release('0.5.0', 'f'.repeat(64))
+    const t = setup({ now: () => Date.now(), latest })
+    await t.u.start(true)
+    await vi.advanceTimersByTimeAsync(STARTUP_DELAY_MS + 1000)
+    while (!t.notes.some((n) => n.kind === 'error')) await new Promise((r) => setImmediate(r))
+    t.u.stop()
+    const downloads = (f: string[]) => f.filter((u) => u.endsWith('.dmg')).length
+    expect(downloads(t.fetched)).toBe(1)
+
+    // Relaunched 10 minutes later: it checks, says the download failed, and doesn't fetch it again yet.
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    const again = setup({ dir: t.dir, now: () => Date.now(), latest })
+    await again.u.start(true)
+    await vi.advanceTimersByTimeAsync(STARTUP_DELAY_MS + 1000)
+    while (again.u.state().status !== 'error') await new Promise((r) => setImmediate(r))
+    expect(again.fetched.filter((u) => u.includes('/releases/latest')).length).toBe(1)
+    expect(downloads(again.fetched)).toBe(0)
+    expect(again.u.state()).toMatchObject({ status: 'error', latest: { version: '0.5.0' }, canInstall: true })
+    // Two hours after the failure, it's tried again.
+    await vi.advanceTimersByTimeAsync(2 * 3600_000)
+    while (downloads(again.fetched) < 1) await new Promise((r) => setImmediate(r))
+    while (!again.notes.some((n) => n.kind === 'error')) await new Promise((r) => setImmediate(r))
+    again.u.stop()
   })
 
   it('only downloads installers from GitHub', async () => {

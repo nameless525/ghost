@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Settings } from '../../shared/types'
+import type { ID, Settings } from '../../shared/types'
+import { allVoices, formatVoiceMask, parseVoiceMask, voiceBit } from '../../shared/voices'
 import type { EngineTrack } from '../engine/types'
 import { sliderToDb } from '../engine/types'
 import { createLibrary } from '../library'
@@ -268,6 +269,92 @@ describe('queue', () => {
   })
 })
 
+/** A promise the test opens by hand: a slow lookup (an album page from the site, a busy worker). */
+function gate() {
+  let open!: () => void
+  const wait = new Promise<void>((r) => (open = r))
+  return { wait, open }
+}
+
+describe('play requests', () => {
+  /** Two albums: al1 (t1..t5) and al2 (u1, u2); `slow` holds the lookups of whatever it names. */
+  function twoAlbums() {
+    const t = setup()
+    t.catalog.addTracks(makeTrack('u1', { albumId: 'al2', number: 1 }), makeTrack('u2', { albumId: 'al2', number: 2 }))
+    const slow = new Map<string, Promise<void>>()
+    const album = t.catalog.album.bind(t.catalog)
+    t.catalog.album = async (id) => {
+      await slow.get(id)
+      return album(id)
+    }
+    const fetchTracks = t.library.fetchTracks.bind(t.library)
+    t.library.fetchTracks = async (ids) => {
+      await slow.get(ids.join())
+      return fetchTracks(ids)
+    }
+    const get = t.playlists.get.bind(t.playlists)
+    t.playlists.get = async (id) => {
+      await slow.get(id)
+      return get(id)
+    }
+    return { ...t, slow }
+  }
+
+  it('a slow earlier request never replaces a newer queue, whichever kinds they are', async () => {
+    const t = twoAlbums()
+    const pl = await t.playlists.create('Mix', { trackIds: ['t4', 't5'] })
+    const cases: [string, () => Promise<void>, () => Promise<void>, ID][] = [
+      ['album, then tracks', () => t.player.playAlbum('al2'), () => t.player.playTracks(['t3']), 't3'],
+      ['tracks, then playlist', () => t.player.playTracks(['u1', 'u2']), () => t.player.playPlaylist(pl.id), 't4'],
+      ['playlist, then album', () => t.player.playPlaylist(pl.id), () => t.player.playAlbum('al2', 1), 'u2'],
+      ['album, then album', () => t.player.playAlbum('al1'), () => t.player.playAlbum('al2'), 'u1']
+    ]
+    for (const [name, older, newer, plays] of cases) {
+      const g = gate()
+      // whichever lookup the older request makes is the slow one
+      for (const key of ['al1', 'al2', 'u1,u2', pl.id]) t.slow.set(key, g.wait)
+      const first = older()
+      await flush()
+      t.slow.clear()
+      await newer()
+      await t.settle()
+      expect(t.st().current?.id, name).toBe(plays)
+      g.open()
+      await first
+      await t.settle()
+      expect(t.st().current?.id, name).toBe(plays)
+    }
+  })
+
+  it('pausing while a new queue is being looked up starts it paused; playing starts it playing', async () => {
+    const t = twoAlbums()
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    t.started()
+    let g = gate()
+    t.slow.set('al2', g.wait)
+    const paused = t.player.playAlbum('al2')
+    await t.player.pause()
+    g.open()
+    await paused
+    await t.settle()
+    expect(t.st().current?.id).toBe('u1')
+    expect(t.engine.lastCall('setCurrent')![2]).toBe(false)
+    expect(t.st().status).toBe('paused')
+
+    g = gate()
+    t.slow.set('al1', g.wait)
+    const resumed = t.player.playAlbum('al1', 2)
+    await t.player.pause()
+    await t.player.play()
+    g.open()
+    await resumed
+    await t.settle()
+    expect(t.st().current?.id).toBe('t3')
+    expect(t.engine.lastCall('setCurrent')![2]).toBe(true)
+  })
+})
+
 describe('shuffle', () => {
   it('reorders only the upcoming items, keeps the current one, and restores the order when turned off', async () => {
     const t = setup({ tracks: 10 })
@@ -406,6 +493,40 @@ describe('repeat and gapless preload', () => {
     expect(t.st().current?.id).toBe('t2')
     // only the new preload (t3) was resolved
     expect(t.catalog.resolveCalls.slice(resolves).map((c) => c.trackId)).toEqual(['t3'])
+  })
+
+  it('skipping to the armed preload hands the engine its decoded voice; a jump elsewhere cancels it first', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2', 't3', 't4'])
+    await t.settle()
+    t.started()
+    const armed = t.uidAt(1)
+    expect(t.engine.nextId).toBe(armed)
+    let from = t.engine.calls.length
+    await t.player.next()
+    await t.settle()
+    let calls = t.engine.calls.slice(from).map((c) => c.method)
+    // nothing cancelled the engine's `next` before setCurrent took it over
+    expect(calls.slice(0, calls.indexOf('setCurrent'))).not.toContain('setNext')
+    expect(t.engine.promoted).toEqual([armed])
+    expect(t.st().current?.id).toBe('t2')
+    expect(t.engine.nextId).toBe(t.uidAt(2))
+    // the engine had advanced into it just before our skip arrived: its late 'advanced' is stale
+    const loads = t.engine.callsOf('setCurrent').length
+    t.engine.emit({ type: 'advanced', id: armed })
+    await t.settle()
+    expect(t.engine.callsOf('setCurrent')).toHaveLength(loads)
+    expect(t.st().queueIndex).toBe(1)
+    // t3 is armed now; jumping to t4 isn't a promotion: t3 is cancelled before t4 loads
+    t.started()
+    from = t.engine.calls.length
+    await t.player.jumpTo(3)
+    await t.settle()
+    calls = t.engine.calls.slice(from).map((c) => c.method)
+    expect(calls.indexOf('setNext')).toBeGreaterThanOrEqual(0)
+    expect(calls.indexOf('setNext')).toBeLessThan(calls.indexOf('setCurrent'))
+    expect(t.engine.promoted).toEqual([armed])
+    expect(t.st().current?.id).toBe('t4')
   })
 })
 
@@ -584,6 +705,89 @@ describe('source fallback', () => {
     expect((t.engine.lastCall('setCurrent')![0] as EngineTrack).source).toEqual(httpSource('t1', 'a').source)
     expect(t.catalog.failedMarks).toEqual([]) // our own file isn't reported to the catalog
   })
+
+  it('a track loaded while paused, then resumed, falls back to another source playing; one paused stays paused', async () => {
+    const t = setup()
+    t.catalog.sources.set('t2', ['a', 'b', 'c'].map((x) => httpSource('t2', x)))
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    t.started()
+    await t.player.pause()
+    await t.player.next() // loads t2 paused
+    await t.settle()
+    expect(t.engine.lastCall('setCurrent')![2]).toBe(false)
+    await t.player.play()
+    t.started()
+    t.engine.emit({ type: 'error', id: t.uidAt(1), message: 'HTTP 404', recoverable: true })
+    await t.settle()
+    let [track, , autoplay] = t.engine.lastCall('setCurrent') as [EngineTrack, number, boolean]
+    expect(track.source).toEqual(httpSource('t2', 'b').source)
+    expect(autoplay).toBe(true)
+    expect(t.st().status).toBe('loading')
+    // paused on purpose: the fallback waits paused
+    t.started()
+    await t.player.pause()
+    t.engine.emit({ type: 'error', id: t.uidAt(1), message: 'HTTP 404', recoverable: true })
+    await t.settle()
+    ;[track, , autoplay] = t.engine.lastCall('setCurrent') as [EngineTrack, number, boolean]
+    expect(track.source).toEqual(httpSource('t2', 'c').source)
+    expect(autoplay).toBe(false)
+    expect(t.st().status).toBe('paused')
+  })
+
+  it('a track that finished loading under a preview plays its fallback source once the preview is over', async () => {
+    const t = setup()
+    const g = gate()
+    t.catalog.gate = g.wait
+    await t.player.playTracks(['t1', 't2'])
+    t.catalog.gate = null
+    await t.player.preview('t5') // audible while t1 still resolves: holds it
+    await flush()
+    g.open()
+    await t.settle()
+    expect(t.engine.lastCall('setCurrent')![2]).toBe(false)
+    t.engine.emit({ type: 'previewEnded', id: t.engine.previewing!.track.id })
+    await t.settle()
+    expect(t.st().status).toBe('playing')
+    t.started()
+    t.engine.emit({ type: 'error', id: t.uidAt(0), message: 'HTTP 404', recoverable: true })
+    await t.settle()
+    const [track, , autoplay] = t.engine.lastCall('setCurrent') as [EngineTrack, number, boolean]
+    expect(track.source).toEqual(httpSource('t1', 'b').source)
+    expect(autoplay).toBe(true)
+  })
+
+  /** Each loaded source reports its length (the header opened), then fails on its first packet. */
+  async function failAfterMetadata(t: ReturnType<typeof setup>): Promise<void> {
+    for (let i = 0; i < 40 && t.st().status !== 'error'; i++) {
+      const id = t.engine.current!.id
+      t.engine.emit({ type: 'trackInfo', id, durationMs: 180_000, sampleRate: 44100, channels: 2, codec: 'mp3', bitrateKbps: 320 })
+      t.engine.emit({ type: 'error', id, message: 'decode error: invalid main_data_begin', recoverable: true })
+      await t.settle()
+    }
+  }
+
+  it('metadata is not playback: a repeating queue that never plays stops after one round', async () => {
+    const t = setup({ tracks: 2 })
+    await t.player.setRepeat('all')
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    await failAfterMetadata(t)
+    expect(t.st().status).toBe('error')
+    expect(t.st().error).toMatch(/2 tracks in a row/)
+    // each of the two sources of each track, once
+    expect(t.engine.callsOf('setCurrent')).toHaveLength(4)
+  })
+
+  it('metadata is not playback: the skip streak still caps a long queue', async () => {
+    const t = setup({ tracks: 12 })
+    for (let i = 1; i <= 12; i++) t.catalog.sources.set(`t${i}`, [httpSource(`t${i}`, 'a')])
+    await t.player.playTracks(Array.from({ length: 12 }, (_, i) => `t${i + 1}`))
+    await t.settle()
+    await failAfterMetadata(t)
+    expect(t.st().status).toBe('error')
+    expect(t.st().queueIndex).toBe(MAX_FAIL_STREAK - 1)
+  })
 })
 
 describe('engine events', () => {
@@ -613,6 +817,24 @@ describe('engine events', () => {
     expect(t.bc.of('notify').some((n) => n.body === 'Output device lost')).toBe(true)
   })
 
+  it('a looping track switched to Endless mid-play loses its length; a stream without one keeps the catalog\'s', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1'])
+    await t.settle()
+    const uid = t.uidAt(0)
+    t.started()
+    const info = { type: 'trackInfo' as const, id: uid, sampleRate: 44100, channels: 2, codec: 'vgm', bitrateKbps: null }
+    t.engine.emit({ ...info, durationMs: 130_000, loopStartMs: 10_000, loopEndMs: 70_000 })
+    expect(t.st().durationMs).toBe(130_000)
+    t.engine.emit({ ...info, durationMs: null, loopStartMs: 10_000, loopEndMs: 70_000 })
+    expect(t.st().durationMs).toBeNull()
+    t.engine.emit({ ...info, durationMs: 190_000, loopStartMs: 10_000, loopEndMs: 70_000 })
+    expect(t.st().durationMs).toBe(190_000)
+    // no loop points: an unknown length isn't endless
+    t.engine.emit({ ...info, codec: 'mp3', durationMs: null })
+    expect(t.st().durationMs).toBe(190_000)
+  })
+
   it('chip voices: from trackInfo, masked on request, reset on every track change', async () => {
     const t = setup()
     await t.player.playTracks(['t1', 't2', 't3'])
@@ -621,44 +843,71 @@ describe('engine events', () => {
     const info = (id: string, names?: string[]) =>
       t.engine.emit({ type: 'trackInfo', id, durationMs: 90_000, sampleRate: 44100, channels: 2, codec: 'nsf', bitrateKbps: null, ...(names ? { voiceCount: names.length, voiceNames: names } : {}) })
     expect(t.st().voices).toBeNull()
-    await t.player.setVoiceMask(1) // nothing to mute yet
+    await t.player.setVoiceMask('1') // nothing to mute yet
     expect(t.engine.callsOf('setVoiceMask')).toEqual([])
     t.started()
     info(t.uidAt(0), nes)
-    expect(t.st().voices).toEqual({ names: nes, mask: 0 })
-    await t.player.setVoiceMask(0b10100) // Triangle + DMC
-    expect(t.st().voices).toEqual({ names: nes, mask: 0b10100 })
-    expect(t.engine.lastCall('setVoiceMask')).toEqual([0b10100])
-    expect(t.bc.last('player:state')?.voices).toEqual({ names: nes, mask: 0b10100 })
+    expect(t.st().voices).toEqual({ names: nes, mask: '0' })
+    await t.player.setVoiceMask('14') // 0b10100: Triangle + DMC
+    expect(t.st().voices).toEqual({ names: nes, mask: '14' })
+    expect(t.engine.lastCall('setVoiceMask')).toEqual([0b10100n])
+    expect(t.bc.last('player:state')?.voices).toEqual({ names: nes, mask: '14' })
     // bits past the last voice are dropped; bad input unmutes
-    await t.player.setVoiceMask(0xff)
-    expect(t.st().voices!.mask).toBe(0b11111)
-    await t.player.setVoiceMask(Number.NaN)
-    expect(t.st().voices!.mask).toBe(0)
-    await t.player.setVoiceMask(0b1)
+    await t.player.setVoiceMask('ff')
+    expect(t.st().voices!.mask).toBe('1f')
+    await t.player.setVoiceMask('NaN')
+    expect(t.st().voices!.mask).toBe('0')
+    await t.player.setVoiceMask('1')
     // the preloaded next track reports its voices before it plays; a gapless advance resets the mask
     const gb = ['Square 1', 'Square 2', 'Wave', 'Noise']
     info(t.uidAt(1), gb)
     expect(t.st().voices!.names).toEqual(nes)
     t.engine.finishCurrent()
     expect(t.st().current?.id).toBe('t2')
-    expect(t.st().voices).toEqual({ names: gb, mask: 0 })
-    expect(t.engine.voiceMask).toBe(0)
+    expect(t.st().voices).toEqual({ names: gb, mask: '0' })
+    expect(t.engine.voiceMask).toBe(0n)
     // a track without voices (e.g. an mp3)
-    await t.player.setVoiceMask(0b11)
+    await t.player.setVoiceMask('3')
     await t.player.next()
     await t.settle()
     expect(t.st().voices).toBeNull()
-    expect(t.engine.voiceMask).toBe(0)
+    expect(t.engine.voiceMask).toBe(0n)
     info(t.uidAt(2))
     expect(t.st().voices).toBeNull()
     // a fallback source that turns out to have voices
     info(t.uidAt(2), ['DSP 1', 'DSP 2'])
-    expect(t.st().voices).toEqual({ names: ['DSP 1', 'DSP 2'], mask: 0 })
+    expect(t.st().voices).toEqual({ names: ['DSP 1', 'DSP 2'], mask: '0' })
     // clearing the queue drops them
     await t.player.clearQueue()
     await t.player.removeFromQueue([t.uidAt(0)])
     expect(t.st().voices).toBeNull()
+  })
+
+  it('chip voices: every one of 64 tracker channels is muted on its own, exactly', async () => {
+    const t = setup()
+    await t.player.playTracks(['t1'])
+    await t.settle()
+    t.started()
+    const names = Array.from({ length: 70 }, (_, i) => `Channel ${i + 1}`)
+    t.engine.emit({ type: 'trackInfo', id: t.uidAt(0), durationMs: 90_000, sampleRate: 44100, channels: 2, codec: 'it', bitrateKbps: null, voiceCount: 70, voiceNames: names })
+    // the engine's mask has 64 bits: no pills it can't mute
+    expect(t.st().voices!.names).toEqual(names.slice(0, 64))
+    for (const ch of [1, 31, 32, 33, 64]) {
+      await t.player.setVoiceMask(formatVoiceMask(voiceBit(ch - 1)))
+      expect(t.engine.voiceMask, `channel ${ch}`).toBe(2n ** BigInt(ch - 1))
+      expect(parseVoiceMask(t.st().voices!.mask), `channel ${ch}`).toBe(2n ** BigInt(ch - 1))
+    }
+    // solo channel 33: all 63 others muted
+    await t.player.setVoiceMask(formatVoiceMask(allVoices(64) & ~voiceBit(32)))
+    expect(t.engine.voiceMask).toBe(0xfffffffeffffffffn)
+    expect(t.st().voices!.mask).toBe('fffffffeffffffff')
+    await t.player.setVoiceMask('0')
+    expect(t.engine.voiceMask).toBe(0n)
+    // wider than the engine's mask: not a mask, so nothing is muted
+    await t.player.setVoiceMask(formatVoiceMask(voiceBit(40)))
+    await t.player.setVoiceMask('1' + '0'.repeat(16))
+    expect(t.engine.voiceMask).toBe(0n)
+    expect(t.st().voices!.mask).toBe('0')
   })
 
   it('heartbeat broadcasts a fresh position while playing', async () => {
@@ -903,6 +1152,47 @@ describe('history', () => {
     await t.player.next()
     await t.settle()
     expect(plays(t)).toHaveLength(0)
+  })
+
+  /** A queue of `first` then `second`, with `first` audible for `ms`. */
+  async function listened(first: { durationMs: number }, second: { durationMs: number }, ms: number) {
+    const t = setup({ tracks: 0 })
+    t.catalog.addTracks(makeTrack('first', { number: 1, ...first }), makeTrack('second', { number: 2, ...second }))
+    await t.player.playTracks(['first', 'second'])
+    await t.settle()
+    t.started()
+    t.clock.t += ms
+    return t
+  }
+
+  it("leaving a track measures its play against its own length, not the next track's", async () => {
+    const leave: [string, (t: Awaited<ReturnType<typeof listened>>) => Promise<void>][] = [
+      ['next', (t) => t.player.next()],
+      ['jump', (t) => t.player.jumpTo(1)],
+      ['new queue', (t) => t.player.playTracks(['second'])],
+      ['remove it', (t) => t.player.removeFromQueue([t.uidAt(0)])]
+    ]
+    for (const [how, go] of leave) {
+      // 10 s of a 3 min track, then a 10 s one: not a play (its threshold is 30 s, not 5 s)
+      let t = await listened({ durationMs: 180_000 }, { durationMs: 10_000 }, 10_000)
+      await go(t)
+      await t.settle()
+      expect(plays(t), how).toEqual([])
+      // 25 s of a 40 s track, then a long one: a play (half of it is 20 s, under 30 s)
+      t = await listened({ durationMs: 40_000 }, { durationMs: 180_000 }, 25_000)
+      await go(t)
+      await t.settle()
+      expect(plays(t), how).toEqual([{ track_id: 'first', ms_played: 25_000 }])
+    }
+  })
+
+  it('the decoder-reported length of the played track is what counts', async () => {
+    // the catalog says 3 min; the file is 20 s
+    const t = await listened({ durationMs: 180_000 }, { durationMs: 180_000 }, 12_000)
+    t.engine.emit({ type: 'trackInfo', id: t.uidAt(0), durationMs: 20_000, sampleRate: 44100, channels: 2, codec: 'mp3', bitrateKbps: 320 })
+    await t.player.next()
+    await t.settle()
+    expect(plays(t)).toEqual([{ track_id: 'first', ms_played: 12_000 }])
   })
 })
 
@@ -1291,5 +1581,113 @@ describe('volume, loop mode, previews, devices', () => {
     t.library.toggleLike('t1')
     expect(t.st().queue.map((q) => q.track.liked)).toEqual([true, false, true])
     expect(t.st().current?.liked).toBe(true)
+  })
+
+  /** Queue t1, t2, t3 playing, held by a preview of t4; the next preview's track lookup waits on `g`. */
+  async function heldByPreview() {
+    const t = setup()
+    await t.player.playTracks(['t1', 't2', 't3'])
+    await t.settle()
+    t.started()
+    await t.player.preview('t4')
+    await t.settle()
+    expect(t.st().status).toBe('paused')
+    const g = gate()
+    t.catalog.tracksGate = g.wait
+    const older = t.engine.previewing!.track.id
+    return { ...t, g, older }
+  }
+
+  it('the old preview ending while a newer one still fetches its track leaves the queue held for the newer one', async () => {
+    const t = await heldByPreview()
+    const newer = t.player.preview('t5')
+    await flush()
+    t.engine.emit({ type: 'previewEnded', id: t.older }) // t4 ran out first
+    await flush()
+    expect(t.st().status).toBe('paused')
+    t.catalog.tracksGate = null
+    t.g.open()
+    expect(await newer).toBe(true)
+    await t.settle()
+    expect(t.st().preview?.track.id).toBe('t5')
+    expect(t.st().status).toBe('paused')
+    expect(t.engine.callsOf('play')).toHaveLength(0)
+    // and when that one ends, the queue picks up again
+    t.engine.emit({ type: 'previewEnded', id: t.engine.previewing!.track.id })
+    await t.settle()
+    expect(t.st().status).toBe('playing')
+    expect(t.engine.callsOf('play')).toHaveLength(1)
+  })
+
+  it('…and the same while the newer one resolves its source', async () => {
+    const t = await heldByPreview()
+    t.catalog.tracksGate = null
+    const sources = gate()
+    t.catalog.gate = sources.wait
+    const newer = t.player.preview('t5')
+    await flush()
+    t.engine.emit({ type: 'previewEnded', id: t.older })
+    await flush()
+    expect(t.st().status).toBe('paused')
+    t.catalog.gate = null
+    sources.open()
+    expect(await newer).toBe(true)
+    await t.settle()
+    expect(t.st().preview?.track.id).toBe('t5')
+    expect(t.engine.callsOf('play')).toHaveLength(0)
+  })
+
+  it('…but stopping previews still cancels it, and one that finds no track gives the queue back', async () => {
+    let t = await heldByPreview()
+    let newer = t.player.preview('t5')
+    await flush()
+    t.engine.emit({ type: 'previewEnded', id: t.older })
+    await t.player.stopPreview()
+    expect(t.st().status).toBe('playing')
+    t.catalog.tracksGate = null
+    t.g.open()
+    expect(await newer).toBe(false)
+    await t.settle()
+    expect(t.st().preview).toBeNull()
+    expect(t.engine.callsOf('preview')).toHaveLength(1)
+
+    t = await heldByPreview()
+    newer = t.player.preview('gone')
+    await flush()
+    t.engine.emit({ type: 'previewEnded', id: t.older })
+    t.catalog.tracksGate = null
+    t.g.open()
+    expect(await newer).toBe(false)
+    await t.settle()
+    expect(t.st().status).toBe('playing')
+  })
+
+  it('removing the current item while a preview holds the queue plays the next one after the preview', async () => {
+    const t = await heldByPreview()
+    t.catalog.tracksGate = null
+    await t.player.removeFromQueue([t.uidAt(0)])
+    await t.settle()
+    expect(t.st().current?.id).toBe('t2')
+    // one song at a time: it waits, loaded, while the preview plays on
+    expect(t.engine.lastCall('setCurrent')![2]).toBe(false)
+    expect(t.engine.previewing?.track.id).toBe(t.older)
+    expect(t.st().status).toBe('paused')
+    t.engine.emit({ type: 'previewEnded', id: t.older })
+    await t.settle()
+    expect(t.st().status).toBe('playing')
+    expect(t.engine.callsOf('play')).toHaveLength(1)
+  })
+
+  it('removing the current item after pausing during a preview leaves the next one paused', async () => {
+    const t = await heldByPreview()
+    t.catalog.tracksGate = null
+    await t.player.pause()
+    await t.player.removeFromQueue([t.uidAt(0)])
+    await t.settle()
+    expect(t.st().current?.id).toBe('t2')
+    t.engine.emit({ type: 'previewEnded', id: t.older })
+    await t.settle()
+    expect(t.st().status).toBe('paused')
+    expect(t.engine.callsOf('play')).toHaveLength(0)
   })
 })

@@ -53,23 +53,47 @@ export type MenuItem =
 type ActionItem = Extract<MenuItem, { label: ReactNode }>
 const isAction = (i: MenuItem): i is ActionItem => 'label' in i
 
+/** The enabled action at `i`, or null (a heading, a separator, a disabled item, or no item). */
+export function actionAt(items: MenuItem[], i: number): ActionItem | null {
+  const item = items[i]
+  return item && isAction(item) && !item.disabled ? item : null
+}
+
+/**
+ * The next enabled action from `from` in `dir`, wrapping. From nothing (-1), Down starts on the
+ * first and Up on the last. Stays put when the menu has nothing to act on.
+ */
+export function stepAction(items: MenuItem[], from: number, dir: 1 | -1): number {
+  const n = items.length
+  let i = from < 0 ? (dir > 0 ? -1 : n) : from
+  for (let k = 0; k < n; k++) {
+    i = (i + dir + n) % n
+    if (actionAt(items, i)) return i
+  }
+  return from
+}
+
 type Point = { x: number; y: number }
 
 interface MenuState {
   /** A pointer position, or the rect of the control the menu belongs to. */
   at: Point | DOMRect
   items: MenuItem[]
+  /** Opened from the keyboard (Menu key, Shift+F10, a shortcut, Enter on a button): starts on an item. */
+  keyboard: boolean
   seq: number
 }
 
 let setGlobal: ((s: MenuState | null) => void) | null = null
 let menuSeq = 0
+/** The last input was a key press (tracked by the host), so a menu opening now is the keyboard's. */
+let keyInput = false
 
 /** Open a context menu at viewport coordinates, or anchored to an element (see the header). */
 export function openContextMenu(at: Point | Element, items: MenuItem[]): void {
   if (!items.length) return
   sfx.play('select', { volume: 0.5 })
-  setGlobal?.({ at: at instanceof Element ? at.getBoundingClientRect() : { x: at.x, y: at.y }, items, seq: ++menuSeq })
+  setGlobal?.({ at: at instanceof Element ? at.getBoundingClientRect() : { x: at.x, y: at.y }, items, keyboard: keyInput, seq: ++menuSeq })
 }
 
 export function closeContextMenu(): void {
@@ -112,12 +136,13 @@ interface ListProps {
   depth: number
   onClose: (all: boolean) => void
   autoFocus: boolean
+  /** Start on the first enabled action (opened from the keyboard) rather than on nothing. */
+  startOnItem: boolean
 }
 
-function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
+function MenuList({ items, anchor, depth, onClose, autoFocus, startOnItem }: ListProps) {
   const el = useRef<HTMLDivElement>(null)
-  // a submenu opened from the keyboard starts on its first actionable item
-  const [active, setActive] = useState(() => (autoFocus && depth > 0 ? items.findIndex((i) => isAction(i) && !i.disabled) : -1))
+  const [active, setActive] = useState(() => (startOnItem ? stepAction(items, -1, 1) : -1))
   // focus stays on the menu: name the active item so screen readers follow the arrows
   const itemId = useId()
   const [sub, setSub] = useState<{ index: number; rect: DOMRect; focus: boolean } | null>(null)
@@ -138,26 +163,16 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
     if (autoFocus) node.focus({ preventScroll: true })
   }, [anchor, autoFocus])
 
-  const actionable = (i: number) => isAction(items[i]) && !(items[i] as ActionItem).disabled
-  const move = (dir: 1 | -1) => {
-    let i = active
-    for (let n = 0; n < items.length; n++) {
-      i = (i + dir + items.length) % items.length
-      if (actionable(i)) break
-    }
-    setActive(i)
-  }
-
   const openSub = (i: number, focus: boolean) => {
-    const item = items[i]
-    if (!isAction(item) || !item.submenu?.length) return
+    if (!actionAt(items, i)?.submenu?.length) return
     const btn = el.current?.querySelector<HTMLElement>(`[data-index="${i}"]`)
     if (btn) setSub({ index: i, rect: btn.getBoundingClientRect(), focus })
   }
 
+  // -1 (nothing active yet: a menu opened with the pointer) does nothing
   const activate = (i: number) => {
-    const item = items[i]
-    if (!isAction(item) || item.disabled) return
+    const item = actionAt(items, i)
+    if (!item) return
     if (item.submenu?.length) return openSub(i, true)
     sfx.play('confirm', { volume: 0.45 })
     onClose(true)
@@ -166,12 +181,11 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
 
   const onKeyDown = (e: RKeyboardEvent) => {
     e.stopPropagation()
-    if (e.key === 'ArrowDown') move(1)
-    else if (e.key === 'ArrowUp') move(-1)
-    else if (e.key === 'Home') setActive(items.findIndex((_, i) => actionable(i)))
-    else if (e.key === 'End') {
-      for (let i = items.length - 1; i >= 0; i--) if (actionable(i)) return setActive(i)
-    } else if (e.key === 'ArrowRight') openSub(active, true)
+    if (e.key === 'ArrowDown') setActive(stepAction(items, active, 1))
+    else if (e.key === 'ArrowUp') setActive(stepAction(items, active, -1))
+    else if (e.key === 'Home') setActive(stepAction(items, -1, 1))
+    else if (e.key === 'End') setActive(stepAction(items, -1, -1))
+    else if (e.key === 'ArrowRight') openSub(active, true)
     else if (e.key === 'ArrowLeft' || e.key === 'Escape') {
       if (depth > 0 || e.key === 'Escape') onClose(e.key === 'Escape' && depth === 0)
     } else if (e.key === 'Enter' || e.key === ' ') activate(active)
@@ -234,6 +248,7 @@ function MenuList({ items, anchor, depth, onClose, autoFocus }: ListProps) {
           anchor={sub.rect}
           depth={depth + 1}
           autoFocus={sub.focus}
+          startOnItem={sub.focus}
           onClose={(all) => {
             setSub(null)
             if (all) onClose(true)
@@ -255,8 +270,15 @@ export function ContextMenuHost() {
       if (s) restore.current = document.activeElement as HTMLElement | null
       setMenu(s)
     }
+    // capture phase: recorded before the handler that opens a menu runs
+    const onKey = () => (keyInput = true)
+    const onPointer = () => (keyInput = false)
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('pointerdown', onPointer, true)
     return () => {
       setGlobal = null
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('pointerdown', onPointer, true)
     }
   }, [])
 
@@ -290,6 +312,7 @@ export function ContextMenuHost() {
       anchor={menu.at}
       depth={0}
       autoFocus
+      startOnItem={menu.keyboard}
       onClose={() => {
         setMenu(null)
         restore.current?.focus?.({ preventScroll: true })

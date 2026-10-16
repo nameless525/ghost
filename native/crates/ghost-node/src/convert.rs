@@ -302,11 +302,12 @@ pub fn normalization_mode(s: &str) -> Result<NormalizationMode> {
 // ---------------------------------------------------------------------------------------------
 // Outputs
 
-/// `ArchiveListing` entries: `{ path, size }`.
+/// `ArchiveListing` entries: `{ path, size, head? }`.
 #[napi(object)]
 pub struct JsArchiveEntry {
     pub path: String,
     pub size: f64,
+    pub head: Option<Buffer>,
 }
 
 /// `ArchiveListing` playlists: `{ path, text }`.
@@ -326,7 +327,7 @@ pub struct JsArchiveListing {
 impl From<ArchiveListing> for JsArchiveListing {
     fn from(l: ArchiveListing) -> Self {
         JsArchiveListing {
-            entries: l.entries.into_iter().map(|e| JsArchiveEntry { path: e.path, size: e.size as f64 }).collect(),
+            entries: l.entries.into_iter().map(|e| JsArchiveEntry { path: e.path, size: e.size as f64, head: e.head.map(Buffer::from) }).collect(),
             playlists: l.playlists.into_iter().map(|(path, text)| JsArchivePlaylist { path, text }).collect(),
         }
     }

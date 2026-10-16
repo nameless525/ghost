@@ -113,9 +113,9 @@ describe('DownloadManager', () => {
     await t.settle()
     expect(t.catalog.failedMarks).toEqual([{ trackId: 't1', cacheKey: 't1#a', reason: 'HTTP 404' }])
     expect(t.downloadCall(1).source).toEqual(httpSource('t1', 'b').source)
-    expect(t.downloadCall(1).id).toBe(id)
+    expect(t.downloadCall(1).id).not.toBe(id) // each engine attempt has its own id
     expect((await t.byTrack('t1')).status).toBe('downloading')
-    t.engine.emit({ type: 'download', downloadId: id, status: 'error', bytes: 0, totalBytes: null, error: 'disk full' })
+    t.engine.emit({ type: 'download', downloadId: t.downloadCall(1).id, status: 'error', bytes: 0, totalBytes: null, error: 'disk full' })
     await t.settle()
     expect(await t.byTrack('t1')).toMatchObject({ status: 'error', error: 'disk full' })
     expect(t.bc.of('notify').some((n) => n.kind === 'error' && n.title.includes('Song 1'))).toBe(true)
@@ -134,7 +134,7 @@ describe('DownloadManager', () => {
     expect(t.catalog.resolveCalls.filter((c) => c.trackId === 't1').length).toBe(resolves + 1)
     expect(t.downloadCall(1).source).toMatchObject({ url: 'https://cdn.example/t1/fresh.mp3' })
     // a second 403 is a real failure: on to the next source, no more re-resolving
-    t.engine.emit({ type: 'download', downloadId: id, status: 'error', bytes: 0, totalBytes: null, error: 'stream failed: HTTP 403' })
+    t.engine.emit({ type: 'download', downloadId: t.downloadCall(1).id, status: 'error', bytes: 0, totalBytes: null, error: 'stream failed: HTTP 403' })
     await t.settle()
     expect(t.downloadCall(2).source).toEqual(httpSource('t1', 'b').source)
     expect(t.catalog.resolveCalls.filter((c) => c.trackId === 't1').length).toBe(resolves + 1)
@@ -162,10 +162,10 @@ describe('DownloadManager', () => {
     expect((await t.byTrack('t4')).status).toBe('canceled')
     await t.dm.cancel(active.id)
     await t.settle()
-    expect(t.engine.callsOf('cancelDownload')).toEqual([[active.id]])
+    expect(t.engine.callsOf('cancelDownload')).toEqual([[t.downloadCall(0).id]])
     expect((await t.byTrack('t1')).status).toBe('canceled')
     // a late 'canceled' from the engine is harmless
-    t.engine.emit({ type: 'download', downloadId: active.id, status: 'canceled', bytes: 0, totalBytes: null })
+    t.engine.emit({ type: 'download', downloadId: t.downloadCall(0).id, status: 'canceled', bytes: 0, totalBytes: null })
     expect((await t.byTrack('t1')).status).toBe('canceled')
     // t4 was canceled while queued, so nothing new started
     expect(t.engine.callsOf('download')).toHaveLength(3)
@@ -176,7 +176,7 @@ describe('DownloadManager', () => {
     // done items can't be canceled
     const { id, dest } = t.downloadCall(3)
     t.engine.emit({ type: 'download', downloadId: id, status: 'done', bytes: 1, totalBytes: 1, path: dest })
-    await t.dm.cancel(id)
+    await t.dm.cancel(active.id)
     expect((await t.byTrack('t1')).status).toBe('done')
   })
 
@@ -312,6 +312,128 @@ describe('DownloadManager', () => {
     expect(t.bc.last('downloads:changed')![0].bytes).toBe(100_000) // trailing update delivered
   })
 
+  it('a cancel while the tags load launches nothing and frees the file name', async () => {
+    const t = setup()
+    let release!: () => void
+    const held = new Promise<null>((r) => (release = () => r(null)))
+    t.catalog.getAnalysis = () => held
+    await t.dm.enqueue({ trackIds: ['t1'] })
+    await flush()
+    const item = await t.byTrack('t1')
+    expect(item.status).toBe('resolving')
+    await t.dm.cancel(item.id)
+    release()
+    await t.settle()
+    expect(t.engine.callsOf('download')).toHaveLength(0)
+    expect((await t.byTrack('t1')).status).toBe('canceled')
+    expect(t.lib.library.downloads.get(item.id)!.status).toBe('canceled')
+    // the released name goes to the next download that wants it
+    t.catalog.getAnalysis = async () => null
+    t.catalog.addTracks(makeTrack('again', { number: 1, title: 'Song 1', gameName: 'Chrono Trigger', albumTitle: 'Chrono Trigger OSV' }))
+    await t.dm.enqueue({ trackIds: ['again'] })
+    await t.settle()
+    expect(t.downloadCall(0).dest).toBe(dl('Chrono Trigger/Chrono Trigger OSV (1995)/1-01 Song 1.mp3'))
+  })
+
+  it("a canceled attempt's late events and its coroutine can't touch the retry", async () => {
+    const t = setup()
+    await t.dm.enqueue({ trackIds: ['t1'] })
+    await t.settle()
+    const old = t.downloadCall(0)
+    const rec = await t.byTrack('t1')
+    await t.dm.cancel(rec.id)
+    let open!: () => void
+    t.catalog.gate = new Promise((r) => (open = r))
+    await t.dm.retry(rec.id)
+    await flush()
+    // the old attempt reports while the retry resolves its source...
+    t.engine.emit({ type: 'download', downloadId: old.id, status: 'progress', bytes: 1, totalBytes: 2 })
+    t.engine.emit({ type: 'download', downloadId: old.id, status: 'canceled', bytes: 0, totalBytes: null })
+    expect((await t.byTrack('t1')).status).toBe('resolving')
+    // ...a second cancel + retry mid-resolution leaves one coroutine to launch...
+    await t.dm.cancel(rec.id)
+    await t.dm.retry(rec.id)
+    open()
+    t.catalog.gate = null
+    await t.settle()
+    expect(t.engine.callsOf('download')).toHaveLength(2)
+    const next = t.downloadCall(1)
+    expect(next.id).not.toBe(old.id)
+    expect((await t.byTrack('t1')).status).toBe('downloading')
+    // ...and once it runs, the old attempt's 'done' is still not this one's
+    t.engine.emit({ type: 'download', downloadId: old.id, status: 'done', bytes: 9, totalBytes: 9, path: old.dest })
+    expect((await t.byTrack('t1')).status).toBe('downloading')
+    t.files.add(next.dest)
+    t.engine.emit({ type: 'download', downloadId: next.id, status: 'done', bytes: 9, totalBytes: 9, path: next.dest })
+    expect(await t.byTrack('t1')).toMatchObject({ status: 'done', path: next.dest })
+  })
+
+  it('an engine that fails at once (the null engine) ends the item in error, never downloading', async () => {
+    const t = setup()
+    vi.spyOn(t.engine, 'download').mockImplementation((id) => t.engine.emit({ type: 'download', downloadId: id, status: 'error', bytes: 0, totalBytes: null, error: 'Audio engine unavailable: test' }))
+    await t.dm.enqueue({ trackIds: ['t1'] })
+    await t.settle()
+    expect(await t.byTrack('t1')).toMatchObject({ status: 'error', error: 'Audio engine unavailable: test' })
+    expect(t.bc.of('downloads:changed').some((xs) => xs.some((d) => d.status === 'downloading'))).toBe(false)
+  })
+
+  it('overlapping requests queue each track once', async () => {
+    const t = setup()
+    await Promise.all([t.dm.enqueue({ trackIds: ['t1'] }), t.dm.enqueue({ trackIds: ['t1'] }), t.dm.enqueue({ albumId: 'al1' })])
+    await t.settle()
+    expect((await t.items()).map((d) => d.trackId).sort()).toEqual(['t1', 't2', 't3', 't4', 't5', 't6'])
+    expect((t.db.prepare("SELECT COUNT(*) AS n FROM downloads WHERE track_id = 't1'").get() as { n: number }).n).toBe(1)
+    expect(new Set(t.engine.callsOf('download').map((c) => (c[3] as TagInfo).title)).size).toBe(3)
+  })
+
+  it("retry won't queue a track a newer download already covers", async () => {
+    const t = setup()
+    t.catalog.sources.set('t1', [])
+    await t.dm.enqueue({ trackIds: ['t1'] })
+    await t.settle()
+    const failed = await t.byTrack('t1')
+    expect(failed.status).toBe('error')
+    t.catalog.sources.delete('t1')
+    await t.dm.enqueue({ trackIds: ['t1'] })
+    await t.settle()
+    await t.dm.retry(failed.id)
+    await t.settle()
+    expect((await t.items()).find((d) => d.id === failed.id)!.status).toBe('error')
+    expect(t.engine.callsOf('download')).toHaveLength(1)
+    expect(t.bc.last('notify')).toMatchObject({ kind: 'info', title: 'Already downloading' })
+    // once that one is on disk, retrying the old failure would only make a copy
+    const { id, dest } = t.downloadCall(0)
+    t.files.add(dest)
+    t.engine.emit({ type: 'download', downloadId: id, status: 'done', bytes: 1, totalBytes: 1, path: dest })
+    await t.dm.retry(failed.id)
+    expect(t.bc.last('notify')).toMatchObject({ kind: 'info', title: 'Already downloaded' })
+    expect(t.engine.callsOf('download')).toHaveLength(1)
+  })
+
+  it('names renders .flac, keeps them apart from each other and from FLAC files, and records the path the engine reports', async () => {
+    const dir = 'Chrono Trigger/Chrono Trigger OSV (1995)/'
+    const t = setup({ files: new Set([dl(dir + '1-01 Song.flac')]) })
+    const song = (id: string) => makeTrack(id, { number: 1, title: 'Song', gameName: 'Chrono Trigger', albumTitle: 'Chrono Trigger OSV' })
+    t.catalog.addTracks(song('clip'), song('chip'), song('lossless'))
+    t.catalog.sources.set('clip', [httpSource('clip', 'a', { format: 'wav', source: { kind: 'file', path: '/rips/Song.wav', clipStartMs: 0, clipEndMs: 900 } })])
+    t.catalog.sources.set('chip', [httpSource('chip', 'a', { format: 'chip', source: { kind: 'http', url: 'https://x/set.7z', cacheKey: 'set', archiveEntry: 'Song.nsf', subsong: 2 } })])
+    t.catalog.sources.set('lossless', [httpSource('lossless', 'a', { format: 'flac', source: { kind: 'http', url: 'https://x/Song.flac', cacheKey: 'lossless' } })])
+    const download = vi.spyOn(t.engine, 'download')
+    await t.dm.enqueue({ trackIds: ['clip', 'chip', 'lossless'] })
+    await t.settle()
+    expect([0, 1, 2].map((i) => t.downloadCall(i).dest)).toEqual([dl(dir + '1-01 Song (2).flac'), dl(dir + '1-01 Song (3).flac'), dl(dir + '1-01 Song (4).flac')])
+    expect(download.mock.calls.map((c) => (c as unknown[])[4])).toEqual([{ renderFlac: true }, { renderFlac: true }, { renderFlac: false }])
+    // the engine has the last word on the name (it never replaces a file)
+    const actual = dl(dir + '1-01 Song (5).flac')
+    t.files.add(actual)
+    t.engine.emit({ type: 'download', downloadId: t.downloadCall(0).id, status: 'done', bytes: 9, totalBytes: 9, path: actual })
+    await t.settle()
+    const done = await t.byTrack('clip')
+    expect(done).toMatchObject({ status: 'done', path: actual })
+    expect(t.lib.library.downloads.get(done.id)!.path).toBe(actual)
+    expect(t.lib.library.downloadedPath('clip')).toBe(actual)
+  })
+
   it('reveal and openFolder use the shell', async () => {
     const t = setup()
     await t.dm.enqueue({ trackIds: ['t1'] })
@@ -319,7 +441,7 @@ describe('DownloadManager', () => {
     const { id, dest } = t.downloadCall(0)
     t.files.add(dest)
     t.engine.emit({ type: 'download', downloadId: id, status: 'done', bytes: 1, totalBytes: 1, path: dest })
-    await t.dm.reveal(id)
+    await t.dm.reveal((await t.byTrack('t1')).id)
     expect(t.shell.revealed).toEqual([dest])
     await t.dm.openFolder()
     expect(t.shell.opened).toEqual(['/dl'])

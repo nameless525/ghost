@@ -329,16 +329,23 @@ describe('chip: tracks from an archive listing', () => {
     expect(new Set(b.tracks.map((t) => t.locator)).size).toBe(23)
   })
 
-  it('GBS set numbered from 0, with two revisions of the file', () => {
+  it('GBS set numbered from 0, with two revisions of the file: both revisions are kept', () => {
     const b = buildChipTracks(listing('tetris-gbs'), { archiveUrl: url })
-    expect(b.tracks.length).toBe(18)
     expect(b.tracks[0]).toMatchObject({ title: 'Title', durationMs: 40_009 })
     expect(sourceOf(b.tracks[0])).toMatchObject({ archiveEntry: 'DMG-TRA-0.gbs', subsong: 0 })
     expect(sourceOf(b.tracks[1])).toMatchObject({ archiveEntry: 'DMG-TRA-0.gbs', subsong: 1 })
     expect(b.tracks[1].durationMs).toBe(77_149 + 10_000)
-    // v1.1 only adds its own A-Type; the songs both revisions share appear once
+    // Equal titles don't make equal audio: v1.1's full playlist follows v1.0's, its repeated titles
+    // named after its file. The per-track playlists only repeat songs of the two.
+    expect(b.tracks.length).toBe(34)
     const v11 = b.tracks.filter((t) => sourceOf(t).archiveEntry === 'DMG-TRA-1.gbs')
-    expect(v11.map((t) => t.title)).toEqual(['A-Type Music (version 1.1)'])
+    expect(v11.length).toBe(17)
+    expect(v11.slice(0, 3).map((t) => [t.number, t.title])).toEqual([
+      [18, 'Title (DMG-TRA-1)'],
+      [19, 'A-Type Music (version 1.1)'],
+      [20, 'B-Type Music (DMG-TRA-1)']
+    ])
+    expect(new Set(b.tracks.map((t) => t.locator)).size).toBe(34)
     expect(b.tracks.find((t) => t.title.startsWith('B-Type Game: Level 9 High 5 Ending (Part 2)'))!.title).toBe('B-Type Game: Level 9 High 5 Ending (Part 2), 100000 Points')
     expect(b.composers).toEqual(['Hirokazu Tanaka'])
   })
@@ -384,7 +391,7 @@ describe('chip: tracks from an archive listing', () => {
     expect(sourceOf(silius.tracks[2]).archiveEntry).toBe('03 Stage 1, Final Stage.vgz')
   })
 
-  it('multi-song files without a playlist: one track per file, NSFe preferred over its NSF', () => {
+  it('multi-song files without a playlist or a header: one track per file, NSFe preferred over its NSF', () => {
     const b = buildChipTracks(
       { entries: [{ path: 'Game.nsf', size: 100 }, { path: 'Game.nsfe', size: 120 }, { path: 'info.txt', size: 5 }], playlists: [{ path: 'info.txt', text: 'hi' }] },
       { archiveUrl: url, gameTitle: 'Some Game' }
@@ -392,13 +399,117 @@ describe('chip: tracks from an archive listing', () => {
     expect(b.tracks.map((t) => [t.title, sourceOf(t).archiveEntry, sourceOf(t).subsong])).toEqual([['Some Game', 'Game.nsfe', undefined]])
   })
 
-  it('file name cleaning', () => {
-    expect(cleanFileTitle('101 Presentiment.spc')).toEqual({ number: 101, title: 'Presentiment' })
+  const songs = (b: { tracks: { title: string; streams?: { source: EngineSource }[] }[] }) => b.tracks.map((t) => `${sourceOf(t).archiveEntry}#${sourceOf(t).subsong ?? '-'} ${t.title}`)
+  const file = (path: string, head?: Buffer) => ({ path, size: 100, ...(head ? { head: new Uint8Array(head) } : {}) })
+
+  it('playlist lines name files relative to the playlist; a name two folders share names neither', () => {
+    const entries = [file('JP/game.nsf'), file('US/game.nsf'), file('US/extra/x.nsf')]
+    const b = buildChipTracks(
+      {
+        entries,
+        playlists: [
+          { path: 'JP/set.m3u', text: 'game.nsf::NSF,1,JP Opening\ngame.nsf::NSF,3,JP Ending\n../US/extra/x.nsf::NSF,1,Extra' },
+          { path: 'US/set.m3u', text: 'game.nsf::NSF,1,US Opening\nUS/game.nsf::NSF,2,US Ending' }
+        ]
+      },
+      { archiveUrl: url }
+    )
+    expect(songs(b)).toEqual(['JP/game.nsf#0 JP Opening', 'JP/game.nsf#2 JP Ending', 'US/extra/x.nsf#0 Extra', 'US/game.nsf#0 US Opening', 'US/game.nsf#1 US Ending'])
+    // At the root, "game.nsf" could be either file (and "../" leaves the archive): no guess.
+    const root = buildChipTracks({ entries, playlists: [{ path: 'set.m3u', text: 'game.nsf::NSF,1,Opening\ngame.nsf::NSF,2,Ending\n../game.nsf::NSF,3,Out' }] }, { archiveUrl: url })
+    expect(songs(root)).toEqual(['JP/game.nsf#- game', 'US/extra/x.nsf#- x', 'US/game.nsf#- game (US/game)'])
+    // One file of that name anywhere: found by name.
+    const moved = buildChipTracks({ entries: [file('rip/game.nsf')], playlists: [{ path: 'set.m3u', text: 'game.nsf::NSF,1,Opening\ngame.nsf::NSF,2,Ending' }] }, { archiveUrl: url })
+    expect(songs(moved)).toEqual(['rip/game.nsf#0 Opening', 'rip/game.nsf#1 Ending'])
+  })
+
+  it('a full playlist sets the order without hiding other songs: one-song playlists and files no playlist covers follow', () => {
+    const b = buildChipTracks(
+      {
+        entries: [file('main.nsf'), file('bonus.nsf'), file('bonus.spc'), file('02 Extra.vgm')],
+        playlists: [
+          { path: 'main.m3u', text: 'main.nsf::NSF,1,Opening\nmain.nsf::NSF,2,Ending' },
+          // per-track playlists of songs the full one has, and one of a song it hasn't
+          { path: '01 Opening.m3u', text: 'main.nsf::NSF,1,Opening,1:00' },
+          { path: '03 Bonus Song.m3u', text: 'bonus.nsf::NSF,1,' }
+        ]
+      },
+      { archiveUrl: url, gameTitle: 'Game' }
+    )
+    expect(b.tracks.map((t) => [t.number, `${sourceOf(t).archiveEntry}#${sourceOf(t).subsong ?? '-'}`, t.title])).toEqual([
+      [1, 'main.nsf#0', 'Opening'],
+      [2, 'main.nsf#1', 'Ending'],
+      [3, 'bonus.nsf#0', 'Bonus Song'],
+      [4, '02 Extra.vgm#-', 'Extra'],
+      [5, 'bonus.spc#-', 'bonus']
+    ])
+  })
+
+  it('songs of different files with the same title all stay; a repeated reference to one song is one track', () => {
+    const b = buildChipTracks(
+      {
+        entries: [file('FM.kss'), file('PSG.kss')],
+        playlists: [
+          { path: 'FM.m3u', text: 'FM.kss::KSS,0,Opening\nFM.kss::KSS,1,Ending' },
+          { path: 'PSG.m3u', text: 'PSG.kss::KSS,0,Opening\nPSG.kss::KSS,1,Ending\nPSG.kss::KSS,0,Opening' },
+          { path: 'Opening.m3u', text: 'FM.kss::KSS,0,Opening' }
+        ]
+      },
+      { archiveUrl: url }
+    )
+    expect(songs(b)).toEqual(['FM.kss#0 Opening', 'FM.kss#1 Ending', 'PSG.kss#0 Opening (PSG)', 'PSG.kss#1 Ending (PSG)'])
+  })
+
+  it('a multi-song file without a playlist: a track per song from its header, titled from an NSFe', () => {
+    const nsf = (n: number) => {
+      const b = Buffer.alloc(0x80)
+      b.write('NESM\x1a', 0, 'latin1')
+      b[6] = n
+      b[7] = 1
+      return b
+    }
+    const gbs = Buffer.alloc(0x70)
+    gbs.write('GBS', 0, 'latin1')
+    gbs[4] = 2
+    gbs[5] = 1
+    const chunk = (id: string, data: Buffer) => {
+      const h = Buffer.alloc(8)
+      h.writeUInt32LE(data.length, 0)
+      h.write(id, 4, 'latin1')
+      return Buffer.concat([h, data])
+    }
+    const times = Buffer.alloc(8)
+    times.writeInt32LE(60_000, 0)
+    times.writeInt32LE(-1, 4)
+    const nsfe = Buffer.concat([Buffer.from('NSFE', 'latin1'), chunk('INFO', Buffer.from([0, 0x80, 0, 0x80, 0, 0x80, 0, 0, 2, 0])), chunk('tlbl', Buffer.from('Overworld\0Dungeon\0')), chunk('time', times), chunk('NEND', Buffer.alloc(0))])
+    const one = (entries: ReturnType<typeof file>[]) => buildChipTracks({ entries, playlists: [] }, { archiveUrl: url, gameTitle: 'Game' })
+    expect(songs(one([file('Game.nsf', nsf(3))]))).toEqual(['Game.nsf#0 Song 1', 'Game.nsf#1 Song 2', 'Game.nsf#2 Song 3'])
+    expect(one([file('Game.nsf', nsf(3))]).tracks.map((t) => t.number)).toEqual([1, 2, 3])
+    const titled = one([file('Game.nsf', nsf(2)), file('Game.nsfe', nsfe)])
+    expect(titled.tracks.map((t) => [`${sourceOf(t).archiveEntry}#${sourceOf(t).subsong}`, t.title, t.durationMs])).toEqual([
+      ['Game.nsfe#0', 'Overworld', 60_000 + 10_000],
+      ['Game.nsfe#1', 'Dungeon', null]
+    ])
+    // Two files: each song's title says which file it is from.
+    expect(songs(one([file('A.gbs', gbs), file('B.gbs', gbs)]))).toEqual(['A.gbs#0 Song 1', 'A.gbs#1 Song 2', 'B.gbs#0 Song 1 (B)', 'B.gbs#1 Song 2 (B)'])
+    // One song, or a header that says nothing of the count (HES, KSS): one track, the first song.
+    expect(songs(one([file('Game.nsf', nsf(1))]))).toEqual(['Game.nsf#- Game'])
+    expect(songs(one([file('Game.hes', Buffer.from('HESM'))]))).toEqual(['Game.hes#- Game'])
+    // A playlist decides for the file it covers.
+    expect(songs(buildChipTracks({ entries: [file('Game.nsf', nsf(3))], playlists: [{ path: 'Game.m3u', text: 'Game.nsf::NSF,2,Only' }] }, { archiveUrl: url }))).toEqual(['Game.nsf#1 Only'])
+  })
+
+  it('file name cleaning: takes a name without its extension, keeps every dot in it', () => {
+    expect(cleanFileTitle('101 Presentiment')).toEqual({ number: 101, title: 'Presentiment' })
     expect(cleanFileTitle('01.Opening')).toEqual({ number: 1, title: 'Opening' })
     expect(cleanFileTitle('01 - Title')).toEqual({ number: 1, title: 'Title' })
-    expect(cleanFileTitle('Sonic The Hedgehog - 03 - Green Hill Zone.vgm')).toEqual({ number: 3, title: 'Green Hill Zone' })
-    expect(cleanFileTitle('Green_Hill_Zone.vgz')).toEqual({ number: null, title: 'Green Hill Zone' })
-    expect(cleanFileTitle('3D World Runner.nsf')).toEqual({ number: null, title: '3D World Runner' })
+    expect(cleanFileTitle('Sonic The Hedgehog - 03 - Green Hill Zone')).toEqual({ number: 3, title: 'Green Hill Zone' })
+    expect(cleanFileTitle('Green_Hill_Zone')).toEqual({ number: null, title: 'Green Hill Zone' })
+    expect(cleanFileTitle('3D World Runner')).toEqual({ number: null, title: '3D World Runner' })
+    // Short titles after a dot were taken for an extension ("01.Intro" → "01").
+    for (const t of ['A', 'Up', 'End', 'Boss', 'Intro', 'Ending']) expect(cleanFileTitle(`01.${t}`)).toEqual({ number: 1, title: t })
+    expect(cleanFileTitle('Super Mario Bros.3')).toEqual({ number: null, title: 'Super Mario Bros.3' })
+    expect(cleanFileTitle('07 Dr. Wily')).toEqual({ number: 7, title: 'Dr. Wily' })
   })
 })
 

@@ -6,7 +6,10 @@
 //! filter structure and coefficients, same flushing of tiny filter states at every 100 ms
 //! process boundary, the same summation order for every gating block (including the ring-buffer
 //! rotation ebur128's sums follow), the same gating and percentile arithmetic, and the same
-//! f32 polyphase true-peak interpolator. `tests` below compare against `ebur128` directly.
+//! f32 polyphase true-peak interpolator. `tests` below compare against `ebur128` directly. One
+//! deliberate difference: true peak also drains the interpolator at the end (as ebur128 does
+//! when the track is followed by a few frames of silence), so a peak between the last samples
+//! counts.
 //! (On x86 ebur128 enables flush-to-zero instead of flushing; there the two can differ only once
 //! a filter state has decayed into the subnormal range, i.e. not measurably.)
 //!
@@ -26,6 +29,10 @@ use rayon::prelude::*;
 pub(crate) const SERIES_HOP_SEC: f32 = 0.1;
 /// Value used for silent blocks (ebur128 reports -inf).
 pub(crate) const SILENCE_LUFS: f32 = -120.0;
+/// Lowest sample rate measured. K-weighting's 1.68 kHz high shelf has to lie below Nyquist:
+/// below 3.36 kHz its bilinear design is meaningless and mostly unstable (poles outside the unit
+/// circle: the filter diverges to inf / NaN).
+pub(crate) const MIN_RATE: u32 = 4_000;
 
 /// ebur128's lowest histogram boundary (≈ -70 LUFS): blocks quieter than this are never stored.
 #[allow(clippy::excessive_precision)]
@@ -67,7 +74,7 @@ fn clean(x: f32) -> f32 {
 /// filter history, which changes the gating sums' rounding order). The K-weighted pass and true
 /// peak run in parallel.
 pub(crate) fn measure(samples: &[f32], channels: usize, sample_rate: u32, series: bool, lra: bool) -> LoudnessPass {
-    if channels == 0 || sample_rate < 16 || samples.len() < channels {
+    if channels == 0 || sample_rate < MIN_RATE || samples.len() < channels {
         return LoudnessPass::default();
     }
     let usable = samples.len() - samples.len() % channels;
@@ -86,7 +93,7 @@ pub(crate) struct LoudnessStream {
 }
 
 impl LoudnessStream {
-    /// `channels >= 1`, `sample_rate >= 16`.
+    /// `channels >= 1`, `sample_rate >= MIN_RATE`.
     pub fn new(channels: usize, sample_rate: u32, series: bool, lra: bool) -> Self {
         Self { k: KPass::new(channels, sample_rate, series, lra), tp: TpStream::new(channels, sample_rate), series, lra }
     }
@@ -977,7 +984,11 @@ impl TpStream {
         }
     }
 
-    fn finish(&self) -> Option<f32> {
+    fn finish(mut self) -> Option<f32> {
+        // The interpolator lags its input by up to `A - 1` frames: the reconstructed waveform
+        // between the last samples only comes out once silence follows them.
+        let tail = vec![0.0; self.hist.len()];
+        self.push(&tail);
         let peak = self.peak as f64;
         if peak > 0.0 && peak.is_finite() {
             Some((20.0 * peak.log10()) as f32)
@@ -1041,10 +1052,16 @@ mod tests {
         e.add_frames_f32(samples).unwrap();
         let i = e.loudness_global().unwrap();
         let r = lra.then(|| e.loudness_range().unwrap());
+        (i, r, reference_true_peak(samples, channels, rate))
+    }
+
+    /// ebur128's true peak of the track followed by enough silence to drain its interpolator
+    /// (at most 23 frames, at 2x).
+    fn reference_true_peak(samples: &[f32], channels: usize, rate: u32) -> f64 {
         let mut t = EbuR128::new(channels as u32, rate, Mode::TRUE_PEAK).unwrap();
         t.add_frames_f32(samples).unwrap();
-        let tp = (0..channels as u32).map(|c| t.prev_true_peak(c).unwrap()).fold(0.0f64, f64::max);
-        (i, r, tp)
+        t.add_frames_f32(&vec![0.0; 23 * channels]).unwrap();
+        (0..channels as u32).map(|c| t.true_peak(c).unwrap()).fold(0.0f64, f64::max)
     }
 
     /// Integrated loudness, LRA and true peak equal ebur128's to the last bit.
@@ -1149,6 +1166,35 @@ mod tests {
             t.push(&s[..cut * 2]);
             t.push(&s[cut * 2..]);
             assert_eq!(t.finish(), true_peak(&s, 2, 44_100), "stream cut {cut}");
+        }
+    }
+
+    /// A peak between the very last samples counts: whole-track and chunked measurement agree
+    /// with the drained reference, and appending silence changes nothing.
+    #[test]
+    fn true_peak_includes_the_end_of_the_track() {
+        for (channels, rate) in [(1usize, 44_100u32), (1, 48_000), (2, 96_000), (2, 44_100)] {
+            // A second of silence, then an abrupt [0.7, -0.7, -0.7, 0.7] (its overshoot lies
+            // between the two -0.7s) in the last channel.
+            let mut s = vec![0.0f32; rate as usize * channels];
+            for v in [0.7f32, -0.7, -0.7, 0.7] {
+                s.extend(std::iter::repeat_n(0.0, channels - 1));
+                s.push(v);
+            }
+            let whole = measure(&s, channels, rate, false, true).true_peak_db.unwrap();
+            let mut padded = s.clone();
+            padded.extend(std::iter::repeat_n(0.0, 48 * channels));
+            assert_eq!(whole.to_bits(), measure(&padded, channels, rate, false, true).true_peak_db.unwrap().to_bits(), "{channels}ch {rate}");
+            let reference = (20.0 * reference_true_peak(&s, channels, rate).log10()) as f32;
+            assert_eq!(whole.to_bits(), reference.to_bits(), "{channels}ch {rate}: {whole} vs {reference}");
+            assert!(whole > 0.5, "{channels}ch {rate}: {whole} dBTP (sample peak is -3.1 dB)");
+            for cut in [1, 2, 3, 5, 4800] {
+                let at = s.len() - cut * channels;
+                let mut l = LoudnessStream::new(channels, rate, false, true);
+                l.push(&s[..at]);
+                l.push(&s[at..]);
+                assert_eq!(l.finish().true_peak_db.map(f32::to_bits), Some(whole.to_bits()), "{channels}ch {rate}: cut {cut}");
+            }
         }
     }
 

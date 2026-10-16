@@ -1,6 +1,6 @@
 // The catalog worker's RPC (client.ts ↔ server.ts) over an in-process MessageChannel: the same code
 // the worker thread runs, minus the thread. Page requests go worker → main through the fetch
-// transport (net/rpc-fetch.ts) and are answered from fixtures.
+// transport (net/rpc-fetch.ts, tested there) and are answered from fixtures.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,9 +10,9 @@ import { defaultSettings } from '../../shared/defaults'
 import type { CatalogStatus, Settings } from '../../shared/types'
 import type { OfflineAnalysisResult } from '../engine/types'
 import { errorCode, isNetError, NetError } from '../net/errors'
-import type { FetchLike } from '../net/http'
+import { createHostScheduler, type FetchLike } from '../net/http'
 import { RpcEndpoint, transfer } from '../net/rpc'
-import { remoteFetch, serveFetch, type WireRequest, type WireResponse } from '../net/rpc-fetch'
+import { serveFetch } from '../net/rpc-fetch'
 import { CatalogClient } from './client'
 import { DatabaseSync } from 'node:sqlite'
 import { tx } from '../db'
@@ -94,46 +94,6 @@ describe('RPC endpoint', () => {
   })
 })
 
-describe('fetch transport', () => {
-  it('runs requests on the other side and rebuilds the Response; aborts propagate', async () => {
-    const { port1, port2 } = new MessageChannel()
-    let aborted = false
-    const mainFetch: FetchLike = async (url, init) => {
-      if (url.endsWith('/hang')) {
-        return await new Promise<Response>((_r, reject) =>
-          init?.signal?.addEventListener('abort', () => {
-            aborted = true
-            reject(new Error('aborted'))
-          })
-        )
-      }
-      expect((init as RequestInit & { cache?: string }).cache).toBe('no-store')
-      const h = new Headers(init?.headers)
-      return new Response(`<p>${h.get('accept')}</p>`, { status: 201, headers: { 'content-type': 'text/html', 'x-test': '1' } })
-    }
-    new RpcEndpoint(port1, {
-      fetch: async ([req], ctx) => {
-        const r = await serveFetch(mainFetch, req as WireRequest, ctx.signal)
-        return transfer(r.res, r.transfer)
-      }
-    })
-    const worker = new RpcEndpoint(port2)
-    const f = remoteFetch((req, o) => worker.call<WireResponse>('fetch', [req], o))
-    const res = await f('https://example.test/page', { headers: { Accept: 'text/html' } })
-    expect(res.status).toBe(201)
-    expect(res.url).toBe('https://example.test/page')
-    expect(res.headers.get('x-test')).toBe('1')
-    expect(await res.text()).toBe('<p>text/html</p>')
-    const ac = new AbortController()
-    const hung = f('https://example.test/hang', { signal: ac.signal })
-    setTimeout(() => ac.abort(), 20)
-    expect(await hung.catch((e) => (e as Error).name)).toBe('AbortError')
-    await until(() => aborted)
-    port1.close()
-    port2.close()
-  })
-})
-
 describe('catalog worker (client ↔ server)', () => {
   const settings: Settings = defaultSettings('/tmp/ghost-dl')
   const statuses: CatalogStatus[] = []
@@ -157,11 +117,12 @@ describe('catalog worker (client ↔ server)', () => {
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'ghost-worker-test-'))
     ch = new MessageChannel()
+    const scheduler = createHostScheduler({ fetch: mainFetch })
     client = new CatalogClient({
       broadcast: ((event: string, payload: CatalogStatus) => {
         if (event === 'catalog:status') statuses.push(payload)
       }) as never,
-      fetch: (req, signal) => serveFetch(mainFetch, req, signal),
+      fetch: (req, signal) => serveFetch(scheduler, req, signal),
       log: () => {}
     })
     // Calls made before a worker is attached are queued.

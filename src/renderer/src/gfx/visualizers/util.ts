@@ -11,6 +11,11 @@ export function pcolor(rgb: number, alpha: number): number {
   return bgr + (a << 24)
 }
 
+/** Seconds driving decorative idle motion (shimmer, idle waves): held still under Reduce motion. */
+export function idleSeconds(f: { now: number; reduce: boolean }): number {
+  return f.reduce ? 0 : f.now / 1000
+}
+
 const tmpRgb: RGB = [0, 0, 0]
 const tmpIn: RGB = [0, 0, 0]
 

@@ -6,6 +6,7 @@ import { ghost } from '../../ghost'
 import { tween } from '../../motion/tween'
 import { GhostMark } from '../../ui/GhostMark'
 import { cx, useEvent } from '../../ui/util'
+import { CatalogRefresh } from './catalog-refresh'
 import './common.css'
 
 export type LibraryKind = GhostEvents['library:changed']['kind']
@@ -25,9 +26,10 @@ export interface Live<T> {
 /**
  * Load something from the backend and keep it fresh on `library:changed` events of the given
  * kinds. While `active` is false (overlay closed / tab hidden) refreshes are deferred until it
- * becomes active again. Bursts of events are coalesced.
+ * becomes active again. Bursts of events are coalesced. `catalog`: it's a query over the catalog
+ * (a smart playlist), so it's also refreshed when the catalog's data changes (throttled).
  */
-export function useLive<T>(load: () => Promise<T>, kinds: LibraryKind[], active = true, filter?: (e: GhostEvents['library:changed']) => boolean): Live<T> {
+export function useLive<T>(load: () => Promise<T>, kinds: LibraryKind[], active = true, filter?: (e: GhostEvents['library:changed']) => boolean, opts: { catalog?: boolean } = {}): Live<T> {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
@@ -36,10 +38,12 @@ export function useLive<T>(load: () => Promise<T>, kinds: LibraryKind[], active 
   const timer = useRef(0)
   const activeRef = useRef(active)
   activeRef.current = active
+  const catalogRefresh = useRef<CatalogRefresh | null>(null)
 
   const run = useEvent(() => {
     const my = ++seq.current
     stale.current = false
+    catalogRefresh.current?.loading()
     setLoading(true)
     load().then(
       (d) => {
@@ -76,6 +80,24 @@ export function useLive<T>(load: () => Promise<T>, kinds: LibraryKind[], active 
       window.clearTimeout(timer.current)
     }
   }, [kindKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const catalog = !!opts.catalog
+  useEffect(() => {
+    if (!catalog) return
+    const c = (catalogRefresh.current = new CatalogRefresh(
+      run,
+      () => activeRef.current,
+      () => {
+        stale.current = true
+      }
+    ))
+    const off = ghost().on('catalog:status', (s) => c.status(s.revision, s.indexing))
+    return () => {
+      off()
+      c.dispose()
+      catalogRefresh.current = null
+    }
+  }, [catalog, run])
 
   useEffect(() => {
     if (active && stale.current) run()

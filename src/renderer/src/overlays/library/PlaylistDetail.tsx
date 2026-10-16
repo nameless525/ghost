@@ -39,7 +39,14 @@ export interface PlaylistDetailViewProps {
 
 export function PlaylistDetailView({ initial, from, active, onBack, onOpenPlaylist }: PlaylistDetailViewProps) {
   const id = initial.id
-  const live = useLive<PlaylistDetail>(() => ghost().library.playlists.get(id), ['playlists', 'likes', 'downloaded'], active, (e) => e.kind !== 'playlists' || !e.id || e.id === id)
+  // A smart playlist is a query over the catalog: it changes as the catalog does.
+  const live = useLive<PlaylistDetail>(
+    () => ghost().library.playlists.get(id),
+    ['playlists', 'likes', 'downloaded'],
+    active,
+    (e) => e.kind !== 'playlists' || !e.id || e.id === id,
+    { catalog: initial.kind === 'smart' }
+  )
   const [items, setItems] = useState<TrackListItem[] | null>(null)
   const p = live.data?.playlist ?? initial
   const smart = p.kind === 'smart'
@@ -246,11 +253,12 @@ export function PlaylistDetailView({ initial, from, active, onBack, onOpenPlayli
             onMove={move}
             onRemove={smart ? undefined : remove}
             onPlay={(i) => {
-              void ghost().player.playPlaylist(id, i)
+              // The rows shown, by id: a smart query evaluated again in main could put another song at i.
+              void ghost().player.playTracks(items.map((it) => it.track.id), i, ctx)
             }}
           />
         )}
-        {smart && items && items.length > 0 && <div className="lib-detail__note">Smart playlists are ordered by the query. Duplicate it to get a hand-sortable copy.</div>}
+        {smart && items && items.length > 0 && <div className="lib-detail__note">Smart playlists are ordered by the query. Duplicate it to get a hand-sortable copy of these tracks.</div>}
       </ScrollArea>
     </div>
   )

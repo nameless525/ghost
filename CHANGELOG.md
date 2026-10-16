@@ -1,5 +1,114 @@
 # Changelog
 
+## 0.4.1 (2026-10-16)
+
+### Your music folders show up in Browse
+- **Albums in the music folders you add now appear in Browse**, under their games and marked **Local**, and play from your files, even offline or before the catalog is built. Until now your files only stood in for tracks GHOST already knew from another source: a soundtrack it didn't know never showed up at all.
+- Albums are grouped by their tags (album and album artist), or by folder for files without tags. An untagged rip split into "CD1" and "Disc 2" folders is one album with two discs. Retagging a file keeps its likes, playlists and history.
+- Adding a folder shows an "Updating albums" step, and the "Added …" notice appears once the albums are in Browse.
+- If a folder or drive can't be read during a rescan (permissions, a disconnected drive), GHOST no longer forgets the music in it, and tells you which folders it couldn't open.
+- The right local file is found even among hundreds of tracks with the same name ("Main Theme").
+- Local albums don't have cover art yet: GHOST doesn't read art embedded in files.
+
+### Opus plays
+- **Opus audio now plays and downloads:** local `.opus` files, and the Opus streams YouTube and SoundCloud offer. GHOST had no Opus decoder, so these failed with "unsupported codec". Internet Archive items with only Opus files are offered now too.
+
+### Playback
+- **Your latest choice wins.** Clicking a second album or playlist while the first is still loading can no longer be overridden when the first one finishes loading, in Browse or anywhere else. Pausing while it loads starts it paused.
+- **Skipping to the next track starts right away,** using the audio GHOST had already buffered for it, instead of opening the file again.
+- A track you resumed keeps playing when its source fails and a backup takes over (the backup used to start paused).
+- Previewing songs one after another no longer cancels the newer preview or briefly resumes the queue. A preview that's still loading no longer cuts into music you resumed, and stops when you move to another album or change the search; pressing P again while it loads cancels it.
+- Removing the current track during a preview plays the next one once the preview ends.
+- A queue whose tracks open but never play stops after one round instead of retrying forever.
+- History no longer counts a short listen because you skipped to a shorter track, and no longer misses a real listen to a short track when you skip to a longer one.
+- **Tracker modules with more than 31 channels:** each of up to 64 channel pills mutes or solos exactly its own channel. Channel 32 used to unmute everything and channel 33 muted channel 1. A pill no longer shows a mute that didn't happen.
+- **Surround files keep every speaker** when mixed to stereo. In quad and 5.0 files, one or two channels used to go silent.
+- Chip tracks with long quiet passages no longer end early or skip their opening silence, and their loops stay on the beat.
+- **Crossfade waits for the next song to be ready** instead of fading the current one out to silence when the next is still loading.
+- **Changing the loop mode during a track** updates its length. Endless no longer crossfades or skips to the next track at the old length, and switching back from Endless fades the track out from where it is instead of stopping it dead.
+- Seeking while paused no longer shows the track as loading, and pausing while it buffers shows Paused.
+- Stopping a preview whose stream had stalled stops it at once: the music comes back to full volume and nothing of the preview plays later.
+- The current song keeps its progress after you browse through many previews, and switching the output device no longer restarts it.
+- Previews drive the visualizer even when nothing else has been played.
+- A server that stalls no longer blocks retrying a track or fetching a fresh link for it. Slow connections that keep sending are never cut off.
+
+### Browse and search
+- **Pressing Enter right after typing a search plays what the search finds,** not the soundtrack that was selected before. If nothing matches, it searches online.
+- Confirming a Japanese, Chinese or Korean input candidate with Enter no longer submits the search.
+- **Groups with more than 1,000 albums** (a platform, a year) can be scrolled to the end. Their totals show a "+" until every album has loaded.
+- Sorting platform, year, composer or franchise groups by **Length** orders them by running time (it sorted by album count), unknown lengths last.
+- A soundtrack whose album list failed to load says so, with **Click to try again**, instead of "No albums match", and playing it tries again.
+- Browse keeps your selected game while the catalog refreshes during indexing.
+- Likes and downloads made in the Library or on the Play screen show in Browse at once, and searches like `liked=yes` update straight away, in grouped views too.
+- Under Album grouping, an album whose tracks changed is refreshed when you come back to it.
+- Searching a game's alternative or Japanese title finds its tracks too, including in smart playlists, and track search keeps up when an album moves to another game.
+- `composer=光田` and other one- or two-character composer filters find per-track credits; `source=lossy` includes tracks whose resolved source is lossy; `length=3:30.5` matches the same tracks as `length=210.5s`.
+- With a footer button focused from the keyboard, Enter presses that button instead of playing the selection.
+
+### Downloads, playlists and the library
+- **Two downloads can no longer end up as the same file.** Downloads GHOST converts to FLAC (chiptune and tracker formats, chapters of a long video) are named `.flac` from the start, and a name that's taken is never overwritten.
+- Clicking Download twice quickly, or downloading a track and then its album, no longer downloads the track twice. Retrying an old failed download of a track that's already downloading or downloaded says so instead of making a copy.
+- Canceling a download while it starts, or retrying it right after canceling, no longer leaves it stuck on "Downloading" (or still writes the file).
+- When a downloaded file is deleted outside GHOST, the track can be downloaded again right away from Browse, and opening Downloaded no longer forgets a fresh re-download of a missing file.
+- **Duplicating a smart playlist** gives a regular playlist of its current tracks that you can reorder, as its hint promised.
+- Open smart playlists and their cards update as you like or download tracks and as the catalog grows, and clicking a row plays exactly the song you clicked.
+- M3U export no longer writes a chapter of a long video, or a track inside a chiptune archive, as the whole file: it uses another source a plain player can open, or leaves the track out and tells you how many (download them to include them).
+- In playlists with tracks no longer in the catalog, reordering and undoing a removal affect the right track. Deleting playlists down to five no longer leaves some hidden behind a filter you can't clear.
+- Pressing Escape in the download naming template really cancels the edit (it was saved a moment later anyway).
+
+### Sources
+- **Fallback sources must actually be the track.** The Internet Archive and Bandcamp no longer stand in with a remix, a cover or another cut of the piece, and no source plays "Boss Battle 2" for "Boss Battle 1".
+- **Chiptune rip sets list every song:** songs in bonus playlists, loose SPC and VGM files beside a playlist, every song of a multi-song NSF, NSFE or GBS file without a playlist (with NSFE titles), and same-titled songs from different files (FM and PSG versions, revisions), labelled with their file. Regional copies in different folders of a set each play their own file.
+- Modland keeps different files of the same name from two composers' folders; titles like "01.Intro" keep their name and number; Internet Archive albums with some untagged files no longer show two tracks with the same number.
+- A SoundCloud track whose cached file is broken is downloaded again instead of failing for good, and unfinished SoundCloud downloads no longer pile up outside the cache limit.
+- Stopping or timing out a YouTube or SoundCloud lookup also ends the processes it started, at quit too.
+- Pasting a malformed SoundCloud link no longer fails the search.
+
+### Catalog
+- **One request rate per site.** Browsing, indexing, cover art and Internet Archive lookups now share one politeness limit for each site, so GHOST stays within it even while indexing, and a site's "slow down" or bot check pauses all of them.
+- Turning **Index joshw.info rip sets** on starts indexing right away (after a restart too), and turning it off stops its requests at once.
+- A stopped catalog crawl no longer loses its progress when other sources finish theirs, and resuming no longer skips the rest of a section after a page that failed.
+- A corrected IGDB secret or SteamGridDB key works at once, without a restart, and an enrichment error goes away once the service works again.
+- Album and game lengths and intensities stay right after analysis or a refresh.
+- Liked or downloaded tracks from albums a source removed no longer show an unrelated game's name and art.
+- Albums titled "Music from X" or "A Jazz Tribute to X" join X.
+- If the catalog can't start, Browse and album views say so instead of waiting forever.
+
+### Updates
+- **GHOST checks for a new release every time it starts**, about 20 seconds in so startup isn't slowed, as well as once a day while it stays open. It used to check at launch only when a day had passed since the last check.
+- A failed attempt to prepare a newer update no longer damages one already downloaded, and an update is checked again after a restart before it's offered: a broken or incomplete one is never installed.
+- Quitting installs a ready update even while GHOST is checking for (or downloading) an even newer one.
+- After a failed update download GHOST tries again in about 2 hours, not a day (then 4 hours, and so on, up to a day). Starting GHOST again in the meantime doesn't download it again early; **Try again** does.
+- An update download that hits a disk error fails cleanly and can be retried at once, and "Checking…" can no longer get stuck.
+
+### Cover art
+- Cover art that is corrupt or far too large is no longer shown or kept in the cache, and is tried again later. Broken covers already in the cache are fetched again.
+- A cover whose download drops halfway is retried.
+- Vivid red and orange covers no longer lose their accent colour.
+- Changing blur quality updates the background art right away, with a cross-fade.
+
+### Keyboard, screen readers and motion
+- Pressing Enter on a queue song's remove (×) button removes it instead of playing it.
+- Context menus opened from the keyboard start on the first item; pressing Enter right after opening one no longer does nothing.
+- Tab stays inside Library, Settings and dialogs, and no longer gets stuck on hidden controls.
+- Screen readers can read the seek bar's position.
+- **Easier-to-read buttons:** text on the accent colour is dark wherever that reads better, for example on the default pink.
+- Reduce motion also stills the Title screen's ring and the visualizers' idle shimmer.
+- Previews pulse to the beat again after an analysed track has played.
+- The system's Now Playing no longer shows the previous song's length for a song whose length isn't known yet.
+
+### Analysis
+- Peaks in a track's last few samples now count in its true-peak reading and its ReplayGain peak tag.
+- Audio sampled below 4 kHz is reported as not analysed, instead of getting a broken, flat energy curve.
+- Performance stats include cover-art processing.
+
+### Engine
+- Fixed a possible crash when a game-format file is asked for a sub-song it doesn't have.
+- `ghost-cli render` and other offline renders no longer insert a short gap after a very short first track.
+
+### After you update
+The search index rebuilds and games are re-grouped once, in the background. The first scan of your music folders writes their albums, so they show up as recently added. Chiptune sets you've opened before gain their missing songs the next time they're refreshed.
+
 ## 0.4.0 (2026-10-15)
 
 ### GHOST updates itself

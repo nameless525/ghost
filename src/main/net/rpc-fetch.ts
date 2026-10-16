@@ -1,91 +1,78 @@
-// `fetch` across threads. Electron's `net.fetch` (Chromium's network stack, which KHInsider's
-// Cloudflare accepts where Node's fetch is refused) only exists in the main process, so the catalog
-// worker sends page requests to main as plain data, main runs them asynchronously and replies with
-// status, headers and the body as a transferred ArrayBuffer. Politeness (per-host limiter),
-// retries and the HTML disk cache stay in the worker's HttpClient on top of this.
+// Page requests across threads. Electron's `net.fetch` (Chromium's network stack, which KHInsider's
+// Cloudflare accepts where Node's fetch is refused) only exists in the main process, and so does the
+// app's one HostScheduler (per-host limits, Retry-After pauses, block cooldowns, retries), which the
+// art protocol uses too. So the catalog worker's HttpClient sends each request to main as plain
+// data, with its priority, timeout and retries; main runs it in its host's turn and replies with the
+// body as a transferred ArrayBuffer, or the NetError. Cancelling the call takes the request out of
+// the queue (or aborts it), and one the worker moves up while it waits moves up in main's queue. The
+// HTML disk cache, and sharing one request among callers, stay in the worker's HttpClient.
 
-import type { FetchLike } from './http'
+import { NetError } from './errors'
+import type { HostScheduler, NetRequest } from './http'
+import type { Priority } from './limiter'
 
 export interface WireRequest {
   url: string
-  method?: string
-  headers?: [string, string][]
-  body?: string | ArrayBuffer | null
-  redirect?: RequestInit['redirect']
+  /** The request, to run in its host's turn (`id`: what a later `promote` refers to). */
+  request?: NetRequest & { id: string }
+  /** Move the waiting request `id` up to `priority` (answered at once, without a body). */
+  promote?: { id: string; priority: Priority }
 }
 
 export interface WireResponse {
   /** Final URL after redirects. */
   url: string
   status: number
-  statusText: string
-  headers: [string, string][]
-  /** null for null-body statuses (204, 304, …). */
+  contentType: string | null
   body: ArrayBuffer | null
 }
 
-export type SendRequest = (req: WireRequest, opts: { signal?: AbortSignal; transfer?: ArrayBuffer[] }) => Promise<WireResponse>
+export type SendRequest = (req: WireRequest, opts: { signal?: AbortSignal }) => Promise<WireResponse>
 
-const NULL_BODY = new Set([101, 103, 204, 205, 304])
-
-function headerPairs(h: RequestInit['headers']): [string, string][] {
-  if (!h) return []
-  if (h instanceof Headers) return [...h.entries()]
-  if (Array.isArray(h)) return h.map(([k, v]) => [String(k), String(v)])
-  return Object.entries(h).map(([k, v]) => [k, String(v)])
-}
-
-async function bodyOf(b: RequestInit['body']): Promise<string | ArrayBuffer | null> {
-  if (b == null) return null
-  if (typeof b === 'string') return b
-  if (b instanceof ArrayBuffer) return b
-  if (ArrayBuffer.isView(b)) return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
-  if (b instanceof URLSearchParams) return b.toString()
-  // Blob, FormData, streams: let Response serialise them.
-  return await new Response(b as ConstructorParameters<typeof Response>[0]).arrayBuffer()
-}
-
-/** Rebuild a WHATWG Response from a wire reply (with `url` set, as fetch would). */
-export function toResponse(r: WireResponse): Response {
-  const res = new Response(NULL_BODY.has(r.status) ? null : r.body, { status: r.status, statusText: r.statusText, headers: r.headers })
-  Object.defineProperty(res, 'url', { value: r.url, enumerable: true })
-  return res
-}
-
-/** Worker side: a fetch that sends each request through `send` (an RPC to the main process). */
-export function remoteFetch(send: SendRequest): FetchLike {
-  return async (url, init = {}) => {
-    const body = await bodyOf(init.body)
-    const req: WireRequest = {
-      url: String(url),
-      method: init.method,
-      headers: headerPairs(init.headers),
-      body,
-      redirect: init.redirect
-    }
-    const r = await send(req, { signal: init.signal ?? undefined, transfer: body instanceof ArrayBuffer ? [body] : undefined })
-    return toResponse(r)
-  }
-}
-
-/**
- * Main side: run one wire request with `fetchImpl` (Electron net.fetch) and return the reply plus
- * the buffers to transfer. Chromium's HTTP cache is bypassed (`cache: 'no-store'`): the worker keeps
- * its own disk cache, and Chromium's had grown to hundreds of MB duplicating it.
- */
-export async function serveFetch(fetchImpl: FetchLike, req: WireRequest, signal: AbortSignal): Promise<{ res: WireResponse; transfer: ArrayBuffer[] }> {
-  const init: RequestInit = {
-    method: req.method,
-    headers: req.headers,
-    body: req.body ?? undefined,
-    redirect: req.redirect,
-    signal,
-    cache: 'no-store'
-  }
-  const r = await fetchImpl(req.url, init)
-  const body = NULL_BODY.has(r.status) ? null : await r.arrayBuffer()
+/** Worker side: a HostScheduler whose requests wait their turn in the main process' (see above). */
+export function remoteScheduler(send: SendRequest): HostScheduler {
+  // (ids only need to tell apart this worker's requests waiting in main)
+  const tag = Math.random().toString(36).slice(2)
+  let seq = 0
   return {
-    res: { url: r.url || req.url, status: r.status, statusText: r.statusText, headers: [...r.headers.entries()], body },
-    transfer: body && body.byteLength ? [body] : []
+    async request(url, req, signal, onQueued) {
+      const id = `${tag}.${++seq}`
+      onQueued?.((priority) => void send({ url, promote: { id, priority } }, {}).catch(() => {}))
+      let r: WireResponse
+      try {
+        r = await send({ url, request: { ...req, id } }, { signal })
+      } catch (e) {
+        // (the RPC's own cancellation is a DOM AbortError)
+        if (signal?.aborted) throw new NetError('aborted', 'request aborted', { url })
+        throw e
+      }
+      return { url: r.url, status: r.status, contentType: r.contentType, body: new Uint8Array(r.body ?? new ArrayBuffer(0)) }
+    },
+    limiter: () => {
+      throw new Error('Per-host limits are kept by the main process.')
+    },
+    // (main fails a blocked host's requests fast)
+    blockedUntil: () => 0
+  }
+}
+
+/** Requests from the worker waiting in main's queues, by id: how to move each up. */
+const waiting = new Map<string, (p: Priority) => void>()
+
+/** Main side: run one wire request with `scheduler` (main's), and return the reply plus the buffers to transfer. */
+export async function serveFetch(scheduler: HostScheduler, req: WireRequest, signal: AbortSignal): Promise<{ res: WireResponse; transfer: ArrayBuffer[] }> {
+  if (req.promote) {
+    waiting.get(req.promote.id)?.(req.promote.priority)
+    return { res: { url: req.url, status: 204, contentType: null, body: null }, transfer: [] }
+  }
+  if (!req.request) throw new Error('Nothing to fetch.')
+  const { id, ...r } = req.request
+  try {
+    const out = await scheduler.request(req.url, r, signal, (promote) => waiting.set(id, promote))
+    const b = out.body
+    const body = (b.byteOffset === 0 && b.byteLength === b.buffer.byteLength ? b.buffer : b.slice().buffer) as ArrayBuffer
+    return { res: { url: out.url, status: out.status, contentType: out.contentType, body }, transfer: body.byteLength ? [body] : [] }
+  } finally {
+    waiting.delete(id)
   }
 }

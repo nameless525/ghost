@@ -95,6 +95,17 @@ export function luminance(c: RGB | readonly number[]): number {
   return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
 }
 
+/** WCAG contrast ratio of two colours, 1..21. */
+export function contrast(a: RGB | readonly number[], b: RGB | readonly number[]): number {
+  const la = luminance(a)
+  const lb = luminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+/** The two inks for text on an accent fill. */
+const DARK_INK = '#1a1024'
+const LIGHT_INK = '#ffffff'
+
 /**
  * Make an arbitrary art-derived colour usable as a UI accent on our dark base:
  * clamps OKLCH lightness into a readable band and guarantees some chroma so it
@@ -109,12 +120,16 @@ export function normalizeAccent(hex: string | null | undefined, fallback = '#ff6
   return fromOklch(L, C, h)
 }
 
-/** Derived accent family used by the theme. */
+/**
+ * Derived accent family used by the theme. `ink` (text on an accent fill) is whichever of the two
+ * inks contrasts more with it: a luminance cut-off put white on the mid-light accents (the default
+ * pink: 2.7:1) where the dark ink reads at 6.8:1. Normalised accents always get the dark ink.
+ */
 export function accentFamily(hex: string): { base: RGB; hi: RGB; lo: RGB; ink: string } {
   const base = hexToRgb(hex)
   const [L, a, b] = rgbToOklab(base)
   const hi = oklabToRgb([Math.min(0.94, L + 0.08), a * 0.85, b * 0.85])
   const lo = oklabToRgb([Math.max(0.3, L - 0.2), a * 1.05, b * 1.05])
-  const ink = luminance(base) > 0.42 ? '#1a1024' : '#ffffff'
+  const ink = contrast(base, hexToRgb(DARK_INK)) >= contrast(base, hexToRgb(LIGHT_INK)) ? DARK_INK : LIGHT_INK
   return { base, hi, lo, ink }
 }

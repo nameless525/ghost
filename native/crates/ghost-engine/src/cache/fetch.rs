@@ -85,7 +85,10 @@ pub(super) fn run(entry: Arc<Entry>) {
                 }
             }
         };
-        let result = fetch(&entry, &http, &mgr, job, &snap, &mut latency);
+        // A response that stalls (headers in, then nothing) must not hold the entry: it gives way
+        // to a fresh URL, shutdown or the readers leaving as soon as they happen.
+        let (e, url, grace) = (entry.clone(), snap.url.clone(), mgr.idle_grace);
+        let result = crate::http::interruptible(move || superseded(&e, &url, grace), || fetch(&entry, &http, &mgr, job, &snap, &mut latency));
         {
             // Never leave a stale partial-chunk marker behind (readers would trust it).
             let mut st = entry.state.lock();
@@ -109,13 +112,18 @@ pub(super) fn run(entry: Arc<Entry>) {
                 break;
             }
             Err(HttpError::Transient(m)) => {
+                let mut st = entry.state.lock();
+                if st.url != snap.url {
+                    // Interrupted for (or failed just as there came) a new URL: try that at once.
+                    attempt = 0;
+                    continue;
+                }
                 attempt += 1;
                 let backoff = Duration::from_millis((125u64 << attempt.min(5)).min(4000));
-                let mut st = entry.state.lock();
                 st.last_error = Some(m);
                 entry.cond.notify_all();
                 let until = Instant::now() + backoff;
-                while Instant::now() < until && !entry.shutdown.load(Ordering::Relaxed) {
+                while Instant::now() < until && !entry.shutdown.load(Ordering::Relaxed) && st.url == snap.url {
                     entry.cond.wait_until(&mut st, until);
                 }
             }
@@ -127,6 +135,19 @@ pub(super) fn run(entry: Arc<Entry>) {
         entry.cond.notify_all();
     }
     entry.write_meta();
+}
+
+/// A request made for `url` is no longer wanted: the entry shuts down, its URL was replaced, or
+/// nobody has read it for the idle grace.
+fn superseded(entry: &Entry, url: &str, grace: Duration) -> bool {
+    if entry.shutdown.load(Ordering::Relaxed) {
+        return true;
+    }
+    let mut st = entry.state.lock();
+    if entry.readers.load(Ordering::Acquire) > 0 {
+        st.last_reader_seen = Instant::now();
+    }
+    st.url != url || st.last_reader_seen.elapsed() > grace
 }
 
 /// HTTP statuses that mean "this URL is gone" (expired / revoked / removed): a provider must
@@ -182,7 +203,8 @@ fn set_total(entry: &Entry, st: &mut State, total: u64) {
 fn fetch(entry: &Arc<Entry>, http: &crate::http::Http, mgr: &super::CacheManager, job: Job, snap: &Snapshot, latency: &mut Latency) -> Result<Outcome, HttpError> {
     let (url, headers) = (&snap.url, &snap.headers);
     if snap.range_ok == Some(false) {
-        // Server ignores Range: linear fill of the whole body.
+        // Server ignores Range: linear fill of the whole body. No deadline for all of it (it can
+        // be long); a stall ends it all the same (`http::IDLE_TIMEOUT`, or `superseded`).
         let resp = http.get(url, headers, None, None)?;
         let status = resp.status().as_u16();
         if status != 200 {

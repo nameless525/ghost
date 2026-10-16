@@ -25,7 +25,10 @@ const FULL_RING_WAIT: Duration = Duration::from_millis(250);
 
 #[derive(Debug)]
 pub enum WorkerEvent {
-    Info { key: u64, rate: u32, channels: u16, duration_ms: Option<u64>, meta: Box<SourceMeta>, loop_ms: Option<(u64, u64)>, voices: u32 },
+    /// `looped`: the length follows the loop settings (`duration_ms` None: Endless).
+    Info { key: u64, rate: u32, channels: u16, duration_ms: Option<u64>, looped: bool, meta: Box<SourceMeta>, loop_ms: Option<(u64, u64)>, voices: u32 },
+    /// A looped track's length after the loop settings changed.
+    Duration { key: u64, duration_ms: Option<u64> },
     Error { key: u64, message: String },
     Eof { key: u64 },
 }
@@ -247,13 +250,17 @@ fn run(p: WorkerParams) {
         let rate = src.sample_rate().max(1);
         let ch = src.channels().max(1);
         let meta = src.meta();
+        // Taken before the length, so a change in between is caught below.
+        let mut loops_seen = loops.get();
         let duration = src.duration();
+        let looped = src.loop_info().is_some() || src.length_hint().is_some();
         let to_ms = |f: u64| f * 1000 / rate as u64;
         let _ = events.send(WorkerEvent::Info {
             key,
             rate,
             channels: ch as u16,
             duration_ms: duration.map(to_ms),
+            looped,
             meta: Box::new(meta),
             loop_ms: src.loop_info().map(|l| (to_ms(l.start), to_ms(l.end))),
             voices: src.voice_count() as u32,
@@ -280,6 +287,7 @@ fn run(p: WorkerParams) {
         if let Some(d) = duration {
             seg.shared.est_end.store(to_dev(d), Ordering::Release);
         }
+        seg.shared.loop_bound.store(looped, Ordering::Release);
         router.lanes.push_back(Lane { shared: seg.shared.clone(), producer: seg.producer, origin, written: 0, quota: None });
         native.resize(READ_FRAMES * ch, 0.0);
 
@@ -288,6 +296,14 @@ fn run(p: WorkerParams) {
                 // Earlier (chained) voices still get their exact tails; ours is discarded.
                 drain(r, &mut out, &mut out_pos, &mut router);
                 return;
+            }
+            if looped && loops.get() != loops_seen {
+                // The loop stage follows new settings at once; so must the mixer's idea of where
+                // this track ends (it schedules crossfades from it), and the reported length.
+                loops_seen = loops.get();
+                let d = src.duration();
+                seg.shared.est_end.store(d.map_or(u64::MAX, to_dev), Ordering::Release);
+                let _ = events.send(WorkerEvent::Duration { key, duration_ms: d.map(to_ms) });
             }
             if out_pos < out.len() {
                 out_pos = router.push(&out, out_pos);
@@ -341,7 +357,7 @@ fn run(p: WorkerParams) {
             }
             r.in_total += n as u64;
             stereo.clear();
-            source::to_stereo(&native[..n * ch], ch, &mut stereo);
+            source::to_stereo(&native[..n * ch], ch, src.channel_mask(), &mut stereo);
             match r.rs.as_mut() {
                 Some(rs) => {
                     if let Err(e) = rs.push(&stereo, &mut out) {
@@ -397,7 +413,7 @@ pub fn decode_chunks<S>(
             push(&mut sink, &buf[..n * ch]);
         } else {
             stereo.clear();
-            source::to_stereo(&buf[..n * ch], ch, &mut stereo);
+            source::to_stereo(&buf[..n * ch], ch, src.channel_mask(), &mut stereo);
             push(&mut sink, &stereo);
         }
     }

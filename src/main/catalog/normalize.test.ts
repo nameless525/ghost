@@ -168,3 +168,32 @@ describe('fan arrangement series fold into the game', () => {
     expect(gameKey(title)).toBe(key)
   })
 })
+
+describe('"music from X" and tributes name X, at the start of a title too', () => {
+  it.each([
+    ['Music from Chrono Trigger', 'chrono trigger'],
+    ['Songs from Chrono Trigger', 'chrono trigger'],
+    ['Selections from the Game Chrono Trigger', 'chrono trigger'],
+    ['Music Inspired by Chrono Trigger', 'chrono trigger'],
+    ['A Jazz Tribute to Chrono Trigger', 'chrono trigger'],
+    ['Tribute to Chrono Trigger', 'chrono trigger'],
+    ['BEYOND THE FLOW OF TIME: Music from Chrono Trigger', 'chrono trigger'],
+    ['Chronology: A Jazz Tribute to Chrono Trigger', 'chrono trigger'],
+    ['Echoes - Music of Chrono Trigger', 'chrono trigger'],
+    // Game names that only look like it.
+    ['Songs of Conquest Original Soundtrack', 'songs of conquest'],
+    ['Melodies of Life', 'melodies of life'],
+    ['Wii Music', 'wii music']
+  ])('%s → %s', (title, key) => {
+    expect(gameKey(title)).toBe(key)
+  })
+
+  it('cluster with the game', () => {
+    const keys = clusterKeys([
+      { id: 1, title: 'Chrono Trigger Original Sound Version', kind: 'ost' },
+      { id: 2, title: 'Music from Chrono Trigger', kind: 'arrange' },
+      { id: 3, title: 'A Jazz Tribute to Chrono Trigger', kind: 'arrange' }
+    ])
+    expect(new Set(keys.values())).toEqual(new Set(['chrono trigger']))
+  })
+})

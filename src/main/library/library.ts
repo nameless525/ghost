@@ -199,12 +199,19 @@ export class Library {
   async downloaded(): Promise<TrackView[]> {
     const entries = [...this.downloadedMap.entries()].sort((a, b) => b[1].at - a[1].at)
     const exists = await this.existing(entries.map(([, d]) => d.path))
-    const missing = entries.filter((_, i) => !exists[i]).map(([id]) => id)
-    if (missing.length) {
-      // Files moved or deleted outside the app: stop claiming they're downloaded.
-      for (const id of missing) this.downloads.forgetDone(id, this.downloadedMap.get(id)!.path)
+    // Files moved or deleted outside the app: stop claiming they're downloaded. Only entries still
+    // current: a download that finished during the checks (or an overlapping call that already
+    // pruned) replaced them, and a replacement's own file is checked next time.
+    const gone = entries.filter(([id, d], i) => !exists[i] && this.downloadedMap.get(id) === d)
+    if (gone.length) {
+      this.downloads.batch(() => {
+        for (const [id, d] of gone) this.downloads.forgetDone(id, d.path)
+      })
       this.downloadedMap = this.downloads.donePaths()
-      this.tracksChanged(missing)
+      const ids = gone.map(([id]) => id)
+      // One event for the lot: Browse and the library views refetch on it.
+      this.broadcast('library:changed', ids.length === 1 ? { kind: 'downloaded', id: ids[0] } : { kind: 'downloaded' })
+      this.tracksChanged(ids)
     }
     return this.fetchTracks(entries.filter((_, i) => exists[i]).map(([id]) => id))
   }

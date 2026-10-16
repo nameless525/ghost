@@ -86,6 +86,12 @@ pub struct LoopStage {
     src_pos: u64,
     ended: bool,
     voice_mask: u64,
+    /// The loop settings `read` last saw.
+    seen: (LoopMode, u32, f32),
+    /// Settings (`.0`) that came in mid-track: their fade starts no earlier than where the track
+    /// was then (`.1`), so a plan whose fade start is already behind it fades out from there
+    /// instead of stopping dead.
+    late_fade: Option<((LoopMode, u32, f32), u64)>,
 }
 
 impl LoopStage {
@@ -96,7 +102,27 @@ impl LoopStage {
         if voice_mask != 0 && inner.voice_count() > 0 {
             inner.set_voice_mask(voice_mask);
         }
-        Self { inner, settings, info, hint, pos: 0, src_pos: 0, ended: false, voice_mask }
+        let seen = settings.get();
+        Self { inner, settings, info, hint, pos: 0, src_pos: 0, ended: false, voice_mask, seen, late_fade: None }
+    }
+
+    /// The earliest frame a fade under the current settings may start (see `late_fade`).
+    fn fade_floor(&self) -> u64 {
+        let now = self.settings.get();
+        match self.late_fade {
+            Some((k, at)) if k == now => at,
+            // a change `read` hasn't seen yet takes effect where the track is now
+            _ if now != self.seen => self.pos,
+            _ => 0,
+        }
+    }
+
+    fn note_settings(&mut self) {
+        let now = self.settings.get();
+        if now != self.seen {
+            self.late_fade = Some((now, self.fade_floor()));
+            self.seen = now;
+        }
     }
 
     /// Fade start and length on the timeline of a source with a length hint (None = endless).
@@ -105,7 +131,7 @@ impl LoopStage {
         if mode == LoopMode::Endless {
             return None;
         }
-        Some((h.length, h.fade.unwrap_or((fade as f64 * self.inner.sample_rate() as f64) as u64)))
+        Some((h.length.max(self.fade_floor()), h.fade.unwrap_or((fade as f64 * self.inner.sample_rate() as f64) as u64)))
     }
 
     fn sync_voice_mask(&mut self) {
@@ -165,7 +191,7 @@ impl LoopStage {
     fn fade_window(&self, l: LoopInfo) -> Option<(u64, u64)> {
         let (count, fade) = self.plan()?;
         let body = l.end - l.start;
-        Some((l.start + count * body, fade))
+        Some(((l.start + count * body).max(self.fade_floor()), fade))
     }
 }
 
@@ -176,9 +202,13 @@ impl AudioSource for LoopStage {
     fn channels(&self) -> usize {
         self.inner.channels()
     }
+    fn channel_mask(&self) -> Option<u32> {
+        self.inner.channel_mask()
+    }
 
     fn read(&mut self, out: &mut [f32]) -> Result<usize, SourceError> {
         self.sync_voice_mask();
+        self.note_settings();
         if self.ended {
             return Ok(0);
         }
@@ -406,6 +436,39 @@ mod tests {
         settings.set_voice_mask(0);
         st.read(&mut buf).unwrap();
         assert!(buf.iter().any(|&v| v != 0.0));
+    }
+
+    #[test]
+    fn turning_finite_past_the_planned_end_fades_from_where_the_track_is() {
+        let settings = Arc::new(LoopSettings::default());
+        settings.set(LoopMode::Endless, 2, 1.0);
+        let li = LoopInfo { start: 1000, end: 3000 };
+        let tone = ToneSource { rate: 1000, channels: 1, len: 4000, pos: 0, loop_info: Some(li) };
+        let reference = ToneSource { rate: 1000, channels: 1, len: 4000, pos: 0, loop_info: None };
+        let mut st = LoopStage::new(Box::new(tone), settings.clone());
+        let mut buf = vec![0.0; 8000];
+        assert_eq!(st.read(&mut buf).unwrap(), 8000);
+        // Album (2 loops, 1 s) would have ended at 6000: fade over 1 s from 8000 instead
+        settings.set(LoopMode::Album, 2, 1.0);
+        assert_eq!(st.duration(), Some(9000));
+        let out = read_all(&mut st);
+        assert_eq!(out.len(), 1000);
+        // 8000 on the timeline is body offset (8000 - 1000) % 2000 = 1000 → source frame 2000
+        assert!((out[0] - reference.sample(2000, 0)).abs() < 1e-6, "starts at full level");
+        assert!(out[999].abs() < 0.01);
+        assert_eq!(st.duration(), Some(9000));
+
+        // A length-hinted source the same way.
+        settings.set(LoopMode::Endless, 2, 0.5);
+        let mut st = LoopStage::new(Box::new(Forever { pos: 0, hint: LengthHint { length: 1000, fade: None }, mask: 0 }), settings.clone());
+        let mut buf = vec![0.0; 3000];
+        assert_eq!(st.read(&mut buf).unwrap(), 3000);
+        settings.set(LoopMode::Album, 2, 0.5);
+        assert_eq!(st.duration(), Some(3500));
+        let out = read_all(&mut st);
+        assert_eq!(out.len(), 500);
+        assert!((out[0] - ((3000 % 7) as f32 + 1.0) * 0.1).abs() < 1e-6);
+        assert!(out[499].abs() < 0.01);
     }
 
     #[test]

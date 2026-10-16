@@ -257,6 +257,12 @@ impl CacheManager {
             let mut st = e.state.lock();
             st.dead_urls.retain(|(_, at)| at.elapsed() < DEAD_URL_TTL);
             if !st.dead_urls.iter().any(|(d, _)| d == url) {
+                if st.url != *url && !st.complete {
+                    // The fetcher replans for it at once, leaving a request that waits on the old
+                    // one; its server may answer ranges differently.
+                    st.range_ok = None;
+                    e.cond.notify_all();
+                }
                 st.url = url.clone();
                 st.headers = headers.clone();
             }

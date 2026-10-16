@@ -380,11 +380,11 @@ impl GhostEngine {
 
     /// Mute chip voices on the playing tracks: bit `i` mutes voice `i` (see the `trackInfo`
     /// event's `voiceNames`). Persists across tracks until changed; 0 unmutes everything.
+    /// A bigint: trackers have up to 64 voices, past what a JS number holds exactly.
     #[napi(catch_unwind)]
-    pub fn set_voice_mask(&self, mask: f64) {
+    pub fn set_voice_mask(&self, mask: BigInt) {
         if let Some(e) = self.live() {
-            let m = if mask.is_finite() && mask > 0.0 { mask.min(u64::MAX as f64) as u64 } else { 0 };
-            e.set_voice_mask(m);
+            e.set_voice_mask(voice_mask(&mask));
         }
     }
 
@@ -476,6 +476,15 @@ fn now_ms() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64() * 1000.0)
         .unwrap_or(0.0)
+}
+
+/// The engine's voice mask from a JS bigint, every one of its 64 bits exact. Anything that isn't
+/// one (negative, wider than 64 bits) unmutes everything rather than muting some other voices.
+fn voice_mask(mask: &BigInt) -> u64 {
+    match mask.get_u64() {
+        (false, m, true) => m,
+        _ => 0,
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -651,5 +660,30 @@ impl GhostEngine {
         for ev in events {
             deliver(&self.sink, ev);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn big(sign_bit: bool, words: &[u64]) -> BigInt {
+        BigInt { sign_bit, words: words.to_vec() }
+    }
+
+    #[test]
+    fn voice_mask_keeps_all_64_bits() {
+        // Voices 32, 33 and 64 (bits 31, 32, 63): past an i32 and a JS number's exact integers.
+        assert_eq!(voice_mask(&big(false, &[1 << 31])), 1 << 31);
+        assert_eq!(voice_mask(&big(false, &[1 << 32])), 1 << 32);
+        assert_eq!(voice_mask(&big(false, &[1 << 63 | 1])), 1 << 63 | 1);
+        assert_eq!(voice_mask(&big(false, &[u64::MAX])), u64::MAX);
+        assert_eq!(voice_mask(&big(false, &[0])), 0);
+    }
+
+    #[test]
+    fn voice_mask_rejects_what_isnt_one() {
+        assert_eq!(voice_mask(&big(true, &[1])), 0);
+        assert_eq!(voice_mask(&big(false, &[1, 1])), 0);
     }
 }

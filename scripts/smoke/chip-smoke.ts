@@ -27,6 +27,7 @@ import { KhinsiderProvider } from '../../src/main/providers/khinsider'
 import { applyEngineSettings } from '../../src/main/settings'
 import { defaultSettings } from '../../src/shared/defaults'
 import type { PlayerState } from '../../src/shared/types'
+import { allVoices, formatVoiceMask, voiceBit } from '../../src/shared/voices'
 
 const tmp = process.env.GHOST_SMOKE_DIR || mkdtempSync(join(tmpdir(), 'ghost-chip-smoke-'))
 mkdirSync(tmp, { recursive: true })
@@ -145,11 +146,11 @@ app.whenReady().then(async () => {
     }
 
     // 6. Voice mask: mute the first two voices, then solo the third, then back to all.
-    await player.setVoiceMask(0b11)
+    await player.setVoiceMask(formatVoiceMask(voiceBit(0) | voiceBit(1)))
     await sleep(1500)
     const m1 = (await player.getState()).voices
     const n = m1?.names.length ?? 0
-    await player.setVoiceMask(((1 << n) - 1) & ~0b100)
+    await player.setVoiceMask(formatVoiceMask(allVoices(n) & ~voiceBit(2)))
     await sleep(1500)
     const m2 = (await player.getState()).voices
     // the next track starts with every voice back on

@@ -64,6 +64,8 @@ export class FakeEngine implements EngineBridge {
   posMs = 0
   /** When set, setCurrent / download throw this error. */
   throwOnSetCurrent: string | null = null
+  /** Ids setCurrent took over from the armed `next` (its decoded voice), like the native engine. */
+  promoted: string[] = []
   /** Clock for position().at (default: the real Date.now). */
   clock: () => number = Date.now
   devices = [
@@ -90,6 +92,7 @@ export class FakeEngine implements EngineBridge {
   setCurrent(track: EngineTrack, startMs: number, autoplay: boolean) {
     this.rec('setCurrent', track, startMs, autoplay)
     if (this.throwOnSetCurrent) throw new Error(this.throwOnSetCurrent)
+    if (startMs === 0 && this.next?.id === track.id && JSON.stringify(this.next.source) === JSON.stringify(track.source)) this.promoted.push(track.id)
     this.current = track
     this.next = null
     this.posMs = startMs
@@ -177,8 +180,8 @@ export class FakeEngine implements EngineBridge {
   cancelDownload(downloadId: string) {
     this.rec('cancelDownload', downloadId)
   }
-  voiceMask = 0
-  setVoiceMask(mask: number) {
+  voiceMask = 0n
+  setVoiceMask(mask: bigint) {
     this.rec('setVoiceMask', mask)
     this.voiceMask = mask
   }

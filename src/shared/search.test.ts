@@ -155,6 +155,17 @@ describe('parseSearch: filters', () => {
     // = means "rounds to" at the precision typed
     expect(one('length=4m')).toMatchObject({ num: 240_000, max: 300_000 })
     expect(one('length=3:30')).toMatchObject({ num: 210_000, max: 211_000 })
+    // Equivalent spellings: the same range.
+    for (const [colon, unit] of [
+      ['3:30.5', '210.5s'],
+      ['1:02:03.25', '3723.25s'],
+      ['3:30', '210s']
+    ]) {
+      const a = one(`length=${colon}`)
+      const b = one(`length=${unit}`)
+      expect([a.num, a.max]).toEqual([b.num, b.max])
+    }
+    expect(one('length=3:30.5')).toMatchObject({ num: 210_500, max: 210_600 })
     expect(parseSearch('length<soon').errors).toHaveLength(1)
   })
 
@@ -246,6 +257,9 @@ describe('helpers', () => {
     expect(parseDuration('240s')).toEqual({ ms: 240_000, unit: 1000 })
     expect(parseDuration('4.5m')!.ms).toBe(270_000)
     expect(parseDuration('90 sec')!.ms).toBe(90_000)
+    expect(parseDuration('3:30.5')).toEqual({ ms: 210_500, unit: 100 })
+    expect(parseDuration('1:02:03.25')).toEqual({ ms: 3_723_250, unit: 10 })
+    expect(parseDuration('3:30.12345')).toEqual({ ms: 210_123, unit: 1 })
     expect(parseDuration('3:75')).toBeNull()
     expect(parseDuration('')).toBeNull()
     expect(parseDuration('abc')).toBeNull()

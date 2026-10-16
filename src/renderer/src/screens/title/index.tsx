@@ -179,7 +179,7 @@ export default function TitleScreen(props: ScreenProps) {
         rgb[2] = 255 - (255 - a[2]) * 0.35
         // the wordmark under the logo shows only while the menu is collapsed
         notch = damp(notch, expandedRef.current ? 0 : 1, 300, dt)
-        vis.draw(dt, now, frame(), sizeRef.current / 2 + 5, rgb, beat.kiai, beat.pulse, playing, notch)
+        vis.draw(dt, now, frame(), sizeRef.current / 2 + 5, rgb, beat.kiai, beat.pulse, playing, notch, reduce)
       }
     }, TickPriority.normal)
     return () => {

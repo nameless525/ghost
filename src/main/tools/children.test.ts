@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
-import { describe, expect, it } from 'vitest'
-import { killTrackedChildren, trackChild, trackedChildren, untrackChild, watchChildren } from './children'
+import { afterAll, describe, expect, it } from 'vitest'
+import { endTree, killTrackedChildren, trackChild, trackedChildren, treeAlive, untrackChild, watchChildren } from './children'
 
 const unix = process.platform !== 'win32'
 const alive = (pid: number) => {
@@ -51,5 +54,38 @@ describe('child process registry', () => {
     // Windows has no signals: the child is just terminated.
     expect(msgs[1]).toEqual({ exited: pid, signal: unix ? 'SIGTERM' : null })
     await w.terminate()
+  })
+
+  describe.runIf(unix)('process trees (Unix: a process group of their own)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghost-children-'))
+    afterAll(() => rmSync(dir, { recursive: true, force: true }))
+    /** A shell (group leader) that starts a sleep and waits; `onTerm`: its TERM trap. */
+    async function tree(name: string, onTerm: string) {
+      const pidFile = join(dir, `${name}.pid`)
+      const c = spawn('/bin/sh', ['-c', `trap '${onTerm}' TERM; sleep 30 & echo $! > ${pidFile}; wait; wait`], { detached: true, stdio: 'ignore' })
+      const exited = new Promise((r) => c.once('exit', r))
+      for (let i = 0; i < 1000 && !(existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim()); i++) await new Promise((r) => setTimeout(r, 10))
+      return { pid: c.pid!, sleep: Number(readFileSync(pidFile, 'utf8').trim()), exited }
+    }
+
+    it('quitting ends the whole group, asking first', async () => {
+      const marker = join(dir, 'asked')
+      const t = await tree('quit', `echo asked > ${marker}; exit 0`)
+      trackChild(t.pid, true)
+      killTrackedChildren()
+      await t.exited
+      expect(existsSync(marker)).toBe(true)
+      expect(alive(t.sleep)).toBe(false)
+      expect(treeAlive(t.pid, true)).toBe(false)
+      expect(trackedChildren()).not.toContain(t.pid)
+    })
+
+    it('a tree that ignores SIGTERM is killed once its grace is up', async () => {
+      const t = await tree('stubborn', '')
+      await endTree(t.pid, true, 100)
+      await t.exited
+      expect(alive(t.sleep)).toBe(false)
+      expect(treeAlive(t.pid, true)).toBe(false)
+    })
   })
 })

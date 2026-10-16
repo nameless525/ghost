@@ -3,6 +3,7 @@
 // synthesised from a per-track tempo so beat-reactive visuals behave realistically.
 import type { GhostAPI, GhostEventName, GhostEvents, UpdatesAPI } from '@shared/api'
 import { defaultSettings, mergeSettings } from '@shared/defaults'
+import { allVoices, formatVoiceMask, parseVoiceMask, VOICES_ALL_ON } from '@shared/voices'
 import type {
   Album,
   AlbumDetail,
@@ -369,7 +370,7 @@ function loadIndex(i: number, autoplay = true) {
   player.positionMs = 0
   player.positionAt = now()
   player.error = null
-  player.voices = currentMock.voices ? { names: [...currentMock.voices], mask: 0 } : null
+  player.voices = currentMock.voices ? { names: [...currentMock.voices], mask: VOICES_ALL_ON } : null
   player.status = 'loading'
   pushState()
   setTimeout(() => {
@@ -463,7 +464,7 @@ setInterval(() => {
       d.status = 'done'
       d.path = `~/Music/GHOST/${d.gameName}/${d.albumTitle}/${d.title}.flac`
       downloadedIds.add(d.trackId)
-      emit('library:changed', { kind: 'downloaded' })
+      emit('library:changed', { kind: 'downloaded', id: d.trackId })
       emit('notify', { id: uid('n'), kind: 'success', title: 'Downloaded', body: d.title, image: d.cover })
     }
     changed = true
@@ -602,11 +603,7 @@ let folderSeq = 0
 // ---------------------------------------------------------------------------
 // synthetic analysis frames
 
-const popcount = (n: number) => {
-  let c = 0
-  for (let x = n >>> 0; x; x &= x - 1) c++
-  return c
-}
+const popcount = (mask: string) => [...(parseVoiceMask(mask) ?? 0n).toString(2)].filter((b) => b === '1').length
 const bands = new Float32Array(96)
 const wave = new Float32Array(512)
 let smoothRms = 0
@@ -815,6 +812,10 @@ export function installMockGhost(): void {
         return delay({ total: filtered.length, offset: q.offset, groups: filtered.slice(q.offset, q.offset + q.limit).map(toGroup) })
       },
       groupAlbums: (key) => delay(albums.filter((a) => `game:${a.gameId}` === key)),
+      groupAlbumPage: (key, _q, offset, limit) => {
+        const all = albums.filter((a) => `game:${a.gameId}` === key)
+        return delay({ total: all.length, offset, albums: all.slice(offset, offset + limit) })
+      },
       album: async (id) => {
         const album = albums.find((a) => a.id === id)!
         await fetchAlbum(album)
@@ -1005,8 +1006,7 @@ export function installMockGhost(): void {
       setVoiceMask: async (mask) => {
         const v = player.voices
         if (!v) return
-        const all = (1 << Math.min(v.names.length, 30)) - 1
-        player.voices = { names: v.names, mask: Number.isFinite(mask) && mask > 0 ? Math.floor(mask) & all : 0 }
+        player.voices = { names: v.names, mask: formatVoiceMask((parseVoiceMask(mask) ?? 0n) & allVoices(v.names.length)) }
         snapshot()
         pushState()
       }
@@ -1068,7 +1068,7 @@ export function installMockGhost(): void {
           player.current = { ...player.current, liked: likes.has(id) }
           pushState()
         }
-        emit('library:changed', { kind: 'likes' })
+        emit('library:changed', { kind: 'likes', id })
         return likes.has(id)
       },
       liked: () => delay([...likes].map((id) => strip(tracks.find((t) => t.id === id)!))),

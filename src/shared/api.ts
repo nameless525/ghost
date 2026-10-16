@@ -8,6 +8,7 @@
 import type {
   Album,
   AlbumDetail,
+  AlbumPage,
   AnalysisFrame,
   AudioDevice,
   BrowsePage,
@@ -34,6 +35,7 @@ import type {
   TaskProgress,
   TrackView,
   UpdateState,
+  VoiceMask,
   WhatsNew
 } from './types'
 
@@ -42,8 +44,10 @@ export interface CatalogAPI {
   /** Re-crawl provider indexes in the background; progress via 'catalog:status'. */
   reindex(): Promise<void>
   browse(q: BrowseQuery): Promise<BrowsePage>
-  /** Albums inside a carousel group, filtered by the same query text. */
+  /** Albums inside a carousel group, filtered by the same query text: the first 1,000 at most (groupAlbumPage has the rest). */
   groupAlbums(groupKey: string, q: Pick<BrowseQuery, 'text' | 'group' | 'sort'>): Promise<Album[]>
+  /** `limit` of a carousel group's albums from `offset` (filtered by the same query text), and how many it has. */
+  groupAlbumPage(groupKey: string, q: Pick<BrowseQuery, 'text' | 'group' | 'sort'>, offset: number, limit: number): Promise<AlbumPage>
   /** Album with its tracks. Fetches the track list from the provider on first access. */
   album(albumId: ID): Promise<AlbumDetail>
   game(gameId: ID): Promise<Game | null>
@@ -97,8 +101,8 @@ export interface PlayerAPI {
   /** Muffle the music (low-pass + duck) while a modal overlay is open. */
   setOverlayFilter(active: boolean): Promise<void>
   devices(): Promise<AudioDevice[]>
-  /** Mute sound-chip voices of the current track: bit i mutes `PlayerState.voices.names[i]`; 0 unmutes all. */
-  setVoiceMask(mask: number): Promise<void>
+  /** Mute sound-chip voices of the current track: bit i mutes `PlayerState.voices.names[i]`; "0" unmutes all. */
+  setVoiceMask(mask: VoiceMask): Promise<void>
   /**
    * Whether the window shows the live analysis (it's visible). The engine only computes the
    * real-time spectrum and waveform while something can show them.
@@ -216,6 +220,7 @@ export const API_METHODS = [
   'catalog.reindex',
   'catalog.browse',
   'catalog.groupAlbums',
+  'catalog.groupAlbumPage',
   'catalog.album',
   'catalog.game',
   'catalog.tracks',

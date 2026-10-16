@@ -8,14 +8,21 @@
 //            decode and a tiny upload, never a 1600 px scan.
 //   sharp    the capped full-size art, fetched only once a screen asks for less blur (Play).
 //            It fades in over the blurred copy when it arrives.
+// The blur quality setting is part of what's shown: changing it rebuilds the blurred copy of the
+// art on screen, which cross-fades in like new art (over the same sharp copy, so Play doesn't flash).
 import { Container, Sprite, Texture } from 'pixi.js'
 import { artUrl } from '../../lib/art'
 import { easings } from '../../motion/easing'
 import { motionPrefs } from '../../motion/prefs'
 
+type Quality = 'low' | 'high'
+const QUALITIES: Quality[] = ['low', 'high']
+
+/** One image (by URL). */
 interface ArtEntry {
-  key: string
-  blurred: Texture
+  url: string
+  /** The pre-blurred copy, per blur quality it has been shown at. */
+  blurred: Partial<Record<Quality, Texture>>
   /** Natural aspect of the art (width / height). */
   aspect: number
   sharp: Texture | null
@@ -28,6 +35,7 @@ interface ArtEntry {
 
 interface Slot {
   url: string
+  quality: Quality
   root: Container
   sharp: Sprite
   blurred: Sprite
@@ -113,7 +121,8 @@ function place(sp: Sprite, x: number, y: number, w: number, h: number, tint: num
 
 function destroyEntry(e: ArtEntry): void {
   e.dead = true
-  e.blurred.destroy(true)
+  for (const q of QUALITIES) e.blurred[q]?.destroy(true)
+  e.blurred = {}
   releaseSharp(e)
 }
 
@@ -128,14 +137,15 @@ export class ArtLayer {
   readonly root = new Container()
   private slots: Slot[] = []
   private cache = new Map<string, ArtEntry>()
-  private pending: string | null = null
+  /** The art (and the quality) the latest setArt asked for. */
+  private pending: { url: string; quality: Quality } | null = null
   private dim = 0.55
   private dimTarget = 0.55
   private blur = 1
   private blurTarget = 1
   /** When the art went back to fully blurred (0 while a screen wants it sharp). */
   private blurredSince = 0
-  quality: 'low' | 'high' = 'high'
+  private quality: Quality = 'high'
 
   /** 0..1: how opaque the topmost settled art is (lets the gradient layer sleep). */
   coverage = 0
@@ -153,47 +163,71 @@ export class ArtLayer {
 
   /** `url`: raw art URL (http(s) or local); sizing/caching through ghost-art:// is handled here. */
   async setArt(url: string | null): Promise<void> {
-    this.pending = url
+    const quality = this.quality
+    this.pending = url ? { url, quality } : null
     if (!url) {
       for (const s of this.slots) this.startFade(s, 0)
       return
     }
     const top = this.slots[this.slots.length - 1]
-    if (top && top.url === url && top.fadeTo === 1) return
-    const key = `${url}|${this.quality}`
-    let art = this.cache.get(key)
-    if (!art) {
+    if (top && top.url === url && top.quality === quality && top.fadeTo === 1) return
+    let art = this.cache.get(url)
+    if (!art?.blurred[quality]) {
       try {
         const bmp = await decode(artUrl(url, { w: BLUR_SRC_PX, dpr: 1 })!, BLUR_SRC_PX)
-        const canvas = blurToCanvas(bmp, this.quality)
+        const canvas = blurToCanvas(bmp, quality)
         const aspect = bmp.width / Math.max(1, bmp.height)
         bmp.close()
-        art = { key, blurred: Texture.from(canvas), aspect, sharp: null, sharpBitmap: null, sharpLoading: null, sharpFailed: false, dead: false }
+        const blurred = Texture.from(canvas)
+        // the quality changed while this loaded: that change's own setArt shows the art
+        if (quality !== this.quality) {
+          blurred.destroy(true)
+          return
+        }
         // a concurrent call may have filled it meanwhile
-        const other = this.cache.get(key)
-        if (other) {
-          destroyEntry(art)
-          art = other
-        } else this.remember(art)
+        art = this.cache.get(url)
+        if (art?.blurred[quality]) blurred.destroy(true)
+        else if (art) art.blurred[quality] = blurred
+        else {
+          art = { url, blurred: { [quality]: blurred }, aspect, sharp: null, sharpBitmap: null, sharpLoading: null, sharpFailed: false, dead: false }
+          this.remember(art)
+        }
       } catch (err) {
         console.warn(String(err))
-        if (this.pending === url) for (const s of this.slots) this.startFade(s, 0)
+        if (this.isPending(url, quality)) for (const s of this.slots) this.startFade(s, 0)
         return
       }
-    } else {
-      // refresh LRU position
-      this.cache.delete(key)
-      this.cache.set(key, art)
     }
-    if (this.pending !== url) return
-    this.push(url, art)
+    // refresh LRU position
+    this.cache.delete(url)
+    this.cache.set(url, art)
+    if (!this.isPending(url, quality)) return
+    this.push(url, art, quality)
     if (this.wantsSharp) this.ensureSharp(art)
+  }
+
+  private isPending(url: string, quality: Quality): boolean {
+    return this.pending?.url === url && this.pending.quality === quality
+  }
+
+  /** The blur quality (settings.interface.blurQuality): the art on screen is rebuilt at it. */
+  setQuality(q: Quality): void {
+    if (q === this.quality) return
+    this.quality = q
+    for (const e of this.cache.values()) for (const other of QUALITIES) if (other !== q) this.releaseBlurred(e, other)
+    if (this.pending) void this.setArt(this.pending.url)
+  }
+
+  /** Free an image's blurred copy at `q` unless a slot still shows it (it's freed as it retires). */
+  private releaseBlurred(e: ArtEntry, q: Quality): void {
+    if (!e.blurred[q] || this.slots.some((s) => s.art === e && s.quality === q)) return
+    e.blurred[q]!.destroy(true)
+    delete e.blurred[q]
   }
 
   private ensureSharp(art: ArtEntry): void {
     if (art.sharp || art.sharpLoading || art.sharpFailed || art.dead) return
-    const url = art.key.slice(0, art.key.lastIndexOf('|'))
-    art.sharpLoading = decode(artUrl(url)!)
+    art.sharpLoading = decode(artUrl(art.url)!)
       .then((bmp) => {
         if (art.dead) {
           bmp.close()
@@ -227,7 +261,7 @@ export class ArtLayer {
   }
 
   private remember(art: ArtEntry): void {
-    this.cache.set(art.key, art)
+    this.cache.set(art.url, art)
     while (this.cache.size > CACHE) {
       const [oldKey, old] = this.cache.entries().next().value as [string, ArtEntry]
       if (this.slots.some((s) => s.art === old)) {
@@ -241,17 +275,35 @@ export class ArtLayer {
     }
   }
 
-  private push(url: string, art: ArtEntry): void {
+  private push(url: string, art: ArtEntry, quality: Quality): void {
     const root = new Container()
     const sharp = new Sprite(art.sharp ?? Texture.EMPTY)
-    const blurred = new Sprite(art.blurred)
+    const blurred = new Sprite(art.blurred[quality])
     sharp.anchor.set(0.5)
     blurred.anchor.set(0.5)
     root.addChild(sharp, blurred)
     root.alpha = 0
     this.root.addChild(root)
     const now = performance.now()
-    this.slots.push({ url, root, sharp, blurred, art, fade: 0, fadeFrom: 0, fadeTo: 1, fadeStart: now, sharpIn: art.sharp ? 1 : 0, seed: Math.random() * 1000, born: now })
+    // the same image again (rebuilt at another blur quality): keep its drift, or the two copies
+    // would cross-fade out of register
+    const prev = this.slots[this.slots.length - 1]
+    const same = prev?.art === art
+    this.slots.push({
+      url,
+      quality,
+      root,
+      sharp,
+      blurred,
+      art,
+      fade: 0,
+      fadeFrom: 0,
+      fadeTo: 1,
+      fadeStart: now,
+      sharpIn: art.sharp ? 1 : 0,
+      seed: same ? prev.seed : Math.random() * 1000,
+      born: same ? prev.born : now
+    })
   }
 
   private startFade(s: Slot, to: number): void {
@@ -327,16 +379,8 @@ export class ArtLayer {
         this.root.removeChild(s.root)
         s.root.destroy({ children: true })
         this.slots.splice(i, 1)
+        if (s.quality !== this.quality) this.releaseBlurred(s.art, s.quality)
       }
-    }
-  }
-
-  /** Drop cached art (e.g. after a blur-quality change) except what's on screen. */
-  clearCache(): void {
-    for (const [key, e] of this.cache) {
-      if (this.slots.some((s) => s.art === e)) continue
-      this.cache.delete(key)
-      destroyEntry(e)
     }
   }
 

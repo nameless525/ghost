@@ -11,6 +11,7 @@ import { easings } from '../../motion/easing'
 import { mixNumber } from '../../theme/color'
 import type { VisTextures } from './textures'
 import type { EmitPoint, VisFrame, VisLayer, VisLayout } from './types'
+import { idleSeconds } from './util'
 
 const POINTS = 220
 const SPAN = 384 // samples shown (of 512), leaving room to trigger
@@ -184,7 +185,7 @@ export class ScopeVisualizer implements VisLayer {
     } else {
       target.fill(0)
     }
-    const t = now / 1000
+    const t = idleSeconds(f)
     const k = 1 - Math.exp(-dt / (hasSignal ? 12 : 220))
     const A = Math.min(this.L.h * 0.2, 230) * (1 + 0.1 * pulse) * e
     for (let i = 0; i < POINTS; i++) {

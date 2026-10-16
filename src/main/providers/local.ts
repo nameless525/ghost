@@ -2,19 +2,21 @@
 //
 // `LocalLibrary` scans settings.sources.localFolders recursively, reads tags with music-metadata
 // and indexes them in `local_files` (owned here). Rescans are incremental: a file is re-read only
-// when its mtime or size changed; files that disappeared are dropped. `LocalProvider.findTrack` is a
-// cheap DB lookup (album / title keys) scored by title, duration and album match, so the resolver
-// asks it on every play; resolveStream returns `{ kind: 'file', path }`.
+// when its mtime or size changed; files that disappeared are dropped, but a folder or file that
+// couldn't be read keeps what was known about it. `LocalProvider.findTrack` is a cheap DB lookup
+// (album / title keys) scored by title, duration and album match, so the resolver asks it on every
+// play; resolveStream returns `{ kind: 'file', path }`. `localAlbums` groups the files into albums
+// (album tag + album artist, else their folder), which the catalog lists in Browse (catalog/local.ts).
 
 import type { Dirent } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
-import { basename, dirname, extname, join, resolve } from 'node:path'
-import type { AudioFormat } from '../../shared/types'
+import { basename, dirname, extname, join, resolve, sep } from 'node:path'
+import type { AlbumKind, AudioFormat } from '../../shared/types'
 import { baseTitle, gameKey, keyOf } from '../catalog/normalize'
 import type { DB } from '../db'
 import { NetError } from '../net/errors'
 import { cleanTrackTitle, combineScore, durationFit, titleSimilarity } from './match'
-import type { CanonicalTrack, Provider, ProviderCallOptions, SourceCandidate, StreamInfo } from './types'
+import type { CanonicalTrack, Provider, ProviderAlbum, ProviderCallOptions, ProviderTrack, SourceCandidate, StreamInfo } from './types'
 
 export const LOCAL_ID = 'local'
 
@@ -133,11 +135,30 @@ export function albumKeyOf(album: string | null | undefined): string | null {
   return gameKey(album) || null
 }
 
+/** A folder (or album) named only for its disc: "CD1", "Disc 2", "Disk 01". */
+const DISC_LABEL = /^(?:cd|dis[ck])\s*[-_.]?\s*(\d{1,2})$/i
+/** The disc part ending an album or folder name: "… (Disc 2)", "… CD 2", "… [Disc 1 of 3]". */
+const DISC_SUFFIX = /\s*[-–—:,]?\s*[([]?\s*\b(?:cd|dis[ck])\s*[-_.]?\s*(\d{1,2})(?:\s*(?:of|\/)\s*\d{1,2})?\s*[)\]]?\s*$/i
+
+function discOf(name: string): number | null {
+  const m = DISC_LABEL.exec(name) ?? DISC_SUFFIX.exec(name)
+  return m ? Number(m[1]) : null
+}
+
+/** The album an untagged file's folder names: "<album>/<file>", or "<album>/CD2/<file>" (disc 2). */
+function folderAlbum(path: string, root: string): { album: string | null; disc: number | null } {
+  let dir = dirname(path)
+  if (resolve(dir) === resolve(root)) return { album: null, disc: null }
+  const disc = discOf(basename(dir))
+  if (DISC_LABEL.test(basename(dir)) && resolve(dirname(dir)) !== resolve(root)) dir = dirname(dir)
+  return { album: basename(dir).replace(/\s*[[(][^)\]]*[)\]]\s*/g, ' ').trim() || null, disc }
+}
+
 /** Build a row from a file's tags (missing tags fall back to the file / folder names). */
 export function rowFromTags(path: string, root: string, st: { mtimeMs: number; size: number }, tags: TagInfo, now: number): LocalFileRow & { scanned_at: number } {
   const stem = basename(path, extname(path))
-  const folder = basename(dirname(path))
-  const album = tags.album?.trim() || (resolve(dirname(path)) !== resolve(root) ? folder.replace(/\s*[[(][^)\]]*[)\]]\s*/g, ' ').trim() : null) || null
+  const folder = folderAlbum(path, root)
+  const album = tags.album?.trim() || folder.album
   const title = tags.title?.trim() || cleanTrackTitle(stem.replace(/_/g, ' '), { names: [album], numbered: /^\d{1,3}\s/.test(stem) })
   const format = formatFor(path, tags)
   const lossless = tags.lossless ?? (format === 'flac' || format === 'wav')
@@ -152,7 +173,7 @@ export function rowFromTags(path: string, root: string, st: { mtimeMs: number; s
     album_artist: tags.albumArtist?.trim() || null,
     composer: tags.composer?.trim() || null,
     track_no: tags.track ?? (/^(\d{1,3})\b/.exec(stem) ? Number(/^(\d{1,3})\b/.exec(stem)![1]) : null),
-    disc_no: tags.disc ?? null,
+    disc_no: tags.disc ?? folder.disc,
     duration_ms: tags.durationMs ?? null,
     format,
     bitrate: tags.bitrateKbps ?? (tags.durationMs ? Math.round((st.size * 8) / tags.durationMs) : null),
@@ -171,10 +192,14 @@ export interface ScanResult {
   removed: number
   errors: number
   removedPaths: string[]
+  /** Files read this scan: new ones and changed ones. */
+  changedPaths: string[]
   /** Per configured folder: music files found, and how many of them are new. */
   byRoot: { root: string; files: number; added: number }[]
   /** Configured folders that couldn't be read (unplugged drive, typo): what was known is kept. */
   unavailable: string[]
+  /** Configured folders with subfolders or files that couldn't be read: what was known under those is kept. */
+  incomplete: string[]
   ms: number
 }
 
@@ -194,12 +219,24 @@ export interface LocalLibraryOptions {
   log?: (msg: string) => void
   /** Stop descending after this many files per scan (runaway roots like "/"). */
   maxFiles?: number
+  /** The filesystem a scan reads (tests stand in for unreadable folders). */
+  fs?: LocalFs
 }
+
+/** The filesystem calls a scan makes. */
+export interface LocalFs {
+  readdir(dir: string, opts: { withFileTypes: true }): Promise<Dirent[]>
+  stat(path: string): Promise<{ mtimeMs: number; size: number; isDirectory(): boolean }>
+}
+
+/** Rows each part of a candidate lookup reads at most. */
+const CANDIDATES_MAX = 500
 
 export class LocalLibrary {
   private readonly readTags: TagReader
   private readonly now: () => number
   private readonly log: (msg: string) => void
+  private readonly fs: LocalFs
   private scanning: Promise<ScanResult> | null = null
   private queued: { folders: string[]; opts: ScanOptions } | null = null
   private next: Promise<ScanResult> | null = null
@@ -212,6 +249,7 @@ export class LocalLibrary {
     this.now = opts.now ?? Date.now
     this.log = opts.log ?? (() => {})
     this.maxFiles = opts.maxFiles ?? 250_000
+    this.fs = opts.fs ?? { readdir, stat }
     db.exec(LOCAL_DDL)
   }
 
@@ -225,12 +263,30 @@ export class LocalLibrary {
     return this.db.prepare(`SELECT * FROM local_files WHERE path = ?`).get(path) as LocalFileRow | undefined
   }
 
-  /** Rows that could be this track: same title key, or on an album named like its album / game. */
-  candidates(t: Pick<CanonicalTrack, 'title' | 'albumTitle' | 'gameName'>): LocalFileRow[] {
+  /** Every indexed file, in path order. */
+  rows(): LocalFileRow[] {
+    return this.db.prepare(`SELECT * FROM local_files ORDER BY path`).all() as unknown as LocalFileRow[]
+  }
+
+  /**
+   * Rows that could be this track: those on an album named like its album / game (the same title
+   * first, so a huge album can't push it out), then same-titled rows from elsewhere, closest length
+   * first (only a convincing length lets those match). Each part is capped on its own, so hundreds
+   * of unrelated "Main Theme"s never hide the album's own.
+   */
+  candidates(t: Pick<CanonicalTrack, 'title' | 'albumTitle' | 'gameName' | 'durationMs'>): LocalFileRow[] {
     const albumKeys = [...new Set([albumKeyOf(t.albumTitle), albumKeyOf(t.gameName), t.gameName ? keyOf(t.gameName) : null, keyOf(t.albumTitle)].filter((k): k is string => !!k))]
+    const titleKey = keyOf(t.title)
     const ph = albumKeys.map(() => '?').join(',')
-    const sql = `SELECT * FROM local_files WHERE title_key = ?${albumKeys.length ? ` OR album_key IN (${ph})` : ''} LIMIT 500`
-    return this.db.prepare(sql).all(keyOf(t.title), ...albumKeys) as unknown as LocalFileRow[]
+    const onAlbum = albumKeys.length
+      ? (this.db.prepare(`SELECT * FROM local_files WHERE album_key IN (${ph}) ORDER BY title_key = ? DESC, path LIMIT ${CANDIDATES_MAX}`).all(...albumKeys, titleKey) as unknown as LocalFileRow[])
+      : []
+    const named =
+      t.durationMs != null
+        ? (this.db.prepare(`SELECT * FROM local_files WHERE title_key = ? ORDER BY abs(coalesce(duration_ms, 0) - ?), path LIMIT ${CANDIDATES_MAX}`).all(titleKey, t.durationMs) as unknown as LocalFileRow[])
+        : []
+    const seen = new Set(onAlbum.map((r) => r.path))
+    return [...onAlbum, ...named.filter((r) => !seen.has(r.path))]
   }
 
   /**
@@ -269,7 +325,7 @@ export class LocalLibrary {
   private async scanRoots(folders: string[], progress: (p: ScanProgress) => void): Promise<ScanResult> {
     const t0 = this.now()
     const roots = [...new Set(folders.filter((f) => typeof f === 'string' && f.trim()).map((f) => resolve(f)))]
-    const res: ScanResult = { roots, files: 0, added: 0, updated: 0, removed: 0, errors: 0, removedPaths: [], byRoot: [], unavailable: [], ms: 0 }
+    const res: ScanResult = { roots, files: 0, added: 0, updated: 0, removed: 0, errors: 0, removedPaths: [], changedPaths: [], byRoot: [], unavailable: [], incomplete: [], ms: 0 }
     // Folders no longer configured.
     const known = (this.db.prepare(`SELECT DISTINCT root FROM local_files`).all() as { root: string }[]).map((r) => r.root)
     for (const r of known) {
@@ -289,11 +345,11 @@ export class LocalLibrary {
     )
     // 1. Walk every folder: what's there, and which files are new or changed.
     type Todo = { path: string; st: { mtimeMs: number; size: number }; isNew: boolean }
-    const plans: { root: string; existing: Map<string, unknown>; seen: Set<string>; todo: Todo[]; truncated: boolean; files: number }[] = []
+    const plans: { root: string; existing: Map<string, unknown>; seen: Set<string>; todo: Todo[]; truncated: boolean; unread: string[]; files: number }[] = []
     progress({ phase: 'walk', found: 0 })
     for (const root of roots) {
       try {
-        if (!(await stat(root)).isDirectory()) throw new Error('not a folder')
+        if (!(await this.fs.stat(root)).isDirectory()) throw new Error('not a folder')
       } catch (e) {
         // Unplugged drive or a typo: keep what we knew; resolveStream checks files exist.
         this.log(`local folder ${root} unavailable: ${(e as Error).message}`)
@@ -301,17 +357,22 @@ export class LocalLibrary {
         continue
       }
       const existing = new Map((this.db.prepare(`SELECT path, mtime_ms, size FROM local_files WHERE root = ?`).all(root) as { path: string; mtime_ms: number; size: number }[]).map((r) => [r.path, r]))
-      const plan = { root, existing, seen: new Set<string>(), todo: [] as Todo[], truncated: false, files: 0 }
-      plans.push(plan)
-      for await (const path of walk(root, 24)) {
+      const plan = { root, existing, seen: new Set<string>(), todo: [] as Todo[], truncated: false, unread: [] as string[], files: 0 }
+      // A folder or file that vanished while we looked is gone; one we may not read (permissions, a
+      // failing drive) is not, and what was known under it stays.
+      const unreadable = (path: string, e: unknown) => {
+        if (path === root || !isGone(e)) plan.unread.push(path)
+      }
+      for await (const path of walk(this.fs, root, 24, unreadable)) {
         if (res.files >= this.maxFiles) {
           plan.truncated = true
           break
         }
         let st: { mtimeMs: number; size: number }
         try {
-          st = await stat(path)
-        } catch {
+          st = await this.fs.stat(path)
+        } catch (e) {
+          unreadable(path, e)
           continue
         }
         res.files++
@@ -322,12 +383,22 @@ export class LocalLibrary {
         if (ex && ex.mtime_ms === Math.round(st.mtimeMs) && ex.size === st.size) continue
         plan.todo.push({ path, st, isNew: !ex })
       }
+      if (plan.unread.includes(root)) {
+        this.log(`local folder ${root} unavailable: it couldn't be listed`)
+        res.unavailable.push(root)
+        continue
+      }
+      if (plan.unread.length) {
+        this.log(`local folder ${root}: ${plan.unread.length} folder(s) or file(s) couldn't be read, keeping what was known there`)
+        res.incomplete.push(root)
+      }
+      plans.push(plan)
     }
     // 2. Read the tags of new and changed files, 4 at a time; write in small transactions.
     const total = plans.reduce((n, p) => n + p.todo.length, 0)
     let read = 0
     if (total) progress({ phase: 'tags', done: 0, total })
-    for (const { root, existing, seen, todo, truncated, files } of plans) {
+    for (const { root, existing, seen, todo, truncated, unread, files } of plans) {
       let added = 0
       for (let i = 0; i < todo.length; i += 32) {
         const batch = todo.slice(i, i + 32)
@@ -345,6 +416,7 @@ export class LocalLibrary {
             upsert.run(r.path, r.root, r.mtime_ms, r.size, r.title, r.album, r.artist, r.album_artist, r.composer, r.track_no, r.disc_no, r.duration_ms, r.format, r.bitrate, r.lossless, r.title_key, r.album_key, r.scanned_at, error)
             if (f.isNew) added++
             else res.updated++
+            res.changedPaths.push(r.path)
           }
           this.db.exec('COMMIT')
         } catch (e) {
@@ -357,8 +429,9 @@ export class LocalLibrary {
       }
       res.added += added
       res.byRoot.push({ root, files, added })
-      // A walk cut short by maxFiles didn't see everything: don't drop what it missed.
-      const gone = [...existing.keys()].filter((p) => !seen.has(p))
+      // A walk cut short by maxFiles didn't see everything: don't drop what it missed. Nor what is
+      // under a folder it couldn't read.
+      const gone = [...existing.keys()].filter((p) => !seen.has(p) && !unread.some((u) => p === u || p.startsWith(u.endsWith(sep) ? u : u + sep)))
       if (gone.length && !truncated) {
         const del = this.db.prepare(`DELETE FROM local_files WHERE path = ?`)
         this.db.exec('BEGIN IMMEDIATE')
@@ -373,18 +446,25 @@ export class LocalLibrary {
   }
 }
 
-async function* walk(dir: string, depth: number): AsyncGenerator<string> {
+/** A folder or file that isn't there (any more), as opposed to one we may not read. */
+function isGone(e: unknown): boolean {
+  const code = (e as NodeJS.ErrnoException | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+async function* walk(fs: LocalFs, dir: string, depth: number, onError: (dir: string, e: unknown) => void): AsyncGenerator<string> {
   if (depth < 0) return
   let entries: Dirent[]
   try {
-    entries = await readdir(dir, { withFileTypes: true })
-  } catch {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch (e) {
+    onError(dir, e)
     return
   }
   for (const e of entries) {
     if (e.name.startsWith('.')) continue
     const p = join(dir, e.name)
-    if (e.isDirectory()) yield* walk(p, depth - 1)
+    if (e.isDirectory()) yield* walk(fs, p, depth - 1, onError)
     else if ((e.isFile() || e.isSymbolicLink()) && AUDIO_EXTS[extname(e.name).toLowerCase()]) yield p
     // Symlinked directories are not followed (no loops).
   }
@@ -402,6 +482,153 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
     })
   )
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Albums
+
+/** "Various Artists" and friends: no one's name. */
+const VARIOUS = /^(?:various(?:\s+artists)?|va|v\.\s*a\.?)$/i
+const natural = new Intl.Collator('en', { numeric: true })
+
+/** A file's album: its album tag (else its folder) without a disc part, and its disc. */
+function albumOfRow(r: LocalFileRow): { title: string; disc: number | null } | null {
+  let title = r.album?.trim() || null
+  let disc = r.disc_no
+  // Files indexed before disc folders were understood carry "CD1" as their album.
+  if (title && DISC_LABEL.test(title)) {
+    const f = folderAlbum(r.path, r.root)
+    title = f.album ?? title
+    disc ??= f.disc
+  }
+  if (!title) return null
+  const m = DISC_SUFFIX.exec(title)
+  if (m && m.index > 0) {
+    title = title.slice(0, m.index).trim()
+    disc ??= Number(m[1])
+  }
+  return { title, disc: disc ?? discOf(basename(dirname(r.path))) }
+}
+
+function artistKey(r: LocalFileRow): string {
+  const a = r.album_artist?.trim()
+  return a && !VARIOUS.test(a) ? keyOf(a) : ''
+}
+
+function localKind(title: string): AlbumKind {
+  const t = title.toLowerCase()
+  if (/\bgame\s*-?\s*rips?\b|\bgamerips?\b/.test(t)) return 'gamerip'
+  if (/\bremix/.test(t)) return 'remix'
+  if (/\barrange|\bpiano\b|\borchestra/.test(t)) return 'arrange'
+  return 'ost'
+}
+
+type AlbumEntry = { r: LocalFileRow; title: string; disc: number | null; folder: string }
+
+/** The same disc and track number, or title, in two folders: two copies (a FLAC and an MP3 rip). */
+function hasCopies(entries: AlbumEntry[]): boolean {
+  const folderOf = new Map<string, string>()
+  for (const e of entries) {
+    const disc = e.disc ?? 1
+    for (const k of [e.r.track_no != null ? `${disc}#${e.r.track_no}` : null, `${disc}:${e.r.title_key}`]) {
+      if (k == null) continue
+      const f = folderOf.get(k)
+      if (f == null) folderOf.set(k, e.folder)
+      else if (f !== e.folder) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Indexed files as albums: grouped by album tag (untagged: their folder) and album artist, discs
+ * together ("… (Disc 2)", "CD2/"). Album artists only split albums of one name when they differ,
+ * and two copies of an album in different folders stay two albums. Files right in a music folder
+ * with no album tag belong to none. A `ref` stays the same across scans while the album's name and
+ * artist do; a track's locator is its file.
+ */
+export function localAlbums(rows: LocalFileRow[]): ProviderAlbum[] {
+  const byTitle = new Map<string, AlbumEntry[]>()
+  for (const r of rows) {
+    const a = albumOfRow(r)
+    if (!a) continue
+    const k = keyOf(a.title) || a.title.toLowerCase()
+    const dir = dirname(r.path)
+    let l = byTitle.get(k)
+    if (!l) byTitle.set(k, (l = []))
+    l.push({ r, ...a, folder: DISC_LABEL.test(basename(dir)) ? dirname(dir) : dir })
+  }
+  const groups = new Map<string, AlbumEntry[]>()
+  const add = (ref: string, e: AlbumEntry) => {
+    let l = groups.get(ref)
+    if (!l) groups.set(ref, (l = []))
+    l.push(e)
+  }
+  for (const [k, entries] of byTitle) {
+    const artists = [...new Set(entries.map((e) => artistKey(e.r)).filter(Boolean))]
+    for (const e of entries) add(`${k}|${artists.length > 1 ? artistKey(e.r) : (artists[0] ?? '')}`, e)
+  }
+  for (const [ref, entries] of [...groups]) {
+    if (!hasCopies(entries)) continue
+    groups.delete(ref)
+    for (const e of entries) add(`${ref}|${e.folder}`, e)
+  }
+  return [...groups].map(([ref, entries]) => albumFrom(ref, entries))
+}
+
+function albumFrom(ref: string, entries: AlbumEntry[]): ProviderAlbum {
+  const sorted = [...entries].sort((x, y) => (x.disc ?? 1) - (y.disc ?? 1) || (x.r.track_no ?? 1e9) - (y.r.track_no ?? 1e9) || natural.compare(x.r.path, y.r.path))
+  const perDisc = new Map<number, number>()
+  const tracks: ProviderTrack[] = sorted.map(({ r, disc }) => {
+    const d = disc ?? 1
+    const n = (perDisc.get(d) ?? 0) + 1
+    perDisc.set(d, n)
+    return {
+      disc: d,
+      number: r.track_no ?? n,
+      title: r.title,
+      durationMs: r.duration_ms,
+      locator: r.path,
+      files: [{ format: r.format, sizeBytes: r.size }],
+      composers: (r.composer ?? '').split(/\s*[,;]\s*/).filter(Boolean)
+    }
+  })
+  // The album's name as most of its files spell it.
+  const spellings = new Map<string, number>()
+  for (const e of sorted) spellings.set(e.title, (spellings.get(e.title) ?? 0) + 1)
+  const title = [...spellings].sort((a, b) => b[1] - a[1])[0][0]
+  const totalSizes: Partial<Record<AudioFormat, number>> = {}
+  for (const { r } of sorted) totalSizes[r.format] = (totalSizes[r.format] ?? 0) + r.size
+  // Composer tags, else the album artist, else the one artist every file names.
+  const albumArtist = sorted.map((e) => e.r.album_artist?.trim()).find((a) => a && !VARIOUS.test(a))
+  const artists = [...new Set(sorted.map((e) => e.r.artist?.trim() || ''))]
+  const tagged = [...new Set(tracks.flatMap((t) => t.composers))]
+  const composers = tagged.length ? tagged : albumArtist ? [albumArtist] : artists.length === 1 && artists[0] && !VARIOUS.test(artists[0]) ? artists : []
+  return {
+    provider: LOCAL_ID,
+    ref,
+    title,
+    titleFromRef: false,
+    platforms: [],
+    kind: localKind(title),
+    typeLabel: null,
+    year: null,
+    thumb: null,
+    cover: null,
+    catalogNo: null,
+    addedAt: null,
+    altTitles: [],
+    titleOriginal: null,
+    developers: [],
+    publishers: [],
+    composers,
+    images: [],
+    description: null,
+    formats: Object.keys(totalSizes) as AudioFormat[],
+    totalSizes,
+    externalId: null,
+    tracks
+  }
 }
 
 // ---------------------------------------------------------------------------

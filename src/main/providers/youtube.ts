@@ -472,10 +472,24 @@ export interface YouTubeProviderOptions {
   resolveTimeoutMs?: number
 }
 
-interface Waiter {
+/** One extraction of a video, and the callers still waiting for it. */
+interface Job {
+  id: string
+  /** Callers that can still use it (one without an AbortSignal never leaves). */
+  callers: number
   resolve: (v: YtVideo) => void
   reject: (e: unknown) => void
+  done: boolean
 }
+
+interface VideoMemo {
+  validUntil: number
+  fetchedAt: number
+  value: Promise<YtVideo>
+  job: Job
+}
+
+const aborted = () => new NetError('aborted', 'request aborted')
 
 export class YouTubeProvider implements Provider {
   readonly id = YT_ID
@@ -495,8 +509,10 @@ export class YouTubeProvider implements Provider {
    * Resolved videos, reused until `validUntil` (shortly before the stream URL expires); `fetchedAt`
    * is when the extraction started (in flight) or finished.
    */
-  private videos = new Map<string, { validUntil: number; fetchedAt: number; value: Promise<YtVideo> }>()
-  private pending: { waiters: Map<string, Waiter[]>; priorities: Map<string, number>; timer: ReturnType<typeof setTimeout>; priority: 0 | 1 | 2 } | null = null
+  private videos = new Map<string, VideoMemo>()
+  private pending: { jobs: Map<string, Job[]>; priorities: Map<string, number>; timer: ReturnType<typeof setTimeout>; priority: 0 | 1 | 2 } | null = null
+  /** Batches being extracted, and how to stop each run. */
+  private running = new Set<{ jobs: Job[]; ctl: AbortController }>()
 
   constructor(
     private readonly ytdlp: () => Promise<YtDlp>,
@@ -533,13 +549,19 @@ export class YouTubeProvider implements Provider {
   /**
    * Full -J for one video. Memoised until shortly before its URL expires; calls arriving together
    * share one yt-dlp run. `force` skips the memo unless it is in flight or under FORCE_REUSE_MS old.
+   * A caller whose `signal` aborts is let go at once; the video leaves its batch once no caller is
+   * left, and a running batch's yt-dlp is stopped once none of its videos has one.
    */
   video(id: string, opts: ProviderCallOptions = {}): Promise<YtVideo> {
+    if (opts.signal?.aborted) return Promise.reject(aborted())
     const m = this.videos.get(id)
     const now = this.now()
-    if (m && (opts.force ? now - m.fetchedAt < FORCE_REUSE_MS : now < m.validUntil)) return m.value
-    const value = new Promise<YtVideo>((resolve, reject) => this.enqueue(id, { resolve, reject }, opts.priority ?? 0))
-    const entry = { validUntil: now + 60_000, fetchedAt: now, value }
+    if (m && (opts.force ? now - m.fetchedAt < FORCE_REUSE_MS : now < m.validUntil)) return this.follow(m, opts.signal)
+    let job!: Job
+    const value = new Promise<YtVideo>((resolve, reject) => {
+      job = { id, callers: 0, resolve, reject, done: false }
+    })
+    const entry: VideoMemo = { validUntil: now + 60_000, fetchedAt: now, value, job }
     this.videos.delete(id)
     this.videos.set(id, entry)
     value.then(
@@ -553,16 +575,64 @@ export class YouTubeProvider implements Provider {
       }
     )
     if (this.videos.size > 300) this.videos.delete(this.videos.keys().next().value!)
-    return value
+    this.enqueue(job, opts.priority ?? 0)
+    return this.follow(entry, opts.signal)
   }
 
-  private enqueue(id: string, w: Waiter, priority: 0 | 1 | 2): void {
-    if (!this.pending) this.pending = { waiters: new Map(), priorities: new Map(), timer: setTimeout(() => void this.flush(), 25), priority }
+  /** One caller's wait on an extraction, which it gives up when `signal` aborts. */
+  private follow(entry: VideoMemo, signal?: AbortSignal): Promise<YtVideo> {
+    const job = entry.job
+    if (job.done) return entry.value
+    job.callers++
+    if (!signal) return entry.value
+    return new Promise<YtVideo>((resolve, reject) => {
+      const onAbort = () => {
+        reject(aborted())
+        if (--job.callers === 0) this.cancel(job)
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      entry.value.then(
+        (v) => {
+          signal.removeEventListener('abort', onAbort)
+          resolve(v)
+        },
+        (e) => {
+          signal.removeEventListener('abort', onAbort)
+          reject(e)
+        }
+      )
+    })
+  }
+
+  /** Nobody waits for this extraction any more: out of its batch, and a run nobody waits on stops. */
+  private cancel(job: Job): void {
+    if (job.done) return
+    job.done = true
+    job.reject(aborted())
+    const p = this.pending
+    const queued = p?.jobs.get(job.id)
+    if (p && queued?.includes(job)) {
+      if (queued.length > 1) queued.splice(queued.indexOf(job), 1)
+      else {
+        p.jobs.delete(job.id)
+        p.priorities.delete(job.id)
+      }
+      if (!p.jobs.size) {
+        clearTimeout(p.timer)
+        this.pending = null
+      }
+      return
+    }
+    for (const b of this.running) if (b.jobs.includes(job) && b.jobs.every((j) => j.done)) b.ctl.abort()
+  }
+
+  private enqueue(job: Job, priority: 0 | 1 | 2): void {
+    if (!this.pending) this.pending = { jobs: new Map(), priorities: new Map(), timer: setTimeout(() => void this.flush(), 25), priority }
     const p = this.pending
     p.priority = Math.min(p.priority, priority) as 0 | 1 | 2
-    p.waiters.set(id, [...(p.waiters.get(id) ?? []), w])
-    p.priorities.set(id, Math.min(p.priorities.get(id) ?? priority, priority))
-    if (p.waiters.size >= 8) {
+    p.jobs.set(job.id, [...(p.jobs.get(job.id) ?? []), job])
+    p.priorities.set(job.id, Math.min(p.priorities.get(job.id) ?? priority, priority))
+    if (p.jobs.size >= 8) {
       clearTimeout(p.timer)
       void this.flush()
     }
@@ -575,12 +645,16 @@ export class YouTubeProvider implements Provider {
     // The most urgent first: yt-dlp extracts them in order, and each is handed over as soon as
     // its line is printed, so a track someone is waiting for never waits for a warm-up batched
     // with it.
-    const ids = [...p.waiters.keys()].sort((a, b) => p.priorities.get(a)! - p.priorities.get(b)!)
-    const settled = new Set<string>()
+    const ids = [...p.jobs.keys()].sort((a, b) => p.priorities.get(a)! - p.priorities.get(b)!)
+    const batch = { jobs: [...p.jobs.values()].flat(), ctl: new AbortController() }
+    this.running.add(batch)
     const settle = (id: string, ok: YtVideo | null, err?: unknown) => {
-      if (settled.has(id)) return
-      settled.add(id)
-      for (const w of p.waiters.get(id) ?? []) ok ? w.resolve(ok) : w.reject(err)
+      for (const j of p.jobs.get(id) ?? []) {
+        if (j.done) continue
+        j.done = true
+        if (ok) j.resolve(ok)
+        else j.reject(err)
+      }
     }
     try {
       const y = await this.ytdlp()
@@ -588,9 +662,10 @@ export class YouTubeProvider implements Provider {
       const r = await y.run(['-j', '--no-playlist', '--ignore-errors', '-f', YT_FORMAT, ...ids.map(videoUrl)], {
         timeoutMs: this.opts.resolveTimeoutMs ?? 30_000 + 10_000 * ids.length,
         priority: p.priority,
+        signal: batch.ctl.signal,
         allowFailure: true,
         onLine: (line) => {
-          for (const [id, v] of parseJsonLines(line)) if (p.waiters.has(id)) settle(id, v)
+          for (const [id, v] of parseJsonLines(line)) if (p.jobs.has(id)) settle(id, v)
         }
       })
       const byId = parseJsonLines(r.stdout)
@@ -606,6 +681,8 @@ export class YouTubeProvider implements Provider {
       }
     } catch (e) {
       for (const id of ids) settle(id, null, e)
+    } finally {
+      this.running.delete(batch)
     }
   }
 

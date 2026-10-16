@@ -8,6 +8,7 @@ import {
   downloadUrl,
   hasPlayableAudio,
   IA_INDEX_COLLECTIONS,
+  IA_MIN_CONFIDENCE,
   iaAlbumKind,
   iaAudioFormat,
   iaPlatforms,
@@ -23,6 +24,7 @@ import {
   parseSearch,
   searchQuery,
   searchUrl,
+  type IaFile,
   type IaIndexResponse,
   type IaMetadata,
   type IaSearchResponse
@@ -72,7 +74,9 @@ describe('archive: search results', () => {
     expect(refs).not.toContain('hollow-knight-full-ost.-7z')
     expect(refs).not.toContain('HollowKnightAudio')
     expect(refs).not.toContain('hollow-knight-silksong-every-audio-asset')
-    expect(refs).not.toContain('official-hollow-knight-original-soundtrack-opus') // opus-only: the engine can't decode it
+  })
+  it('keeps Opus-only items (the engine decodes Opus)', () => {
+    expect(hits.map((h) => h.ref)).toContain('official-hollow-knight-original-soundtrack-opus')
   })
   it('ranks the game soundtrack above DLC, sequels, sound effects and arrangements', () => {
     const top4 = hits.slice(0, 4).map((h) => h.ref)
@@ -207,6 +211,41 @@ describe('archive: provider', () => {
     expect(f.urls.length).toBe(n)
   })
 
+  it('reads its JSON in archive.org\'s turn of the app\'s scheduler when given one', async () => {
+    const calls: { url: string; accept?: string; priority?: number }[] = []
+    const http = {
+      fetchBytes: async (url: string, o: { headers?: Record<string, string>; priority?: number } = {}) => {
+        calls.push({ url, accept: o.headers?.Accept, priority: o.priority })
+        const body = url.startsWith('https://archive.org/advancedsearch.php') ? search : url.startsWith('https://archive.org/metadata/hollow-knight-ost') ? meta : empty
+        return { url, status: 200, bytes: Buffer.from(JSON.stringify(body)), contentType: 'application/json' }
+      }
+    }
+    const c = await new ArchiveProvider({ http }).findTrack(t, { priority: 0 })
+    expect(c[0]).toMatchObject({ locator: 'hollow-knight-ost/02. Dirtmouth.flac' })
+    expect(calls.length).toBeGreaterThan(1)
+    expect(calls.every((x) => x.accept === 'application/json' && x.priority === 0)).toBe(true)
+  })
+
+  it('findTrack offers no weak matches: a cover / remix, another cut, a partial title at the wrong length', async () => {
+    const item = (files: IaFile[]): IaMetadata => ({ metadata: { identifier: 'hk', title: 'Hollow Knight OST' }, files })
+    const searchHk: IaSearchResponse = { response: { numFound: 1, docs: [{ identifier: 'hk', title: 'Hollow Knight OST', format: ['VBR MP3'], collection: ['folksoundomy_gamesoundtracks'] }] } }
+    const want = { ...t, title: 'Dirtmouth', durationMs: 120_000 }
+    const find = (files: IaFile[]) => new ArchiveProvider({ fetch: fakeFetch({ 'https://archive.org/advancedsearch.php': searchHk, 'https://archive.org/metadata/hk': item(files) }) }).findTrack(want)
+    const mp3 = (name: string, title: string, length: string): IaFile => ({ name, source: 'original', format: 'VBR MP3', length, title })
+    // Scored 0 before: three markers and a length 280 s off.
+    expect(await find([mp3('01.mp3', 'Dirtmouth Piano Cover Remix', '400')])).toEqual([])
+    // The right title, but over three times as long: not the track.
+    expect(await find([mp3('01.mp3', 'Dirtmouth', '400')])).toEqual([])
+    expect(await find([mp3('01.mp3', 'Dirtmouth (Piano)', '')])).toEqual([])
+    expect(await find([mp3('01.mp3', 'Dirtmouth Town Square at Night', '150')])).toEqual([])
+    const [ok] = await find([mp3('01.mp3', 'Dirtmouth', '121.5'), mp3('02.mp3', 'Dirtmouth Piano Cover Remix', '400')])
+    expect(ok).toMatchObject({ locator: 'hk/01.mp3', title: 'Dirtmouth' })
+    expect(ok.confidence).toBeGreaterThanOrEqual(IA_MIN_CONFIDENCE)
+    // An exact title with no length to go on, or a length that differs as a game rip's does, is still offered.
+    expect(await find([mp3('01.mp3', 'Dirtmouth', '')])).toHaveLength(1)
+    expect(await find([mp3('01.mp3', 'Dirtmouth', '95')])).toHaveLength(1)
+  })
+
   it('resolveStream falls back to the bare download URL when metadata is unavailable', async () => {
     const p = new ArchiveProvider({ fetch: (async () => { throw new Error('offline') }) as unknown as typeof fetch })
     const s = await p.resolveStream('some-item/Disc 1/03 Song.mp3')
@@ -241,7 +280,7 @@ describe('archive: index helpers', () => {
     expect(iaAudioFormat('Unknown', 'a.nsf')).toBeNull()
     expect(hasPlayableAudio(['Metadata', 'MPEG-4 Audio'])).toBe(true)
     expect(hasPlayableAudio(['ZIP', '64Kbps MP3 ZIP', 'Flac FingerPrint'])).toBe(false)
-    expect(hasPlayableAudio(['Opus', 'PNG'])).toBe(false)
+    expect(hasPlayableAudio(['Opus', 'PNG'])).toBe(true)
     expect(hasPlayableAudio('VBR MP3')).toBe(true)
   })
 
@@ -453,6 +492,39 @@ describe('archive: getAlbum on collection items', () => {
     expect(a.kind).toBe('gamerip')
     expect(a.tracks.map((t) => t.number)).toEqual([1, 2, 3, 4, 5, 6, 7])
     expect(a.tracks.map((t) => t.title).slice(0, 3)).toEqual(['#35 caught (Kettle)', '#35 caught (Spotted)', '#35 caught'])
+  })
+
+  it('partly tagged items: every track keeps a number of its own', () => {
+    const flac = (name: string, title: string, track?: string, disc?: string): IaFile => ({ name, source: 'original', format: 'Flac', title, track, disc })
+    const numbers = (files: IaFile[]) => parseMetadata('x', { metadata: { title: 'X' }, files }).tracks.map((t) => [t.disc, t.number, t.title])
+    // A tag equal to another file's position: 2 and 2 before.
+    expect(numbers([flac('01.flac', 'Start', '2'), flac('02.flac', 'Missing tag')])).toEqual([
+      [1, 2, 'Start'],
+      [1, 3, 'Missing tag']
+    ])
+    // Untagged files continue after high tags, before or after them in name order.
+    expect(numbers([flac('a.flac', 'Intro'), flac('b.flac', 'Ten', '10'), flac('c.flac', 'Eleven', '11'), flac('d.flac', 'Outro')])).toEqual([
+      [1, 10, 'Ten'],
+      [1, 11, 'Eleven'],
+      [1, 12, 'Intro'],
+      [1, 13, 'Outro']
+    ])
+    // A numbered set: an untagged file keeps its name's number, unless a tag has it already.
+    const set = (bonusTag?: string) => [flac('01 A.flac', 'A', '1'), flac('02 B.flac', 'B', '2'), flac('03 C.flac', 'C', bonusTag), flac('05 E.flac', 'E')]
+    expect(numbers(set()).map((r) => r[1])).toEqual([1, 2, 3, 5])
+    expect(numbers(set('5')).map((r) => [r[1], r[2]])).toEqual([
+      [1, 'A'],
+      [2, 'B'],
+      [3, 'C'],
+      [4, 'E']
+    ])
+    // Fully tagged discs keep their numbers; discs number separately.
+    expect(numbers([flac('a.flac', 'One', '1', '1'), flac('b.flac', 'Three', '3', '1'), flac('c.flac', 'Other One', '1', '2'), flac('d.flac', 'Extra', undefined, '2')])).toEqual([
+      [1, 1, 'One'],
+      [1, 3, 'Three'],
+      [2, 1, 'Other One'],
+      [2, 2, 'Extra']
+    ])
   })
 
   it('format folders', () => {

@@ -7,7 +7,7 @@ import type { BeatEvent } from '../../motion/beat'
 import { easings } from '../../motion/easing'
 import { mixNumber } from '../../theme/color'
 import { Spectrum } from './spectrum'
-import { pcolor } from './util'
+import { idleSeconds, pcolor } from './util'
 import { RING_RADIUS_FRAC, type VisTextures } from './textures'
 import type { EmitPoint, VisFrame, VisLayer, VisLayout } from './types'
 
@@ -127,7 +127,7 @@ export class RadialVisualizer implements VisLayer {
     const maxLen = radius * (0.66 + 0.22 * f.kiai) * grow
     const step = Math.PI / PER_SIDE
     const barW = Math.max(2, ((2 * Math.PI * r0) / N) * 0.46)
-    const t = f.now / 1000
+    const t = idleSeconds(f)
     const swirl = (1 - e) * 0.9
 
     // halo + base ring

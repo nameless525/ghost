@@ -107,3 +107,116 @@ describe('Enricher with mocked IGDB + SteamGridDB', () => {
     expect(calls.filter((c) => c.includes('oauth2')).length).toBe(1)
   })
 })
+
+describe('Enricher after a failure', () => {
+  async function until(cond: () => boolean, ms = 10_000) {
+    const t0 = Date.now()
+    while (!cond()) {
+      if (Date.now() - t0 > ms) throw new Error('timed out')
+      await new Promise((r) => setTimeout(r, 10))
+    }
+  }
+
+  function setup() {
+    const repo = new CatalogRepo(memoryDb())
+    const addGame = (ref: string, title: string) => {
+      const ids = repo.upsertHits([hit(ref, title, 'ost', 1995, [P.snes])], { initial: true })
+      repo.assignGames(ids)
+      return repo.get<{ game_id: number }>(`SELECT game_id FROM albums WHERE id = ?`, ids[0])!.game_id
+    }
+    const checked = (gid: number) => repo.get<{ igdb: number | null; sgdb: number | null }>(`SELECT igdb_checked_at AS igdb, sgdb_checked_at AS sgdb FROM games WHERE id = ?`, gid)!
+    const settings = defaultSettings('/tmp')
+    const down = { igdb: false, sgdb: false }
+    const secrets: string[] = []
+    const tokens: string[] = []
+    const fetchMock = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input))
+      if (url.host === 'id.twitch.tv') {
+        const secret = url.searchParams.get('client_secret')!
+        secrets.push(secret)
+        if (secret === 'incorrect-secret') return new Response('{"message":"invalid client secret"}', { status: 403 })
+        return Response.json({ access_token: `tok-${secret}`, expires_in: 3600 })
+      }
+      if (url.href === 'https://api.igdb.com/v4/multiquery') {
+        tokens.push(String((init!.headers as Record<string, string>).Authorization))
+        if (down.igdb) return new Response('busy', { status: 500 })
+        const names = [...String(init!.body).matchAll(/query games "g(\d+)"/g)]
+        return Response.json(names.map(([, id]) => ({ name: `g${id}`, result: [] })))
+      }
+      if (url.pathname.startsWith('/api/v2/search/autocomplete/')) {
+        if (down.sgdb) return new Response('busy', { status: 500 })
+        return Response.json({ success: true, data: [] })
+      }
+      return new Response('?', { status: 404 })
+    }) as typeof fetch
+    let t = Date.UTC(2026, 9, 1)
+    const enricher = new Enricher({ repo, getSettings: () => settings, fetch: fetchMock, onChange: () => {}, log: () => {}, now: () => t })
+    return { repo, addGame, checked, settings, down, secrets, tokens, enricher, later: (ms: number) => (t += ms) }
+  }
+
+  it('a corrected IGDB secret under the same client id is used at once: new token, no back-off', async () => {
+    const { addGame, checked, settings, secrets, tokens, enricher } = setup()
+    const ct = addGame('ct-osv', 'Chrono Trigger OST')
+    settings.keys = { igdbClientId: 'same-id', igdbClientSecret: 'incorrect-secret', steamGridDbKey: '' }
+    enricher.start()
+    try {
+      await until(() => enricher.lastError != null)
+      expect(enricher.lastError).toMatch(/IGDB auth failed/)
+      // corrected in Settings (the catalog re-reads its keys on every settings change)
+      settings.keys = { ...settings.keys, igdbClientSecret: 'corrected-secret' }
+      enricher.configure()
+      expect(enricher.lastError).toBeNull()
+      await until(() => checked(ct).igdb != null)
+      expect(secrets).toEqual(['incorrect-secret', 'corrected-secret'])
+      expect(enricher.lastError).toBeNull()
+
+      // rotated while a token is cached: the next request authenticates with the new secret
+      const ff = addGame('ff6-osv', 'Final Fantasy VI OST')
+      settings.keys = { ...settings.keys, igdbClientSecret: 'rotated-secret' }
+      enricher.configure()
+      await until(() => checked(ff).igdb != null)
+      expect(secrets).toEqual(['incorrect-secret', 'corrected-secret', 'rotated-secret'])
+      expect(tokens).toEqual(['Bearer tok-corrected-secret', 'Bearer tok-rotated-secret'])
+    } finally {
+      enricher.stop()
+    }
+  })
+
+  it('a service’s error clears once it works again, or its key is removed; the other’s stays until then', async () => {
+    const { addGame, checked, settings, down, enricher, later } = setup()
+    const ct = addGame('ct-osv', 'Chrono Trigger OST')
+    settings.keys = { igdbClientId: 'cid', igdbClientSecret: 'secret', steamGridDbKey: 'sg' }
+    down.igdb = true
+    down.sgdb = true
+    enricher.want([ct])
+    enricher.start()
+    try {
+      await until(() => /IGDB HTTP 500/.test(enricher.lastError ?? '') && /SteamGridDB HTTP 500/.test(enricher.lastError ?? ''))
+
+      down.igdb = false
+      later(31_000) // past the back-off
+      enricher.want([ct])
+      await until(() => checked(ct).igdb != null)
+      expect(enricher.lastError).toBe('SteamGridDB HTTP 500')
+
+      down.sgdb = false
+      later(31_000)
+      enricher.want([ct])
+      await until(() => checked(ct).sgdb != null)
+      expect(enricher.lastError).toBeNull()
+
+      // failing again, then the key is removed: nothing is failing any more
+      down.igdb = true
+      addGame('ff6-osv', 'Final Fantasy VI OST')
+      later(31_000)
+      enricher.want([])
+      await until(() => enricher.lastError != null)
+      expect(enricher.lastError).toBe('IGDB HTTP 500')
+      settings.keys = { ...settings.keys, igdbClientId: '', igdbClientSecret: '' }
+      expect(enricher.lastError).toBeNull()
+      expect(enricher.status()).toEqual({ igdb: false, steamGridDb: true })
+    } finally {
+      enricher.stop()
+    }
+  })
+})

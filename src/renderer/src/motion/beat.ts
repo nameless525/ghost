@@ -2,7 +2,8 @@
 //
 // Uses the offline beat grid (PlayerState.currentAnalysis.beats/downbeats/kiai) against the
 // latency-compensated live position (livePositionMs()). When a track has no grid (ambient,
-// rubato, previews), it falls back to onset peaks detected from the real-time analysis frames.
+// rubato), it falls back to onset peaks detected from the real-time analysis frames. So does an
+// audible preview: the grid and position belong to the queue track it holds.
 //
 //   beat.phase      0..1 progress through the current beat
 //   beat.pulse      0..1 envelope: jumps on each beat, decays OutQuint over ~80% of a beat
@@ -36,11 +37,13 @@ export interface BeatEvent {
 
 type BeatCb = (e: BeatEvent) => void
 type KiaiCb = (active: boolean) => void
+/** What the speakers play: the queue's current track, or a preview holding it. */
+type Voice = 'main' | 'preview'
 
 const DOWNBEAT_STRENGTH = 1.35
 const KIAI_BOOST = 1.2
 
-class BeatClock {
+export class BeatClock {
   /** Current beat index (-1 before the first beat). */
   index = -1
   /** 0..1 progress through the current beat. */
@@ -66,6 +69,7 @@ class BeatClock {
   private downFlags: Uint8Array = new Uint8Array(0)
   private kiaiMs: [number, number][] = []
   private analysis: TrackAnalysis | null = null
+  private voice: Voice = 'main'
   private pulseStart = -1e9
   private pulseStrength = 0
   private pulseLen = 500
@@ -183,12 +187,30 @@ class BeatClock {
     for (const cb of this.kiaiCbs) cb(active)
   }
 
+  /** The audible voice changed: neither its grid position nor its onset statistics carry over. */
+  private switchVoice(voice: Voice): void {
+    this.voice = voice
+    this.bpm = 0
+    this.beatLength = 500
+    this.rebuild(this.analysis)
+    this.phase = 0
+    this.isDownbeat = false
+    this.onMean = 0.1
+    this.onVar = 0.01
+    this.onPrev = 0
+    this.lastOnsetAt = -1e9
+    this.intervals = []
+  }
+
   private update(dt: number, now: number): void {
     const ps = usePlayer.getState()
     if (ps.currentAnalysis !== this.analysis) this.rebuild(ps.currentAnalysis)
+    // a preview is audible once it has paused the queue (until then it is still loading)
+    const voice: Voice = ps.preview && ps.status !== 'playing' ? 'preview' : 'main'
+    if (voice !== this.voice) this.switchVoice(voice)
     this.playing = ps.status === 'playing'
 
-    if (this.hasGrid && ps.current) {
+    if (voice === 'main' && this.hasGrid && ps.current) {
       const pos = livePositionMs(ps)
       const b = this.beatsMs
       const i = this.search(pos)
@@ -215,7 +237,8 @@ class BeatClock {
       }
       this.setKiai(this.playing && this.kiaiAt(pos))
     } else {
-      this.onsetFallback(now)
+      // a preview's own analysis carries its tempo (not its beat positions)
+      this.onsetFallback(now, voice === 'preview' ? (ps.preview?.track.analysis?.bpm ?? null) : null)
       this.setKiai(false)
     }
 
@@ -231,7 +254,8 @@ class BeatClock {
     return false
   }
 
-  private onsetFallback(now: number): void {
+  /** @param bpm the tempo when known (a preview's analysis), else estimated from the onsets */
+  private onsetFallback(now: number, bpm: number | null): void {
     const f = frame()
     const ps = usePlayer.getState()
     const live = !!f && (ps.status === 'playing' || !!ps.preview)
@@ -256,10 +280,15 @@ class BeatClock {
       }
       this.lastOnsetAt = now
       this.onsetCount++
-      const sorted = [...this.intervals].sort((p, q) => p - q)
-      const med = sorted.length ? sorted[sorted.length >> 1] : 500
-      this.beatLength = Math.min(1000, Math.max(300, med))
-      this.bpm = Math.round(60000 / this.beatLength)
+      if (bpm && bpm > 0) {
+        this.beatLength = 60000 / bpm
+        this.bpm = bpm
+      } else {
+        const sorted = [...this.intervals].sort((p, q) => p - q)
+        const med = sorted.length ? sorted[sorted.length >> 1] : 500
+        this.beatLength = Math.min(1000, Math.max(300, med))
+        this.bpm = Math.round(60000 / this.beatLength)
+      }
       this.index = this.onsetCount
       this.isDownbeat = false
       const strength = Math.min(1.4, 0.75 + (x - thr) * 2)

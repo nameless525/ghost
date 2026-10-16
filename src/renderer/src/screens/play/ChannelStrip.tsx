@@ -3,7 +3,8 @@
 // un-solo); 1–9 toggle the matching voice, Alt+1–9 solo it, 0 brings every voice back.
 // Lives above the HUD's right side and fades with it.
 import { Cpu, Headphones, RotateCcw, VolumeX } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { allVoices, formatVoiceMask, isMuted, parseVoiceMask, voiceBit } from '@shared/voices'
 import { ghost } from '../../ghost'
 import { usePulse } from '../../motion/hooks'
 import { stagger, tween } from '../../motion/tween'
@@ -13,6 +14,7 @@ import { usePlayer } from '../../state/player'
 import { isMac } from '../../theme'
 import { Tooltip } from '../../ui'
 import { cx } from '../../ui/util'
+import { PendingMask } from './pending-mask'
 
 const MAX_KEYS = 9
 
@@ -24,22 +26,22 @@ export interface ChannelStripProps {
 /** "⌥-click" on macOS, "Alt+click" elsewhere. */
 const ALT_CLICK = isMac ? '⌥-click' : 'Alt+click'
 
-const allMask = (n: number) => (n >= 31 ? 0x7fffffff : (1 << n) - 1)
-const bit = (i: number) => 1 << i
-
 export function ChannelStrip({ onAnnounce }: ChannelStripProps) {
   const voices = usePlayer((s) => s.voices)
   const trackId = usePlayer((s) => s.current?.id ?? null)
-  // Optimistic mask: the pill answers the click at once, the player state confirms it.
-  const [pending, setPending] = useState<number | null>(null)
+  // Optimistic mask: the pill answers the click at once, main's answer to the request settles it.
+  const [pending] = useState(() => new PendingMask())
+  const [, redraw] = useReducer((n: number) => n + 1, 0)
   const root = useRef<HTMLDivElement>(null)
   const slots = useRef<(HTMLDivElement | null)[]>([])
   const names = voices?.names ?? []
-  const mask = pending ?? voices?.mask ?? 0
-  const all = allMask(names.length)
-  const soloed = names.length > 1 && names.findIndex((_, i) => mask === (all & ~bit(i)))
+  const mask = pending.mask ?? parseVoiceMask(voices?.mask) ?? 0n
+  const all = allVoices(names.length)
+  const soloed = names.length > 1 && names.findIndex((_, i) => mask === (all & ~voiceBit(i)))
 
-  useEffect(() => setPending(null), [voices?.mask, trackId])
+  useEffect(() => {
+    if (pending.reset()) redraw()
+  }, [trackId, pending])
   usePulse(root, { mode: 'var', enabled: !!voices })
 
   // A new set of voices (or a new track) staggers the pills in from the right.
@@ -51,9 +53,14 @@ export function ChannelStrip({ onAnnounce }: ChannelStripProps) {
     void stagger(els.slice().reverse(), (t) => t.delay(80).fadeIn(260, 'outQuad').moveToX(0, 620, 'outQuint'), 32)
   }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const apply = (next: number) => {
-    setPending(next)
-    void ghost().player.setVoiceMask(next)
+  const apply = (next: bigint) => {
+    const ticket = pending.send(next)
+    redraw()
+    void ghost()
+      .player.setVoiceMask(formatVoiceMask(next))
+      .finally(() => {
+        if (pending.answered(ticket)) redraw()
+      })
   }
   const bump = (i: number) => {
     const el = slots.current[i]
@@ -62,8 +69,8 @@ export function ChannelStrip({ onAnnounce }: ChannelStripProps) {
 
   const toggle = (i: number, announce = false) => {
     if (i >= names.length) return
-    const muting = !(mask & bit(i))
-    const next = mask ^ bit(i)
+    const muting = !isMuted(mask, i)
+    const next = mask ^ voiceBit(i)
     sfx.play(muting ? 'toggleOff' : 'toggleOn', { volume: 0.55 })
     bump(i)
     apply(next)
@@ -71,17 +78,17 @@ export function ChannelStrip({ onAnnounce }: ChannelStripProps) {
   }
   const solo = (i: number, announce = false) => {
     if (i >= names.length || names.length < 2) return
-    const only = all & ~bit(i)
+    const only = all & ~voiceBit(i)
     const off = mask === only
     sfx.play(off ? 'collapse' : 'expand', { volume: 0.5 })
     bump(i)
-    apply(off ? 0 : only)
+    apply(off ? 0n : only)
     if (announce) onAnnounce?.({ icon: <Headphones />, label: names[i], value: off ? 'Solo off' : 'Solo' })
   }
   const reset = (announce = false) => {
-    if (!mask) return
+    if (mask === 0n) return
     sfx.play('toggleOn', { volume: 0.5 })
-    apply(0)
+    apply(0n)
     if (announce) onAnnounce?.({ icon: <Cpu />, label: 'Channels', value: 'All on' })
   }
 
@@ -92,10 +99,10 @@ export function ChannelStrip({ onAnnounce }: ChannelStripProps) {
     // eslint-disable-next-line react-hooks/rules-of-hooks
     useKeybinding(`Alt+${k}`, () => solo(k - 1, true), { repeat: false, enabled: enabled && k <= names.length && names.length > 1 })
   }
-  useKeybinding('0', () => reset(true), { repeat: false, enabled: enabled && mask !== 0 })
+  useKeybinding('0', () => reset(true), { repeat: false, enabled: enabled && mask !== 0n })
 
   if (!voices || !names.length) return null
-  const muted = names.filter((_, i) => mask & bit(i)).length
+  const muted = names.filter((_, i) => isMuted(mask, i)).length
   const onClick = (i: number) => (e: MouseEvent) => (e.altKey ? solo(i) : toggle(i))
 
   return (
@@ -104,14 +111,14 @@ export function ChannelStrip({ onAnnounce }: ChannelStripProps) {
         <Cpu size={13} strokeWidth={2.4} />
         <span className="g-caps">Channels</span>
         <span className="pl-ch__count tnum">{muted ? `${names.length - muted}/${names.length}` : names.length}</span>
-        <button type="button" className={cx('pl-ch__reset', mask !== 0 && 'pl-ch__reset--on')} tabIndex={mask ? 0 : -1} aria-hidden={!mask} onClick={() => reset()} onPointerEnter={() => mask && sfx.play('hover')}>
+        <button type="button" className={cx('pl-ch__reset', mask !== 0n && 'pl-ch__reset--on')} tabIndex={mask !== 0n ? 0 : -1} aria-hidden={mask === 0n} onClick={() => reset()} onPointerEnter={() => mask !== 0n && sfx.play('hover')}>
           <RotateCcw size={11} strokeWidth={2.6} />
           All on
         </button>
       </div>
       <div className="pl-ch__pills">
         {names.map((name, i) => {
-          const off = !!(mask & bit(i))
+          const off = isMuted(mask, i)
           const isSolo = soloed === i
           return (
             <div

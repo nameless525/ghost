@@ -67,6 +67,20 @@ export function useEvent<A extends unknown[], R>(fn: (...args: A) => R): (...arg
   return stable.current
 }
 
+const CONTROLS = 'button, a[href], input, select, textarea, [contenteditable="true"], [role="button"], [role="checkbox"], [role="switch"], [role="slider"]'
+
+/**
+ * True for a key event that a control inside the handler's element (a row's remove button)
+ * received: its Enter / Space / Delete belong to that control, not to the row around it.
+ */
+export function fromNestedControl(e: { target: EventTarget | null; currentTarget: EventTarget | null }): boolean {
+  const target = e.target as Element | null
+  const own = e.currentTarget as Element | null
+  if (!target || !own || target === own || typeof target.closest !== 'function') return false
+  const control = target.closest(CONTROLS)
+  return !!control && control !== own && own.contains(control)
+}
+
 /** Where floating UI (tooltips, menus, dialogs) is portalled: the app root, so UI scale applies. */
 export function portalRoot(): HTMLElement {
   return document.getElementById('g-app') ?? document.body
@@ -79,11 +93,44 @@ export function uiZoom(): number {
   return Number.isFinite(z) && z > 0 ? z : 1
 }
 
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]'
+const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex], [contenteditable="true"]'
 
+// Node.compareDocumentPosition bits
+const PRECEDING = 2
+const FOLLOWING = 4
+
+/**
+ * Whether Tab stops on a FOCUSABLE candidate: not disabled (a disabled fieldset counts), not
+ * taken out of the order (tabindex="-1", like Library's row hearts), not in an inert subtree
+ * (Library's hidden tabs), and rendered (display: none or visibility: hidden on the way up).
+ */
+function tabbable(el: HTMLElement): boolean {
+  return el.tabIndex >= 0 && !el.matches(':disabled') && !el.closest('[inert]') && el.checkVisibility({ visibilityProperty: true })
+}
+
+/** What Tab visits inside `root`, in its order: positive tabindex first, then document order. */
 export function focusables(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => !el.hasAttribute('inert') && el.offsetParent !== null)
+  const order = (el: HTMLElement) => (el.tabIndex > 0 ? el.tabIndex : Number.MAX_SAFE_INTEGER)
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE))
+    .filter(tabbable)
+    .sort((a, b) => order(a) - order(b))
+}
+
+/**
+ * Where Tab (Shift+Tab when `back`) has to move focus to stay inside `root`, or null when the
+ * browser's own move stays inside. Wraps at either end, and steps out of a spot Tab doesn't stop
+ * at (the container itself, a tabindex="-1" row), where the browser could leave `root`.
+ */
+export function trapTarget(root: HTMLElement, current: Element | null, back: boolean): HTMLElement | null {
+  const list = focusables(root)
+  if (!list.length) return root
+  const first = list[0]
+  const last = list[list.length - 1]
+  if (!current || !root.contains(current)) return back ? last : first
+  const i = list.indexOf(current as HTMLElement)
+  if (i >= 0) return back ? (i === 0 ? last : null) : i === list.length - 1 ? first : null
+  const next = back ? list.findLast((el) => current.compareDocumentPosition(el) & PRECEDING) : list.find((el) => current.compareDocumentPosition(el) & FOLLOWING)
+  return next ?? (back ? last : first)
 }
 
 /** Active focus traps, innermost (most recent) last: only that one handles Tab. */
@@ -112,22 +159,10 @@ export function useFocusTrap(ref: { current: HTMLElement | null }, active: boole
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Tab' || traps[traps.length - 1] !== root) return
-      const list = focusables(root)
-      if (list.length === 0) {
-        e.preventDefault()
-        root.focus()
-        return
-      }
-      const first = list[0]
-      const last = list[list.length - 1]
-      const cur = document.activeElement
-      if (e.shiftKey && (cur === first || !root.contains(cur))) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && (cur === last || !root.contains(cur))) {
-        e.preventDefault()
-        first.focus()
-      }
+      const to = trapTarget(root, document.activeElement, e.shiftKey)
+      if (!to) return
+      e.preventDefault()
+      to.focus()
     }
     document.addEventListener('keydown', onKey, true)
     return () => {

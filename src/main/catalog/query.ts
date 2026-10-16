@@ -10,6 +10,7 @@ import type { SQLInputValue } from 'node:sqlite'
 import { parseSearch, SOURCE_FORMAT_VALUES, type ParsedSearch, type SearchFilter } from '../../shared/search'
 import type { Album, BrowseGroup, BrowsePage, BrowseQuery, GroupBy, SortBy, TrackView } from '../../shared/types'
 import { ALBUM_COLUMNS, ftsFold, j, toAlbum, type AlbumRowLite, type CatalogRepo, type Quality } from './repo'
+import { UNKNOWN_LEN } from './schema'
 
 export interface CompileCtx {
   likes: boolean
@@ -32,11 +33,15 @@ export interface Compiled {
    * whole index. Null without free text.
    */
   strong: { game: string; any: string } | null
+  /** Reads the library's likes/downloads (liked/downloaded filters), which change without a catalog revision. */
+  library: boolean
 }
 
 const cpLen = (s: string) => [...s].length
 const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff\uff66-\uff9f]/
 const phrase = (t: string) => `"${t.replace(/"/g, '""')}"`
+/** `source=lossy`: formats advertised by an album or resolved for its tracks. */
+const LOSSY_FORMATS = ['mp3', 'ogg', 'm4a', 'aac', 'opus']
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => '\\' + c)}%`
 const ph = (n: number) => Array.from({ length: n }, () => '?').join(',')
 
@@ -119,9 +124,9 @@ function numericCond(col: string, f: SearchFilter, where: string[], params: SQLI
 
 export interface QueryEngineOptions {
   /**
-   * Keep serving a bucket aggregation (platform/year/composer/franchise) for this long after the
-   * catalog changed before recomputing it (0 = always fresh). Art fills and enrichment bump the
-   * revision several times a second while browsing; the counts barely move.
+   * Serve a bucket aggregation (platform/year/composer/franchise) for up to this long, then
+   * recompute it in the background (0 = recompute whenever the catalog changed). Art fills and
+   * enrichment bump the revision several times a second while browsing; the counts barely move.
    */
   bucketStaleMs?: number
   /** Album ids per chunk for background aggregations (default BUCKET_CHUNK). */
@@ -186,6 +191,7 @@ export class QueryEngine {
     const tParams: SQLInputValue[] = []
     const textPos = level === 'album' ? albumPos : trackPos
     const textNeg = level === 'album' ? albumNeg : trackNeg
+    let library = false
 
     /** A multi-word query: a lone letter/digit in it is a word ("mega man 2"), not a title initial. */
     const multiWord = p.terms.length + p.excludes.length > 1
@@ -210,7 +216,9 @@ export class QueryEngine {
       // Short fallbacks on plain tables.
       const not = negate ? 'NOT ' : ''
       if (col === 'composers') {
-        where.push(`a.id ${not}IN (SELECT album_id FROM album_composers WHERE name_fold LIKE ? ESCAPE '\\')`)
+        // The credits the FTS column holds (a track's own, else its album's; an album's and its
+        // tracks'), folded the same way, so a short name matches what a longer one would.
+        where.push(onTrack ? `t.id ${not}IN (SELECT rowid FROM track_fts WHERE composers LIKE ? ESCAPE '\\')` : `a.id ${not}IN (SELECT rowid FROM album_fts WHERE composers LIKE ? ESCAPE '\\')`)
         params.push(like(t))
       } else if (col === 'franchise') {
         where.push(`a.game_id ${not}IN (SELECT id FROM games WHERE franchise LIKE ? ESCAPE '\\')`)
@@ -289,7 +297,9 @@ export class QueryEngine {
           } else if (v === 'lossless') {
             cond = `(instr(a.formats, '"flac"') > 0 OR instr(a.formats, '"wav"') > 0 OR a.id IN (SELECT st.album_id FROM sources s JOIN tracks st ON st.id = s.track_id WHERE s.lossless = 1))`
           } else if (v === 'lossy') {
-            cond = `(instr(a.formats, '"mp3"') > 0 OR instr(a.formats, '"ogg"') > 0 OR instr(a.formats, '"m4a"') > 0 OR instr(a.formats, '"aac"') > 0 OR instr(a.formats, '"opus"') > 0)`
+            // Known lossy formats only: a source of unknown format isn't lossy (nor lossless).
+            cond = `(${LOSSY_FORMATS.map(() => 'instr(a.formats, ?) > 0').join(' OR ')} OR a.id IN (SELECT st.album_id FROM sources s JOIN tracks st ON st.id = s.track_id WHERE s.format IN (${ph(LOSSY_FORMATS.length)})))`
+            ps.push(...LOSSY_FORMATS.map((f) => `"${f}"`), ...LOSSY_FORMATS)
           } else {
             cond = `(a.provider = ? OR a.id IN (SELECT st.album_id FROM sources s JOIN tracks st ON st.id = s.track_id WHERE s.provider = ?))`
             ps.push(v, v)
@@ -309,6 +319,7 @@ export class QueryEngine {
           break
         case 'liked':
         case 'downloaded': {
+          library = true
           const has = f.key === 'liked' ? ctx.likes : ctx.downloads
           if (!has) {
             // No table yet: nothing is liked/downloaded.
@@ -349,7 +360,14 @@ export class QueryEngine {
         params.push(...tParams)
       }
     }
-    return { where, params, trackMatch, empty: where.length === 0, strong: strong.length ? { game: `{game} : (${strong.join(' AND ')})`, any: `{game album} : (${strong.join(' AND ')})` } : null }
+    return {
+      where,
+      params,
+      trackMatch,
+      empty: where.length === 0,
+      strong: strong.length ? { game: `{game} : (${strong.join(' AND ')})`, any: `{game album} : (${strong.join(' AND ')})` } : null,
+      library
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -445,18 +463,20 @@ export class QueryEngine {
   }
 
   /**
-   * Aggregate buckets (+ representative art) for a non-game grouping, cached per query. When the
-   * catalog changed, a cached result is still served (with `bucketStaleMs`) and recomputed in the
-   * background (in chunks, yielding between them) once it is older than that, so switching
-   * groupings never waits on the aggregation twice. Without `bucketStaleMs` every change
-   * recomputes synchronously.
+   * Aggregate buckets (+ representative art) for a non-game grouping, cached per query. With
+   * `bucketStaleMs`, a cached result is served and, once it is older than that, recomputed in the
+   * background (in chunks, yielding between them) whether or not a catalog change was seen (not
+   * every write bumps the revision: resolved sources don't), so switching groupings never waits on
+   * the aggregation twice. Without it every catalog change recomputes synchronously. Results of
+   * liked/downloaded filters are recomputed as soon as the library changed: that's the user's doing.
    */
   private buckets(group: GroupBy, text: string, c: Compiled): BucketEntry {
     const cacheKey = `${group}\u0000${text}`
     const hit = this.bucketCache.get(cacheKey)
     const stale = this.opts.bucketStaleMs ?? 0
-    if (hit && (hit.rev === this.repo.revision || stale > 0)) {
-      if (hit.rev !== this.repo.revision && this.now() - hit.at >= stale && !hit.refreshing) {
+    const lib = c.library ? this.libraryVersion() : null
+    if (hit && hit.lib === lib && (hit.rev === this.repo.revision || stale > 0)) {
+      if (stale > 0 && this.now() - hit.at >= stale && !hit.refreshing) {
         hit.refreshing = true
         void this.bucketJob(cacheKey, group, c, () => new Promise((r) => setTimeout(r, 0))).catch(() => {
           hit.refreshing = false
@@ -464,7 +484,16 @@ export class QueryEngine {
       }
       return hit
     }
-    return this.storeBuckets(cacheKey, this.repo.revision, [this.aggregateBuckets(group, c, null)])
+    return this.storeBuckets(cacheKey, this.repo.revision, lib, [this.aggregateBuckets(group, c, null)])
+  }
+
+  /**
+   * Moves whenever another connection committed. Likes and downloads are written by the main
+   * process on its own connection (never by the catalog), so a result that read them is current
+   * while this stands still.
+   */
+  private libraryVersion(): number {
+    return this.repo.get<{ data_version: number }>(`PRAGMA data_version`)!.data_version
   }
 
   /** Compute (and cache) a grouping in the background: id-range chunks with a yield after each. */
@@ -486,6 +515,11 @@ export class QueryEngine {
     await this.bucketJob(key, q.group, c, () => new Promise((r) => setImmediate(r)))
   }
 
+  /** Settles once no background aggregation is running (tests wait on this rather than a timer). */
+  async idle(): Promise<void> {
+    while (this.bucketJobs.size) await Promise.allSettled([...this.bucketJobs.values()])
+  }
+
   private bucketJob(cacheKey: string, group: GroupBy, c: Compiled, yieldFn: () => Promise<void>): Promise<void> {
     let job = this.bucketJobs.get(cacheKey)
     if (!job) {
@@ -497,6 +531,7 @@ export class QueryEngine {
 
   private async computeBucketsChunked(cacheKey: string, group: GroupBy, c: Compiled, yieldFn: () => Promise<void> = () => new Promise((r) => setTimeout(r, 0))): Promise<void> {
     const rev = this.repo.revision
+    const lib = c.library ? this.libraryVersion() : null
     const span = this.repo.get<{ lo: number | null; hi: number | null }>(`SELECT MIN(id) AS lo, MAX(id) AS hi FROM albums`)
     const parts: BucketPart[] = []
     if (span?.lo != null && span.hi != null) {
@@ -507,7 +542,7 @@ export class QueryEngine {
       }
     }
     await yieldFn()
-    this.storeBuckets(cacheKey, rev, parts)
+    this.storeBuckets(cacheKey, rev, lib, parts)
   }
 
   /** One aggregation pass (albums with ids in `range`, or all): per-bucket partial aggregates and art winners. */
@@ -540,7 +575,7 @@ export class QueryEngine {
   }
 
   /** Merge partial aggregates, attach art (games' art looked up for the winners only) and cache. */
-  private storeBuckets(cacheKey: string, rev: number, parts: BucketPart[]): BucketEntry {
+  private storeBuckets(cacheKey: string, rev: number, lib: number | null, parts: BucketPart[]): BucketEntry {
     const acc = new Map<string, BucketRow & { isum: number; icnt: number; gids?: Set<string> }>()
     const best = new Map<string, Winner>()
     const second = new Map<string, Winner>()
@@ -599,7 +634,7 @@ export class QueryEngine {
         accent: cover ? (g?.accent ?? null) : null
       })
     }
-    const entry: BucketEntry = { rows, at: this.now(), rev, sorted: new Map(), refreshing: false }
+    const entry: BucketEntry = { rows, at: this.now(), rev, lib, sorted: new Map(), refreshing: false }
     this.bucketCache.delete(cacheKey)
     this.bucketCache.set(cacheKey, entry)
     if (this.bucketCache.size > 16) this.bucketCache.delete(this.bucketCache.keys().next().value!)
@@ -621,7 +656,8 @@ export class QueryEngine {
         rows.sort((a, b) => (b.added ?? 0) - (a.added ?? 0) || byTitle(a, b))
         break
       case 'length':
-        rows.sort((a, b) => b.n - a.n || byTitle(a, b))
+        // Total length, shortest first and unknown last, as games and albums sort.
+        rows.sort((a, b) => (a.len ?? UNKNOWN_LEN) - (b.len ?? UNKNOWN_LEN) || byTitle(a, b))
         break
       case 'intensity':
         rows.sort((a, b) => (a.inten ?? 1000) - (b.inten ?? 1000) || byTitle(a, b))
@@ -667,8 +703,16 @@ export class QueryEngine {
     return { total: rows.length, offset, groups }
   }
 
-  /** Albums in a carousel group, filtered by the same query. */
+  /** Albums in a carousel group, filtered by the same query: the first 1,000 (groupAlbumPage pages through the rest). */
   groupAlbums(groupKey: string, q: Pick<BrowseQuery, 'text' | 'group' | 'sort'>): Album[] {
+    return this.groupAlbumPage(groupKey, q, 0, 1000).albums
+  }
+
+  /**
+   * `limit` (at most 5,000) of a carousel group's albums from `offset`, filtered by the same query,
+   * and how many the group has: platform and year buckets run to tens of thousands.
+   */
+  groupAlbumPage(groupKey: string, q: Pick<BrowseQuery, 'text' | 'group' | 'sort'>, offset = 0, limit = 1000): { total: number; offset: number; albums: Album[] } {
     const i = groupKey.indexOf(':')
     const kind = (i > 0 ? groupKey.slice(0, i) : 'game') as GroupBy
     const value = i > 0 ? groupKey.slice(i + 1) : groupKey
@@ -678,12 +722,21 @@ export class QueryEngine {
     // Within a game: OSTs before rips, earliest first; the same release from two sources follows
     // the user's source priority (a KHInsider rip before Zophar's copy of it).
     const order = kind === 'game' && (q.sort === 'title' || q.sort === 'year') ? `a.kind_rank, a.sort_year, ${this.providerRank()}a.sort_title, a.id` : albumOrder(q.sort)
+    const from = Math.max(0, Math.floor(Number(offset)) || 0)
+    const n = Math.min(5000, Math.max(1, Math.floor(Number(limit)) || 1))
     const rows = this.repo.all<AlbumRowLite>(
-      `SELECT ${ALBUM_COLUMNS} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where} ORDER BY ${order} LIMIT 1000`,
+      `SELECT ${ALBUM_COLUMNS} FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
       ...scope.params,
-      ...c.params
+      ...c.params,
+      n,
+      from
     )
-    return rows.map(toAlbum)
+    // A short page is the group's end; only a full one (or one past the end) has to count.
+    const total =
+      rows.length < n && (rows.length > 0 || from === 0)
+        ? from + rows.length
+        : this.repo.get<{ n: number }>(`SELECT COUNT(*) AS n FROM albums a LEFT JOIN games g ON g.id = a.game_id WHERE ${where}`, ...scope.params, ...c.params)!.n
+    return { total, offset: from, albums: rows.map(toAlbum) }
   }
 
   /** ORDER BY term (with trailing ", ") ranking `a.provider` in the user's source order; '' without one. */
@@ -928,6 +981,8 @@ interface BucketEntry {
   at: number
   /** repo.revision the rows were computed at. */
   rev: number
+  /** QueryEngine.libraryVersion() they were computed at, when they read likes/downloads. */
+  lib: number | null
   /** Sorted copies, by sort (and shuffle seed). */
   sorted: Map<string, BucketRow[]>
   refreshing: boolean

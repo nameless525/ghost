@@ -58,6 +58,24 @@ describe('SettingsStore', () => {
     expect(s.interface).toEqual(defaults.interface)
   })
 
+  it('keeps list settings lists of non-empty strings, whatever the file or a patch holds', () => {
+    const file = join(tmp(), 'settings.json')
+    for (const bad of ['/Users/test/Music', { a: '/x' }, null, 42]) {
+      writeFileSync(file, JSON.stringify({ sources: { localFolders: bad, disabled: bad, quality: 'high' } }))
+      const s = new SettingsStore(file, defaults).get()
+      expect(s.sources.localFolders).toEqual([])
+      expect(s.sources.disabled).toEqual([])
+      expect(s.sources.quality).toBe('high') // the rest of the file survives
+    }
+    writeFileSync(file, JSON.stringify({ sources: { localFolders: ['/m/a', 7, '', '  ', null, '/m/b'], disabled: ['youtube', {}, 'zophar'] } }))
+    const store = new SettingsStore(file, defaults)
+    expect(store.get().sources.localFolders).toEqual(['/m/a', '/m/b'])
+    expect(store.get().sources.disabled).toEqual(['youtube', 'zophar'])
+    // a patch from the renderer is checked the same way
+    expect(store.set({ sources: { localFolders: '/m/c' as unknown as string[] } }).sources.localFolders).toEqual([])
+    expect(store.set({ sources: { localFolders: ['/m/c', null as unknown as string] } }).sources.localFolders).toEqual(['/m/c'])
+  })
+
   it('moves a corrupt file aside and uses defaults', () => {
     const dir = tmp()
     const file = join(dir, 'settings.json')

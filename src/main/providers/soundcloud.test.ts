@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { isNetError } from '../net/errors'
+import { isNetError, NetError } from '../net/errors'
 import type { RunOptions, RunResult, YtDlp } from '../tools/ytdlp'
 import { parseDescriptionChapters } from './chapters'
 import {
@@ -36,6 +36,7 @@ import {
   type ScTrack
 } from './soundcloud'
 import type { CanonicalTrack } from './types'
+import { FORCE_REUSE_MS } from './youtube'
 
 // Real `yt-dlp` 2026.08.19 outputs (2026-10-14): `--flat-playlist -J scsearchN:…`, an uploader's flat
 // track list, `-J` of one track and of a 12-track set. Thumbnails trimmed to two sizes, descriptions
@@ -86,6 +87,14 @@ describe('soundcloud: urls, refs, locators', () => {
     expect(parseSoundCloudUrl('https://soundcloud.com/search/sets?q=x')).toBeNull()
     expect(parseSoundCloudUrl('https://example.com/a/b')).toBeNull()
     expect(parseSoundCloudUrl('yu-gi-oh forbidden memories')).toBeNull()
+  })
+
+  it('a malformed escape is not a SoundCloud URL (on any host); valid escapes still parse', () => {
+    expect(parseSoundCloudUrl('https://soundcloud.com/%E0%A4%A/track')).toBeNull()
+    expect(parseSoundCloudUrl('https://api.soundcloud.com/tracks/%E0%A4%A')).toBeNull()
+    expect(parseSoundCloudUrl('https://example.com/%E0%A4%A/track')).toBeNull()
+    expect(parseSoundCloudUrl('https://soundcloud.com/dante%2Dmangone/yu-gi-oh%5Fost')).toEqual({ track: 'dante-mangone/yu-gi-oh_ost' })
+    expect(parseSoundCloudUrl('https://soundcloud.com/dante-mangone/sets/%30101_videogames_ost')).toEqual({ set: 'dante-mangone/sets/0101_videogames_ost' })
   })
 
   it('locators, uploads refs, uploaders', () => {
@@ -507,6 +516,99 @@ describe('soundcloud: provider over a fake yt-dlp', () => {
       [50, 100],
       [100, 100]
     ])
+  })
+
+  /** A yt-dlp stand-in that downloads `bytes` for each track (an mp3), or fails as `fail` says. */
+  const downloader = (bytes: (id: string) => Buffer, fail?: (id: string, path: string) => Error | null) =>
+    fakeYtDlp((args) => {
+      const id = /tracks\/(\d+)$/.exec(args.at(-1)!)![1]
+      const path = args[args.indexOf('-o') + 1].replace('%(id)s', id).replace('%(ext)s', 'mp3')
+      const err = fail?.(id, path)
+      if (err) return err
+      writeFileSync(path, bytes(id))
+      return ok(`${id}\thttp_mp3_128\thttp\tmp3\tmp3\t128\t60\n${path}\n`)
+    })
+
+  it('a forced resolve (the file failed to play) downloads the track again; chapters failing together cost one download', async () => {
+    const dir = tmp()
+    let t = now()
+    const path = join(dir, 'sc-42.mp3')
+    writeFileSync(path, 'not an audio file')
+    writeFileSync(join(dir, 'sc-42.json'), JSON.stringify({ format: 'mp3', abr: 128, fixed: true }))
+    const good = Buffer.alloc(500, 1)
+    const y = downloader(() => good)
+    const p = new SoundCloudProvider(async () => y, { now: () => t, cacheDir: dir })
+    // A plain resolve hands over the cached file…
+    expect((await p.resolveStream('42'))[0].source).toMatchObject({ kind: 'file', path })
+    expect(y.calls).toHaveLength(0)
+    // …which fails to play: the upload's chapters are resolved again, past the cache, together.
+    const [a, b] = await Promise.all([p.resolveStream('42#0-30000', { force: true }), p.resolveStream('42#30000-60000', { force: true })])
+    expect(y.calls).toHaveLength(1)
+    expect(y.calls[0]).toContain('--force-overwrites')
+    expect(readFileSync(path).equals(good)).toBe(true)
+    expect(a[0].source).toMatchObject({ path, clipStartMs: 0 })
+    expect(b[0].source).toMatchObject({ path, clipStartMs: 30_000 })
+    // A chapter whose failure comes in a moment later gets the new file…
+    t += 60_000
+    await p.resolveStream('42#60000-90000', { force: true })
+    expect(y.calls).toHaveLength(1)
+    // …a failure later on downloads it again, and so does one after a restart.
+    t += FORCE_REUSE_MS
+    await p.resolveStream('42', { force: true })
+    expect(y.calls).toHaveLength(2)
+    await new SoundCloudProvider(async () => y, { now: () => t, cacheDir: dir }).resolveStream('42', { force: true })
+    expect(y.calls).toHaveLength(3)
+    expect(readdirSync(dir).sort()).toEqual(['sc-42.json', 'sc-42.mp3'])
+  })
+
+  it('what unfinished downloads leave counts toward the cap; it goes at startup and after a failure', async () => {
+    const dir = tmp()
+    // An earlier session's interrupted download.
+    writeFileSync(join(dir, 'sc-7.m4a.part-Frag3'), Buffer.alloc(2048))
+    writeFileSync(join(dir, 'sc-7.m4a.ytdl'), '{}')
+    writeFileSync(join(dir, 'unrelated.txt'), 'not ours')
+    const y = downloader(
+      () => Buffer.alloc(64),
+      (id, path) => {
+        if (id !== '99') return null
+        writeFileSync(`${path}.part`, Buffer.alloc(4096))
+        return new NetError('timeout', 'yt-dlp timed out after 600 s')
+      }
+    )
+    const p = new SoundCloudProvider(async () => y, { now, cacheDir: dir, maxCacheBytes: 128 })
+    await expect(p.resolveStream('99')).rejects.toSatisfy((e: unknown) => isNetError(e, 'timeout'))
+    expect(readdirSync(dir)).toEqual(['unrelated.txt'])
+    // Left while this session runs (another process's, say): the next prune counts it, and it goes first.
+    writeFileSync(join(dir, 'sc-97.mp3.part'), Buffer.alloc(4096))
+    await p.resolveStream('98')
+    expect(readdirSync(dir).sort()).toEqual(['sc-98.json', 'sc-98.mp3', 'unrelated.txt'])
+  })
+
+  it('a sweep never touches a download that is still running', async () => {
+    const dir = tmp()
+    let begun!: () => void
+    const started = new Promise<void>((r) => (begun = r))
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const y = {
+      async run(args: string[]): Promise<RunResult> {
+        const id = /tracks\/(\d+)$/.exec(args.at(-1)!)![1]
+        const path = args[args.indexOf('-o') + 1].replace('%(id)s', id).replace('%(ext)s', 'mp3')
+        writeFileSync(`${path}.part`, Buffer.alloc(10))
+        if (id !== '5') throw new NetError('network', 'connection reset')
+        begun()
+        await gate
+        renameSync(`${path}.part`, path)
+        return ok(`5\thttp_mp3_128\thttp\tmp3\tmp3\t128\t60\n${path}\n`)
+      }
+    } as unknown as YtDlp
+    const p = new SoundCloudProvider(async () => y, { now, cacheDir: dir })
+    const running = p.resolveStream('5')
+    await started
+    await expect(p.resolveStream('6')).rejects.toSatisfy((e: unknown) => isNetError(e, 'network'))
+    expect(readdirSync(dir)).toEqual(['sc-5.mp3.part'])
+    release()
+    expect((await running)[0].source).toMatchObject({ path: join(dir, 'sc-5.mp3') })
   })
 
   it('a download that reports a path outside the cache dir is refused', async () => {

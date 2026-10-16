@@ -234,6 +234,44 @@ fn accent_matches_the_ts_semantics() {
     assert_eq!(accent_from_pixels(&rgb, 3), Some(a));
 }
 
+/// Fully saturated, mid-light colour of hue `h` degrees.
+fn vivid(h: f64) -> [u8; 3] {
+    let x = 1.0 - ((h / 60.0) % 2.0 - 1.0).abs();
+    let (r, g, b) = match (h / 60.0) as u32 % 6 {
+        0 => (1.0, x, 0.0),
+        1 => (x, 1.0, 0.0),
+        2 => (0.0, 1.0, x),
+        3 => (0.0, x, 1.0),
+        4 => (x, 0.0, 1.0),
+        _ => (1.0, 0.0, x),
+    };
+    [r, g, b].map(|c: f64| (c * 255.0).round() as u8)
+}
+
+#[test]
+fn accent_never_comes_from_an_empty_hue_bucket() {
+    // Orange-red over pink-red: equal weight in the hue buckets either side of 0°, whose empty
+    // middle bucket scores the same as each of them.
+    let img = fill(48, 48, |_, y| if y < 24 { [255, 64, 0] } else { [255, 0, 32] });
+    let src = png(48, 48, &img, false);
+    let a = accent_of(&src).unwrap().expect("saturated art has an accent");
+    assert!(hue(a) < 20.0 || hue(a) > 340.0, "{a:?}");
+    // Same as `extractAccent` in src/main/net/accent.ts on these pixels.
+    assert_eq!(hex(a), "#ff480a");
+    let p = process(&src, &ArtOptions { accent: true, format: OutFormat::Png, ..Default::default() }).unwrap();
+    assert_eq!(p.accent, Some(a));
+    // Every bucket (15° each) as the empty one between two equally populated neighbours.
+    let dist = |a: f64, b: f64| (a - b).abs().min(360.0 - (a - b).abs());
+    for k in 0..24 {
+        let (lo, hi) = ((k + 23) % 24, (k + 1) % 24);
+        let (c_lo, c_hi) = (lo as f64 * 15.0 + 7.5, hi as f64 * 15.0 + 7.5);
+        let px: Vec<u8> = (0..100).flat_map(|i| vivid(if i % 2 == 0 { c_lo } else { c_hi })).collect();
+        let a = accent_from_pixels(&px, 3).unwrap_or_else(|| panic!("bucket {k}: no accent"));
+        let h = hue(a);
+        assert!(dist(h, c_lo) < 7.5 || dist(h, c_hi) < 7.5, "bucket {k}: hue {h:.1} not in bucket {lo} or {hi}");
+    }
+}
+
 #[test]
 fn accent_through_the_pipeline_for_known_colour_fields() {
     let cases: [([u8; 3], f64); 4] = [([200, 40, 40], 0.0), ([40, 180, 60], 130.0), ([50, 90, 220], 222.0), ([230, 200, 30], 52.0)];

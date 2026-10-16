@@ -40,6 +40,17 @@ export interface SearchInputHandle {
   input: HTMLInputElement | null
 }
 
+/**
+ * What a key does in the field. Plain Enter submits (once while held; with a modifier it's someone
+ * else's shortcut, e.g. ⌘↵ Search online), Escape escapes. Neither while an IME composition runs:
+ * there they confirm or cancel the candidate (keyCode 229: the key went to the IME).
+ */
+export function searchKeyAction(e: Pick<KeyboardEvent, 'key' | 'keyCode' | 'repeat' | 'isComposing' | 'metaKey' | 'ctrlKey' | 'altKey'>): 'submit' | 'escape' | null {
+  if (e.isComposing || e.keyCode === 229) return null
+  if (e.key === 'Enter') return e.metaKey || e.ctrlKey || e.altKey || e.repeat ? null : 'submit'
+  return e.key === 'Escape' ? 'escape' : null
+}
+
 export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(function SearchInput(
   { value, onChange, onSubmit, onEscape, placeholder = 'Search', highlight, autoFocus, loading, right, size = 'md', hue, className, style, inputProps },
   ref
@@ -69,10 +80,9 @@ export const SearchInput = forwardRef<SearchInputHandle, SearchInputProps>(funct
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onKeyDown = (e: RKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      // Plain Enter submits; with a modifier it's someone else's shortcut (e.g. ⌘↵ Search online).
-      if (!e.metaKey && !e.ctrlKey && !e.altKey) onSubmit?.(value)
-    } else if (e.key === 'Escape') {
+    const action = searchKeyAction(e.nativeEvent)
+    if (action === 'submit') onSubmit?.(value)
+    else if (action === 'escape') {
       if (onEscape) onEscape()
       else if (value) {
         sfx.play('back', { volume: 0.6 })

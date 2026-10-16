@@ -7,6 +7,7 @@
 //! | vgmstream          | r2117   | ISC-style      | ADX, HCA, BRSTM/BCSTM/BFSTM, FSB, WEM, ...   |
 //! | libvorbis + libogg | 1.3.7 / 1.3.5 | BSD-3    | Vorbis-based vgmstream formats (FSB5, Wwise, OGG loops) |
 //! | libopenmpt         | 0.8.9   | BSD-3          | MOD/XM/IT/S3M/UMX/MO3/...                    |
+//! | libopus            | 1.6.1   | BSD-3          | Opus in Ogg / WebM (packets from symphonia)  |
 //!
 //! Sources are release tarballs, trimmed to the library code (no players, plugins or prebuilt
 //! binaries). Everything is compiled with optimisation even in dev builds: the emulators are
@@ -302,6 +303,32 @@ fn main() {
         .file(mpt.join("include/minimp3/minimp3.c"))
         .file(mpt.join("include/stb_vorbis/stb_vorbis.c"));
     b.compile("ghost_openmpt_c");
+
+    // ---------------------------------------------------------------- libopus
+    // The float build in portable C, configured as its own build systems default to: no SIMD
+    // (so no run-time CPU detection), no neural-network PLC/DRED (the tree has no dnn/), and the
+    // cheap production run-time checks (`ENABLE_HARDENING`) on. alloca for scratch space: MSVC
+    // has no variable-length arrays.
+    let opus = v.join("opus-1.6.1");
+    let mut b = base(false);
+    b.include(opus.join("include")).include(opus.join("celt")).include(opus.join("silk")).include(opus.join("silk/float"));
+    for (k, val) in [
+        ("OPUS_BUILD", None),
+        ("USE_ALLOCA", None),
+        ("HAVE_LRINT", Some("1")),
+        ("HAVE_LRINTF", Some("1")),
+        ("ENABLE_HARDENING", None),
+        ("PACKAGE_VERSION", Some("\"1.6.1\"")),
+    ] {
+        b.define(k, val);
+    }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        b.define("HAVE_ALLOCA_H", None);
+    }
+    for d in ["celt", "silk", "silk/float", "src"] {
+        b.files(files_in(&opus.join(d), "c"));
+    }
+    b.compile("ghost_opus");
 
     println!("cargo:include={}", gen.display());
 }

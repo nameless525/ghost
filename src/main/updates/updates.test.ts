@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { parseChangelog, whatsNewSince } from './changelog'
 import { assetFor, fetchLatestRelease, parseRelease, parseSha256Sums, releaseNotes } from './feed'
-import { detectInstall, launchInstall, MAC_SWAP_SCRIPT, prepareInstall, type InstallTarget } from './install'
+import { detectInstall, launchInstall, MAC_SWAP_SCRIPT, prepareInstall, verifyPrepared, type InstallTarget } from './install'
 import { compareVersions } from './version'
 
 const dirs: string[] = []
@@ -132,37 +132,76 @@ describe('install', () => {
     expect(detectInstall({ ...base, packaged: false, platform: 'darwin', execPath: '/x/Electron.app/Contents/MacOS/Electron' }).manualReason).toMatch(/source/)
   })
 
-  it('macOS: copies the app out of the disk image and checks it is the expected version', async () => {
-    const d = tmp()
+  /** A stand-in for hdiutil / ditto / PlistBuddy over real folders: the disk image holds GHOST `image.version`. */
+  function macTools(image: { version: string; id?: string; ditto?: (from: string, to: string) => void }) {
     const calls: string[] = []
-    // A stand-in for hdiutil / ditto / PlistBuddy over a real folder.
     const exec = async (cmd: string, args: string[]) => {
       calls.push(cmd.split('/').pop()!)
       if (cmd === 'hdiutil' && args[0] === 'attach') {
         const mnt = args[args.indexOf('-mountpoint') + 1]
         mkdirSync(join(mnt, 'GHOST.app', 'Contents'), { recursive: true })
-        writeFileSync(join(mnt, 'GHOST.app', 'Contents', 'Info.plist'), 'plist')
+        writeFileSync(join(mnt, 'GHOST.app', 'Contents', 'Info.plist'), JSON.stringify({ id: image.id ?? 'dev.ghost.app', v: image.version }))
       }
-      if (cmd === 'ditto') cpSync(args[0], args[1], { recursive: true })
-      if (cmd.endsWith('PlistBuddy')) return args[1].includes('Identifier') ? 'dev.ghost.app\n' : '0.4.1\n'
+      if (cmd === 'hdiutil' && args[0] === 'detach') rmSync(args[1], { recursive: true, force: true })
+      if (cmd === 'ditto') (image.ditto ?? ((a, b) => cpSync(a, b, { recursive: true })))(args[0], args[1])
+      if (cmd.endsWith('PlistBuddy')) {
+        const plist = JSON.parse(readFileSync(args[2], 'utf8')) as { id: string; v: string }
+        return `${args[1].includes('Identifier') ? plist.id : plist.v}\n`
+      }
       return ''
     }
-    const target: InstallTarget = { kind: 'mac-app', path: '/Applications/GHOST.app', manualReason: null }
-    const staged = await prepareInstall(target, join(d, 'GHOST.dmg'), '0.4.1', d, exec)
-    expect(staged).toBe(join(d, 'GHOST.app'))
+    return { exec, calls }
+  }
+  const MAC: InstallTarget = { kind: 'mac-app', path: '/Applications/GHOST.app', manualReason: null }
+
+  it('macOS: copies the app out of the disk image and checks it is the expected version', async () => {
+    const d = tmp()
+    const { exec, calls } = macTools({ version: '0.4.1' })
+    const staged = await prepareInstall(MAC, join(d, 'GHOST.dmg'), '0.4.1', d, exec)
+    expect(basename(staged)).toBe('GHOST.app')
+    expect(dirname(dirname(staged))).toBe(d) // in a folder of its own
     expect(existsSync(join(staged, 'Contents', 'Info.plist'))).toBe(true)
     expect(calls).toEqual(['hdiutil', 'ditto', 'PlistBuddy', 'PlistBuddy', 'hdiutil']) // always detached
-    await expect(prepareInstall(target, join(d, 'GHOST.dmg'), '0.4.2', d, exec)).rejects.toThrow(/holds GHOST 0.4.1, not 0.4.2/)
+    await expect(prepareInstall(MAC, join(d, 'GHOST.dmg'), '0.4.2', d, exec)).rejects.toThrow(/holds GHOST 0.4.1, not 0.4.2/)
+    // and checked again later (after a restart)
+    await expect(verifyPrepared(MAC, staged, '0.4.1', exec)).resolves.toBeUndefined()
+    await expect(verifyPrepared(MAC, staged, '0.4.2', exec)).rejects.toThrow(/not 0.4.2/)
+    await expect(verifyPrepared(MAC, join(d, 'nothing', 'GHOST.app'), '0.4.1', exec)).rejects.toThrow(/gone/)
+  })
+
+  it('macOS: a newer release that fails to stage leaves the one staged before whole, and nothing of itself', async () => {
+    const d = tmp()
+    const a = await prepareInstall(MAC, join(d, 'a.dmg'), '0.5.0', d, macTools({ version: '0.5.0' }).exec)
+    const before = readdirSync(d).sort()
+    // the disk fills up half-way through copying the newer one…
+    const full = macTools({
+      version: '0.6.0',
+      ditto: (_from, to) => {
+        mkdirSync(join(to, 'Contents'), { recursive: true })
+        writeFileSync(join(to, 'Contents', 'Info.plist'), 'partial')
+        throw new Error('ditto failed: No space left on device')
+      }
+    })
+    await expect(prepareInstall(MAC, join(d, 'b.dmg'), '0.6.0', d, full.exec)).rejects.toThrow(/No space left/)
+    expect(full.calls.at(-1)).toBe('hdiutil') // still detached
+    // …or it holds something else than the release says
+    await expect(prepareInstall(MAC, join(d, 'b.dmg'), '0.6.0', d, macTools({ version: '0.6.0', id: 'com.example.other' }).exec)).rejects.toThrow(/com.example.other, not GHOST/)
+    await expect(prepareInstall(MAC, join(d, 'b.dmg'), '0.6.0', d, macTools({ version: '0.5.9' }).exec)).rejects.toThrow(/holds GHOST 0.5.9, not 0.6.0/)
+    expect(readdirSync(d).sort()).toEqual(before)
+    await expect(verifyPrepared(MAC, a, '0.5.0', macTools({ version: '0.5.0' }).exec)).resolves.toBeUndefined()
   })
 
   it.runIf(unix)('macOS swap script: waits for GHOST to quit, then puts the new app in place', () => {
     const d = tmp()
     const app = join(d, 'GHOST.app')
     const staged = join(d, 'staged', 'GHOST.app')
-    mkdirSync(join(app, 'Contents'), { recursive: true })
-    writeFileSync(join(app, 'Contents', 'v'), 'old')
-    mkdirSync(join(staged, 'Contents'), { recursive: true })
-    writeFileSync(join(staged, 'Contents', 'v'), 'new')
+    const bundle = (at: string, v: string) => {
+      mkdirSync(join(at, 'Contents', 'MacOS'), { recursive: true })
+      writeFileSync(join(at, 'Contents', 'v'), v)
+      writeFileSync(join(at, 'Contents', 'MacOS', 'GHOST'), '#!/bin/sh\n', { mode: 0o755 })
+    }
+    bundle(app, 'old')
+    bundle(staged, 'new')
     const script = join(d, 'install.sh')
     writeFileSync(script, MAC_SWAP_SCRIPT)
     // A pid that has exited (this short-lived child's).
@@ -170,6 +209,13 @@ describe('install', () => {
     execFileSync('/bin/sh', [script, String(gone), app, staged, '0'])
     expect(readFileSync(join(app, 'Contents', 'v'), 'utf8')).toBe('new')
     expect(existsSync(staged)).toBe(false)
+    expect(existsSync(`${app}.old-version`)).toBe(false)
+    // A staged app that isn't whole (no executable) never replaces the installed one.
+    const broken = join(d, 'broken', 'GHOST.app')
+    mkdirSync(join(broken, 'Contents'), { recursive: true })
+    writeFileSync(join(broken, 'Contents', 'v'), 'broken')
+    expect(() => execFileSync('/bin/sh', [script, String(gone), app, broken, '0'])).toThrow()
+    expect(readFileSync(join(app, 'Contents', 'v'), 'utf8')).toBe('new')
     expect(existsSync(`${app}.old-version`)).toBe(false)
   })
 

@@ -186,8 +186,12 @@ export interface EngineDownloadOptions {
 
 /** Contents of an archive source (`EngineBridge.inspectArchive`). */
 export interface ArchiveListing {
-  /** Every file in the archive (`/`-separated paths, uncompressed sizes). */
-  entries: { path: string; size: number }[]
+  /**
+   * Every file in the archive (`/`-separated paths, uncompressed sizes). Multi-song chip files
+   * (`.nsf`, `.gbs`: the first 128 bytes; `.nsfe`: the whole file, up to 1 MiB) carry their `head`,
+   * which says how many songs they hold. Older engines send no `head`.
+   */
+  entries: { path: string; size: number; head?: Uint8Array }[]
   /**
    * Text of the `.m3u` / `.m3u8` / `.txt` files, decoded (UTF-8, Shift-JIS or Windows-1252).
    * joshw / Zophar sets ship NEZPlug playlists:
@@ -275,10 +279,10 @@ export interface EngineBridge {
   inspectArchive?(source: EngineSource): Promise<ArchiveListing>
   /**
    * Mute sound-chip voices (libgme / libopenmpt sources): bit i mutes voice i of the trackInfo
-   * `voiceNames`; 0 unmutes all. Global: it persists across tracks until changed. Optional
-   * (engines without chip voices don't have it).
+   * `voiceNames` (up to 64, so a bigint); 0n unmutes all. Global: it persists across tracks until
+   * changed. Optional (engines without chip voices don't have it).
    */
-  setVoiceMask?(mask: number): void
+  setVoiceMask?(mask: bigint): void
   /** Whether anyone shows the live analysis frames (engines without them don't have it). */
   setAnalysisDemand?(on: boolean): void
   /** Mutable voices of the current track (0 when unsupported or idle). */

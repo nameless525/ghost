@@ -167,6 +167,9 @@ fn own_pool() -> Option<&'static rayon::ThreadPool> {
     .as_ref()
 }
 
+/// Lowest sample rate analysed (see [`OfflineAnalyzer`]); loudness functions return `None` below it.
+pub const MIN_SAMPLE_RATE: u32 = loudness::MIN_RATE;
+
 /// Analyse a whole decoded track. `samples` are interleaved f32 at `sample_rate`.
 pub fn analyze(samples: &[f32], channels: usize, sample_rate: u32) -> OfflineAnalysis {
     analyze_detailed(samples, channels, sample_rate).0
@@ -175,7 +178,8 @@ pub fn analyze(samples: &[f32], channels: usize, sample_rate: u32) -> OfflineAna
 /// Loudness only (fast path for normalisation before the full analysis is done).
 ///
 /// Returns `(integrated LUFS, true peak dBTP)`: the gain to apply and the headroom it leaves.
-/// Both are `None` for silence or input too short to measure (< 400 ms).
+/// Both are `None` for silence, input too short to measure (< 400 ms) or sampled below
+/// [`MIN_SAMPLE_RATE`].
 pub fn loudness(samples: &[f32], channels: usize, sample_rate: u32) -> (Option<f32>, Option<f32>) {
     let l = background(|| loudness::measure(samples, channels, sample_rate, false, false));
     (l.integrated, l.true_peak_db)
@@ -213,6 +217,9 @@ fn analyze_inner(samples: &[f32], channels: usize, sample_rate: u32) -> (Offline
 /// analysed in place without copying. Dropping the analyzer abandons the analysis (a batch in
 /// flight still completes in the background).
 ///
+/// Audio below [`MIN_SAMPLE_RATE`] (4 kHz, where the loudness filter is undefined) is not
+/// analysed: the result has its duration, a flat zero energy curve and nothing else.
+///
 /// ```
 /// use ghost_analysis::offline::{analyze, OfflineAnalyzer};
 /// let track: Vec<f32> = (0..96_000).map(|i| (i as f32 * 0.01).sin() * 0.3).collect();
@@ -238,8 +245,8 @@ pub struct OfflineAnalyzer {
     spare: Vec<f32>,
     /// Analyse once this many samples are pending.
     batch: usize,
-    /// `None` when the input cannot be analysed (no channels, or below 1 kHz). Shared with the
-    /// background batch; batches are analysed strictly in order, one at a time.
+    /// `None` when the input cannot be analysed (no channels, or below [`MIN_SAMPLE_RATE`]).
+    /// Shared with the background batch; batches are analysed strictly in order, one at a time.
     streams: Option<Arc<Mutex<Streams>>>,
 }
 
@@ -254,7 +261,7 @@ impl OfflineAnalyzer {
 
     /// `channels`: interleaved channel count of every pushed chunk; `sample_rate` in Hz.
     pub fn new(channels: usize, sample_rate: u32) -> Self {
-        let streams = (channels > 0 && sample_rate >= 1000).then(|| {
+        let streams = (channels > 0 && sample_rate >= MIN_SAMPLE_RATE).then(|| {
             Arc::new(Mutex::new(Streams {
                 loud: loudness::LoudnessStream::new(channels, sample_rate, true, true),
                 feat: features::FeatureStream::new(channels, sample_rate),
@@ -619,6 +626,55 @@ mod tests {
             let whole = format!("{:?}", analyze_detailed(&s, channels, rate));
             assert!(streamed(&s, channels, rate, &mut || 1, Some(1)) == whole, "{channels}ch: 1 sample, 1-frame batches");
             assert!(streamed(&s, channels, rate, &mut || 3, Some(2)) == whole, "{channels}ch: 3 samples, 2-frame batches");
+        }
+    }
+
+    /// Every published value is finite: below 4 kHz (unstable K-weighting) as the defined
+    /// unanalysable result, from batch, streaming and loudness-only calls alike; from 4 kHz up as
+    /// a real measurement.
+    #[test]
+    fn low_sample_rates_publish_only_finite_values() {
+        fn all_finite(a: &OfflineAnalysis) -> bool {
+            let opt = |v: Option<f32>| v.is_none_or(f32::is_finite);
+            [a.integrated_lufs, a.loudness_range, a.true_peak_db, a.bpm, a.intensity].into_iter().all(opt)
+                && a.bpm_confidence.is_finite()
+                && a.beats.iter().chain(&a.downbeats).chain(&a.energy).all(|v| v.is_finite())
+                && a.kiai.iter().all(|(s, e)| s.is_finite() && e.is_finite())
+                && a.energy.len() == ENERGY_POINTS
+        }
+        let streamed_eq_batch = |s: &[f32], rate: u32, what: &str| {
+            let mut a = OfflineAnalyzer::new(1, rate);
+            for c in s.chunks(1001) {
+                a.push(c);
+            }
+            assert_eq!(format!("{:?}", a.finish()), format!("{:?}", analyze(s, 1, rate)), "{what} at {rate} Hz");
+        };
+        let sine = |rate: u32| -> Vec<f32> { (0..2 * rate).map(|i| 0.1 * (std::f32::consts::TAU * 100.0 * i as f32 / rate as f32).sin()).collect() };
+        for rate in [1_000u32, 2_000, 3_000, 3_999] {
+            let s = sine(rate);
+            let a = analyze(&s, 1, rate);
+            assert!(all_finite(&a), "{rate} Hz: {a:?}");
+            assert_eq!((a.integrated_lufs, a.true_peak_db, a.intensity, a.duration_ms), (None, None, None, 2000), "{rate} Hz");
+            assert!(a.energy.iter().all(|&e| e == 0.0), "{rate} Hz");
+            assert_eq!(loudness_full(&s, 1, rate), Loudness::default(), "{rate} Hz");
+            assert_eq!(loudness(&s, 1, rate), (None, None), "{rate} Hz");
+            streamed_eq_batch(&s, rate, "sine");
+        }
+        for rate in [4_000u32, 4_001, 5_512, 8_000] {
+            let mut impulse = vec![0.0f32; 2 * rate as usize];
+            impulse[rate as usize] = 0.9;
+            for (what, s) in [("sine", sine(rate)), ("impulse", impulse), ("silence", vec![0.0; 2 * rate as usize])] {
+                let a = analyze(&s, 1, rate);
+                assert!(all_finite(&a), "{what} at {rate} Hz: {a:?}");
+                let l = loudness_full(&s, 1, rate);
+                assert!([l.integrated_lufs, l.loudness_range, l.true_peak_db].into_iter().all(|v| v.is_none_or(f32::is_finite)), "{what} at {rate} Hz: {l:?}");
+                assert_eq!(l.integrated_lufs.map(f32::to_bits), a.integrated_lufs.map(f32::to_bits), "{what} at {rate} Hz");
+                streamed_eq_batch(&s, rate, what);
+            }
+            let a = analyze(&sine(rate), 1, rate);
+            let lufs = a.integrated_lufs.expect("sine is measured");
+            assert!((lufs + 24.5).abs() < 1.0, "{rate} Hz: {lufs} LUFS");
+            assert!(a.energy.iter().any(|&e| e > 0.0), "{rate} Hz: flat energy");
         }
     }
 

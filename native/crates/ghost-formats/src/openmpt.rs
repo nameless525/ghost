@@ -194,14 +194,16 @@ impl OpenmptSource {
             channels: 0,
         };
         let count = unsafe { openmpt_module_get_num_subsongs(module) }.max(1);
-        let subsong = opts.subsong.unwrap_or(0) as i32;
-        if subsong >= count {
-            return Err(SourceError::new(format!("sub-song {subsong} out of range (module has {count})")));
+        let requested = opts.subsong.unwrap_or(0);
+        // Checked: a u32 past i32::MAX would turn negative, and -1 selects all sub-songs.
+        let subsong = match i32::try_from(requested) {
+            Ok(s) if s < count => s,
+            _ => return Err(SourceError::new(format!("sub-song {requested} out of range (module has {count})"))),
+        };
+        if unsafe { openmpt_module_select_subsong(module, subsong) } == 0 {
+            return Err(SourceError::new(format!("libopenmpt: cannot select sub-song {subsong}")));
         }
-        unsafe {
-            openmpt_module_select_subsong(module, subsong);
-            openmpt_module_set_repeat_count(module, -1);
-        }
+        unsafe { openmpt_module_set_repeat_count(module, -1) };
         let rate = RATE as f64;
         let dur = unsafe { openmpt_module_get_duration_seconds(module) };
         if dur.is_finite() && dur > 0.0 {

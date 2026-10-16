@@ -7,7 +7,7 @@ import { mixNumber } from '../../theme/color'
 import { Spectrum } from './spectrum'
 import type { VisTextures } from './textures'
 import type { EmitPoint, VisFrame, VisLayer, VisLayout } from './types'
-import { pcolor } from './util'
+import { idleSeconds, pcolor } from './util'
 
 const PER_SIDE = 44
 const N = PER_SIDE * 2
@@ -94,7 +94,7 @@ export class SkylineVisualizer implements VisLayer {
     const idleTarget = f.playing && f.frame ? 0 : 1
     this.idle += (idleTarget - this.idle) * (1 - Math.exp(-dt / 600))
     this.root.y = (1 - e) * 46
-    const t = f.now / 1000
+    const t = idleSeconds(f)
     const barW = Math.max(2, slot * 0.52)
     const amp = this.spec.amp
     const peak = this.spec.peak

@@ -1,15 +1,17 @@
 // The catalog worker's side of the RPC (see ./worker.ts, ./client.ts, ./host.ts). Opens its own
 // connection to the shared SQLite file, builds the same CatalogService that can run in-process, with
 // main-process-only dependencies injected as RPCs:
-//   - page fetches (Electron net.fetch; KHInsider's Cloudflare refuses Node's fetch) → 'fetch'
+//   - page fetches (Electron net.fetch; KHInsider's Cloudflare refuses Node's fetch), in main's
+//     per-host turns (one scheduler for the whole app) → 'fetch'
 //   - the engine's archive lister → 'inspectArchive' (with the TaskProgress key main reports its download under)
 //   - accents of cached art (the ghost-art protocol) → 'accent'
 //   - catalog:status and other events → 'broadcast' (fire-and-forget)
 //   - progress for the player: a resolve's network steps → 'resolveStep', the yt-dlp install →
 //     'toolProgress' (fire-and-forget)
 // Settings and newly fetched art are pushed from main ('settings', 'art'); nothing here calls back
-// synchronously. Plain JSON APIs (Internet Archive, IGDB, SteamGridDB) use the worker's own fetch
-// and yt-dlp runs as a child process of the worker.
+// synchronously. The Internet Archive's JSON goes through 'fetch' too (archive.org's turn is shared
+// with its covers); the IGDB and SteamGridDB APIs use the worker's own fetch, and yt-dlp runs as a
+// child process of the worker.
 
 import { join } from 'node:path'
 import { monitorEventLoopDelay, type ELDHistogram } from 'node:perf_hooks'
@@ -20,7 +22,7 @@ import type { ArchiveListing, EngineSource } from '../engine/types'
 import type { Broadcast } from '../ipc'
 import { createHttpClient } from '../net/http'
 import { RpcEndpoint, serializeError, type Handler, type PortLike } from '../net/rpc'
-import { remoteFetch, type WireRequest, type WireResponse } from '../net/rpc-fetch'
+import { remoteScheduler, type WireRequest, type WireResponse } from '../net/rpc-fetch'
 import { setSharedYtDlp, YtDlp } from '../tools/ytdlp'
 import type { CatalogService } from './index'
 import type { ResolveStep, ToolProgress } from './progress'
@@ -182,7 +184,8 @@ export function serveCatalog(port: PortLike, data: CatalogWorkerData, opts: Serv
       db = opts.db ?? openWorkerDb(data.dbPath)
       const http = createHttpClient({
         cacheDir: join(data.dataDir, 'ghost-cache', 'html'),
-        fetch: remoteFetch((req: WireRequest, o) => ep.call<WireResponse>('fetch', [req], o)),
+        // (no limiter of its own: per-host limits, pauses and block cooldowns are main's, art's too)
+        scheduler: remoteScheduler((req: WireRequest, o) => ep.call<WireResponse>('fetch', [req], o)),
         log: (m) => console.log(`[http] ${m}`)
       })
       const broadcast = ((event: string, payload: unknown) => ep.notify('broadcast', event, payload)) as Broadcast

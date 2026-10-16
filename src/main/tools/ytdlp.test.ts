@@ -30,6 +30,9 @@ for a in "$@"; do
   if [ "$a" = "--newline" ]; then echo "ghost-progress 1024 4096 NA"; echo "ghost-progress 3000 NA 6000.5"; echo "ghost-progress NA NA NA"; fi
   if [ "$a" = "--sleep" ]; then sleep 0.3; fi
   if [ "$a" = "--hang" ]; then exec sleep 5; fi
+  # A launcher whose real work runs in a process of its own (as the standalone build's does).
+  if [ "$a" = "--spawn" ]; then sleep 30 >/dev/null 2>&1 & echo $! > "$(dirname "$0")/descendant"; wait; fi
+  if [ "$a" = "--orphan" ]; then sleep 30 >/dev/null 2>&1 & echo $! > "$(dirname "$0")/descendant"; exit 0; fi
   if [ "$a" = "--fail" ]; then echo "ERROR: [youtube] abcdefghijk: Video unavailable. This video is private" >&2; exit 1; fi
 done
 for a in "$@"; do printf '%s\\n' "$a"; done
@@ -290,6 +293,78 @@ describe.runIf(unix)('yt-dlp: locate / download / update / run', () => {
     expect(isNetError(await run)).toBe(true) // the run fails instead of hanging on
     for (let i = 0; i < 500 && trackedChildren().length > before; i++) await new Promise((r) => setTimeout(r, 10))
     expect(trackedChildren().length).toBe(before)
+  })
+
+  describe('a run is ended as a process tree, never just the process it started', () => {
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    const leftovers: number[] = []
+    afterAll(() => {
+      for (const pid of leftovers) if (alive(pid)) process.kill(pid, 'SIGKILL')
+    })
+    async function setup() {
+      const sys = tmp()
+      writeFileSync(join(sys, 'yt-dlp'), fakeBinary('2026.09.30'))
+      chmodSync(join(sys, 'yt-dlp'), 0o755)
+      const y = new YtDlp({ binDir: join(tmp(), 'bin'), systemDirs: [sys], jsRuntime: null, now: () => NOW, autoUpdate: false })
+      await y.ensure()
+      const pidFile = join(sys, 'descendant')
+      const readPid = () => {
+        const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8').trim()) : 0
+        if (pid > 0) leftovers.push(pid)
+        return pid > 0 ? pid : null
+      }
+      /** The pid of the process the run started, once it has written it (up to 10 s on a busy machine). */
+      const descendant = async () => {
+        for (let i = 0; i < 1000 && !readPid(); i++) await new Promise((r) => setTimeout(r, 10))
+        return readPid()!
+      }
+      return { y, descendant, readPid, before: trackedChildren().length }
+    }
+
+    it('on abort', async () => {
+      const { y, descendant, before } = await setup()
+      const ctl = new AbortController()
+      const run = y.run(['--spawn'], { signal: ctl.signal, timeoutMs: 30_000 }).catch((e) => e)
+      const pid = await descendant()
+      expect(alive(pid)).toBe(true)
+      ctl.abort()
+      expect(isNetError(await run, 'aborted')).toBe(true)
+      expect(alive(pid)).toBe(false)
+      expect(trackedChildren().length).toBe(before)
+    })
+
+    it('on timeout', async () => {
+      const { y, readPid, before } = await setup()
+      expect(isNetError(await y.run(['--spawn'], { timeoutMs: 1000 }).catch((e) => e), 'timeout')).toBe(true)
+      // What it had started by then (everything, on a machine that gets going within the second) is gone.
+      const pid = readPid()
+      if (pid) expect(alive(pid)).toBe(false)
+      expect(trackedChildren().length).toBe(before)
+    })
+
+    it('when the app quits', async () => {
+      const { y, descendant } = await setup()
+      const run = y.run(['--spawn'], { timeoutMs: 30_000 }).catch((e) => e)
+      const pid = await descendant()
+      killTrackedChildren()
+      expect(isNetError(await run)).toBe(true)
+      expect(alive(pid)).toBe(false)
+    })
+
+    it('when it exits leaving a process behind', async () => {
+      const { y, descendant, before } = await setup()
+      const r = await y.run(['--orphan'])
+      expect(r.code).toBe(0)
+      expect(alive(await descendant())).toBe(false)
+      expect(trackedChildren().length).toBe(before)
+    })
   })
 
   it('a missing binary dir is created on download', async () => {

@@ -28,6 +28,12 @@ import { memory, useBrowse, type SelInfo } from './store'
 
 /** A loading row whose track list failed (clicking it, or Enter on its album, tries again). */
 const DETAIL_FAILED = 'Couldn’t load the tracks · Click to try again'
+/** Likewise a group's album list (Enter on the group tries again too), or the next albums of a long one. */
+const ALBUMS_FAILED = 'Couldn’t load the albums · Click to try again'
+const MORE_FAILED = 'Couldn’t load more albums · Click to try again'
+const FAILED = new Set([DETAIL_FAILED, ALBUMS_FAILED, MORE_FAILED])
+/** A long album list loads its next albums once the carousel shows (or selects) a row this close to its end. */
+const MORE_AHEAD = 60
 
 // ---------------------------------------------------------------- geometry
 
@@ -162,8 +168,9 @@ export class Carousel {
   private childrenH = 0
   /** Group whose children are shown (-1 = none). */
   private ex = -1
-  private loadingKey: string | null = null
-  private loadingSince = 0
+  /** When each loading placeholder asked for in the last rebuild started waiting (rebuilds that stop asking forget it). */
+  private loadingSince = new Map<string, number>()
+  private loadingPrev = new Map<string, number>()
   private loadingTimer = 0
 
   private groupItems = new Map<number, Item>()
@@ -182,8 +189,12 @@ export class Carousel {
   private phaseDist = 0
   private awaitingFirstPage: { groupKey: string | null; albumId: string | null; trackId: string | null } | null = null
   private relocating = false
-  /** Set by refreshData(): the selected group may move, follow it by key. */
-  private refreshing: string | null = null
+  /**
+   * Set by refreshData(): the selected group may move (even across pages), so follow it by key until
+   * a current page has it (or the refreshed pages don't). `sel`: the selection then; the user moving
+   * it ends the search.
+   */
+  private refreshing: { key: string; sel: Sel; widened: boolean } | null = null
   private lastEnsure = 0
   private lastRange = -1
   private published: SelInfo | null = null
@@ -383,6 +394,8 @@ export class Carousel {
       this.follow = true
       this.publish(true)
       useBrowse.setState({ total: m.total, loading: m.loading })
+      // likes or downloads changed under a filter while Browse was away
+      if (m.needsRefresh) this.refreshData()
     } else {
       this.awaitingFirstPage = { groupKey: memory.groupKey, albumId: memory.albumId, trackId: memory.trackId }
     }
@@ -390,7 +403,7 @@ export class Carousel {
 
   private persist(): void {
     memory.gi = this.sel.gi
-    memory.groupKey = this.model.group(this.sel.gi)?.key ?? null
+    memory.groupKey = (this.lost() ? this.refreshing?.key : this.model.group(this.sel.gi)?.key) ?? null
     memory.albumId = this.sel.albumId
     memory.trackId = this.sel.trackId
     memory.exAlbum = this.exAlbum
@@ -407,6 +420,8 @@ export class Carousel {
     const prevRows = this.rows
     const rows: Row[] = []
     const born = instant ? 0 : now
+    this.loadingPrev = this.loadingSince
+    this.loadingSince = new Map()
     const reuse = (r: Row): Row => {
       const k = prev.get(r.id)
       const old = k !== undefined ? prevRows[k] : undefined
@@ -420,6 +435,7 @@ export class Carousel {
     let loading: string | null = null
     let wait: string | undefined
     let waitSince: number | null = null
+    let delayKey = ''
     if (g && !this.collapsed) {
       if (g.kind === 'album') {
         const albumId = g.key.slice(g.key.indexOf(':') + 1)
@@ -435,9 +451,11 @@ export class Carousel {
           loading = 'Loading tracks…'
           wait = 'album:' + albumId
           waitSince = this.model.detailSince(albumId)
+          delayKey = 'g:' + g.key
         }
       } else {
         const albums = this.model.albumsFor(g.key)
+        const failed = this.model.albumsError(g.key)
         if (albums) {
           for (const a of albums) {
             const aid = 'A' + a.id
@@ -456,13 +474,26 @@ export class Carousel {
             }
           }
           if (!albums.length) loading = 'No albums match'
+          else if (this.model.hasMoreAlbums(g.key)) {
+            // the rest of a long list, fetched as the carousel nears its end
+            if (failed?.more) loading = MORE_FAILED
+            else if ((waitSince = this.model.moreSince(g.key)) != null) {
+              loading = 'Loading more albums…'
+              wait = 'albums:' + g.key
+              delayKey = 'm:' + g.key
+            }
+          }
+        } else if (failed) {
+          // a failure isn't an empty group
+          loading = ALBUMS_FAILED
         } else {
           loading = 'Loading albums…'
           wait = 'albums:' + g.key
           waitSince = this.model.albumsSince(g.key)
+          delayKey = 'g:' + g.key
         }
       }
-      if (loading && (!wait || this.loadingDelayPassed('g:' + g.key, now))) {
+      if (loading && (!wait || this.loadingDelayPassed(delayKey, now))) {
         rows.push(reuse({ type: 'loading', id: 'L' + gid, gi: this.sel.gi, depth: 1, album: null, track: null, ti: -1, parent: gid, born, h: LH, pitch: LP, label: loading, wait, since: wait ? (waitSince ?? Date.now()) : undefined }))
       }
     }
@@ -500,11 +531,9 @@ export class Carousel {
 
   /** Placeholders only appear if loading takes a moment (no flash for fast loads). */
   private loadingDelayPassed(key: string, now: number): boolean {
-    if (this.loadingKey !== key) {
-      this.loadingKey = key
-      this.loadingSince = now
-    }
-    if (now - this.loadingSince >= 140) return true
+    const since = this.loadingSince.get(key) ?? this.loadingPrev.get(key) ?? now
+    this.loadingSince.set(key, since)
+    if (now - since >= 140) return true
     window.clearTimeout(this.loadingTimer)
     this.loadingTimer = window.setTimeout(() => this.rebuild(), 150)
     return false
@@ -518,6 +547,8 @@ export class Carousel {
     next = { ...next, gi: clamp(next.gi, 0, this.total - 1) }
     const prev = this.sel
     const changed = !sameSel(prev, next)
+    // a refresh following the old selection by key is over
+    if (changed) this.refreshing = null
     if (next.gi !== prev.gi) {
       this.exAlbum = next.trackId ? next.albumId : null
       this.collapsed = false
@@ -542,6 +573,15 @@ export class Carousel {
       const g = m.group(this.sel.gi + d)
       if (g && g.kind !== 'album') m.albumsFor(g.key)
     }
+    const k = this.rowIndex.get(this.selId())
+    if (k !== undefined) this.moreNear(k)
+  }
+
+  /** Child row `k` is in view or selected: near the end of a long album list, its next albums load. */
+  private moreNear(k: number): void {
+    if (k < this.rows.length - MORE_AHEAD) return
+    const g = this.model.group(this.ex)
+    if (g && g.kind !== 'album') this.model.moreAlbums(g.key)
   }
 
   private flatOfSel(): number {
@@ -769,6 +809,7 @@ export class Carousel {
         this.childOff = []
         this.childrenH = 0
         this.ex = -1
+        this.refreshing = null
         useBrowse.setState({ loading: true, catalogError: null })
         break
       }
@@ -777,7 +818,8 @@ export class Carousel {
         // A query can come back empty first (the catalog is still indexing) and fill in on a later
         // refresh: if nothing is selected yet, select the first result once there is one.
         if (e.total > 0 && this.sel.gi < 0 && !this.awaitingFirstPage) this.select({ gi: 0, albumId: null, trackId: null }, { sound: false, instant: true })
-        else if (this.sel.gi >= e.total && e.total > 0) this.select({ gi: e.total - 1, albumId: null, trackId: null }, { sound: false })
+        // (a refresh following the selected group places it once its pages are in)
+        else if (this.sel.gi >= e.total && e.total > 0 && !this.refreshing) this.select({ gi: e.total - 1, albumId: null, trackId: null }, { sound: false })
         if (!e.total) this.publish(true)
         break
       }
@@ -809,23 +851,9 @@ export class Carousel {
           this.scroll.set(this.clampScroll(this.selCenter()))
           return
         }
-        if (Math.floor(this.sel.gi / PAGE_SIZE) === e.page) {
-          // after a revision refresh the selected group may have moved: follow it by key
-          const key = this.refreshing
-          const g = m.group(this.sel.gi)
-          if (key && g && g.key !== key && !this.relocating) {
-            const j = m.findLoaded(key)
-            if (j >= 0 && j !== this.sel.gi) {
-              const before = this.selCenter()
-              this.sel = { ...this.sel, gi: j }
-              this.rebuild(true)
-              const shift = this.selCenter() - before
-              this.scroll.set(this.scroll.value + shift, this.scroll.target + shift)
-              for (const it of this.groupItems.values()) this.releaseItem(it)
-              this.groupItems.clear()
-            }
-          }
-          this.refreshing = null
+        if (this.refreshing && !this.relocating) this.followRefresh()
+        // (while a refresh still looks for the selected group, its index may hold another one)
+        if (Math.floor(this.sel.gi / PAGE_SIZE) === e.page && !this.lost()) {
           this.rebuild()
           this.persist()
           this.publish()
@@ -852,12 +880,66 @@ export class Carousel {
         this.ver++
         this.publish(true)
         break
+      case 'stale':
+        this.refreshData()
+        break
     }
   }
 
-  /** The catalog revision moved: refetch what's on screen, keep the selection. */
+  /** A refresh is still looking for the selected group, and its index holds another one now. */
+  private lost(): boolean {
+    const r = this.refreshing
+    return !!r && sameSel(r.sel, this.sel) && this.model.group(this.sel.gi)?.key !== r.key
+  }
+
+  /**
+   * A page arrived during a refresh: find the selected group by key on the pages that are current
+   * (it may have moved across a page boundary, and the pages come in any order). Not on any of them
+   * once they're all in: the pages around it are asked for once, then it's gone (removed, or moved
+   * far) and the selection stays at its place without the album or track it had.
+   */
+  private followRefresh(): void {
+    const r = this.refreshing!
+    const m = this.model
+    if (!sameSel(this.sel, r.sel)) {
+      // the user moved since: their choice stands
+      this.refreshing = null
+      return
+    }
+    const p = Math.floor(this.sel.gi / PAGE_SIZE)
+    const j = m.isFresh(p) && m.group(this.sel.gi)?.key === r.key ? this.sel.gi : m.findLoaded(r.key, true)
+    if (j < 0) {
+      if (m.pagesPending()) return
+      if (!r.widened) {
+        r.widened = true
+        m.ensureGroups((p - 1) * PAGE_SIZE, (p + 2) * PAGE_SIZE - 1)
+        if (m.pagesPending()) return
+      }
+    }
+    this.refreshing = null
+    if (j === this.sel.gi) return
+    const before = this.selCenter()
+    if (j >= 0) this.sel = { ...this.sel, gi: j }
+    else {
+      this.sel = { gi: clamp(this.sel.gi, 0, Math.max(0, this.total - 1)), albumId: null, trackId: null }
+      this.exAlbum = null
+    }
+    this.rebuild(true)
+    const shift = this.selCenter() - before
+    this.scroll.set(this.scroll.value + shift, this.scroll.target + shift)
+    if (j >= 0) {
+      for (const it of this.groupItems.values()) this.releaseItem(it)
+      this.groupItems.clear()
+    }
+    this.persist()
+    this.publish()
+  }
+
+  /** The catalog revision moved (or likes/downloads under a filter): refetch what's on screen, keep the selection. */
   refreshData(): void {
-    this.refreshing = this.model.group(this.sel.gi)?.key ?? null
+    // a refresh still looking for the selected group keeps following the key it started with
+    const key = this.model.group(this.sel.gi)?.key
+    if (!this.refreshing || !sameSel(this.refreshing.sel, this.sel)) this.refreshing = key ? { key, sel: { ...this.sel }, widened: false } : null
     const pages = new Set<number>()
     for (const gi of this.groupItems.keys()) pages.add(Math.floor(gi / PAGE_SIZE))
     pages.add(Math.floor(this.sel.gi / PAGE_SIZE))
@@ -913,6 +995,7 @@ export class Carousel {
       gi: s.gi,
       group: g,
       albums,
+      albumsTotal: g && g.kind !== 'album' ? m.albumsTotal(g.key) : (albums?.length ?? null),
       album: kind === 'group' && g?.kind !== 'album' ? null : album,
       detail: kind === 'group' && g?.kind !== 'album' ? null : detail,
       track,
@@ -928,9 +1011,22 @@ export class Carousel {
       }
       return
     }
+    // a refresh looking for the selected group: the wedge keeps showing it, not what took its index
+    if (this.lost()) return
     const info = this.infoFor(this.sel)
     const p = this.published
-    if (!force && p && p.id === info.id && p.group === info.group && p.albums === info.albums && p.album === info.album && p.detail === info.detail && p.track === info.track) return
+    if (
+      !force &&
+      p &&
+      p.id === info.id &&
+      p.group === info.group &&
+      p.albums === info.albums &&
+      p.albumsTotal === info.albumsTotal &&
+      p.album === info.album &&
+      p.detail === info.detail &&
+      p.track === info.track
+    )
+      return
     this.published = info
     useBrowse.setState({ sel: info })
   }
@@ -1052,11 +1148,14 @@ export class Carousel {
     const it = this.itemFromEvent(e)
     if (!it || it.leaving) return
     if (it.type === 'loading') {
-      if (it.row?.label === DETAIL_FAILED) this.retryRow(it.row)
+      if (it.row?.label && FAILED.has(it.row.label)) this.retryRow(it.row)
       return
     }
     const s = this.sel
     if (it.type === 'group') {
+      // picking a group whose album list failed tries it again (moving onto it waits a while)
+      const g = this.model.group(it.gi)
+      if (g && this.model.albumsError(g.key)) this.model.retryAlbums(g.key)
       if (s.gi === it.gi && !s.albumId) this.toggleGroup()
       else this.select({ gi: it.gi, albumId: null, trackId: null })
     } else if (it.type === 'album') {
@@ -1071,9 +1170,15 @@ export class Carousel {
     }
   }
 
-  /** A failed track list's row was clicked: fetch it again (the row shows the wait meanwhile). */
+  /** A failed row was clicked: fetch its track list (or album list) again (the row shows the wait meanwhile). */
   private retryRow(r: Row): void {
     const g = this.model.group(r.gi)
+    if (r.label !== DETAIL_FAILED) {
+      if (!g) return
+      sfx.play('select', { volume: 0.5 })
+      this.model.retryAlbums(g.key)
+      return
+    }
     const albumId = r.album?.id ?? (g?.kind === 'album' ? g.key.slice(g.key.indexOf(':') + 1) : null)
     if (!albumId) return
     sfx.play('select', { volume: 0.5 })
@@ -1274,6 +1379,7 @@ export class Carousel {
         const r = this.rows[k]
         if (!this.childItems.has(r.id)) this.childItems.set(r.id, this.makeItem(r.id, r.type, r.gi, r, this.childY(k), now))
       }
+      this.moreNear(k1)
     }
 
     // --- hover (computed from the pointer: no DOM hit-testing per frame)
@@ -1425,7 +1531,7 @@ export class Carousel {
   /** A loading row: its fetch's task progress when main reports one, else an estimate from when the fetch started. */
   private fillLoadingRow(n: PanelNode, r: Row): void {
     const label = r.label ?? 'Loading…'
-    setClass(n, 'is-failed', label === DETAIL_FAILED)
+    setClass(n, 'is-failed', FAILED.has(label))
     if (!r.wait) return fillLoading(n, label)
     const task = useTasks.getState()[r.wait]
     if (task) return fillLoading(n, `${task.label}…`, r.wait, task, !!task.done)

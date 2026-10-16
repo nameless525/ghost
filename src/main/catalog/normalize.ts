@@ -43,7 +43,9 @@ const SOFT_TAIL = /\s+(?:music|score|bgm|sounds|songs|sound\s+effects)\s*$/i
 
 /** "music from X" / "a tribute to X": the game is X. */
 const ABOUT_GAME: RegExp[] = [
-  /(?:^|[:\-–—~]\s*|\s)(?:music|songs|melodies|themes|selections)\s+(?:from|of|inspired\s+by)\s+(?:the\s+game\s+)?(.{2,})$/i,
+  /(?:^|[:\-–—~]\s*|\s)(?:music|songs|melodies|themes|selections)\s+(?:from|inspired\s+by)\s+(?:the\s+game\s+)?(.{2,})$/i,
+  // "of" only after a name: titles starting "Songs of …" are games ("Songs of Conquest").
+  /(?:[:\-–—~]\s*|\s)(?:music|songs|melodies|themes|selections)\s+of\s+(?:the\s+game\s+)?(.{2,})$/i,
   /(?:^|[:\-–—~]\s*|\s)(?:an?\s+)?(?:[\w-]+\s+){0,2}tribute\s+to\s+(.{2,})$/i,
   // "Chronicles of Time: A Chrono Trigger Arrangement Project" → the game is in the subtitle.
   /[:：\-–—~]\s*(?:an?\s+|the\s+)?(.{2,}?)\s+(?:arrangement|remix|tribute|cover|piano|orchestral|fan)\s+(?:project|album|collection|ep)s?$/i
@@ -91,7 +93,7 @@ function cleanTitle(title: string, brackets: boolean): string {
   if (!s) return s
   for (const re of ABOUT_GAME) {
     const m = re.exec(s)
-    if (m && m.index > 0 && m[1].trim().length >= 2) {
+    if (m && m[1].trim().length >= 2) {
       s = m[1].trim()
       break
     }

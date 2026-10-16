@@ -106,6 +106,32 @@ fn vgm_loop_points_are_exact_and_the_emulator_wraps_by_itself() {
 }
 
 #[test]
+fn vgm_silence_plays_as_written() {
+    let f = |x: &[f32]| zero_cross_freq(x, 2, 44_100);
+    // 0.1 s tone, 8 s of silence, 1 s tone: libgme's silence detection ended the track 6 s into
+    // the silence, so the last tone never played.
+    let total = 4410 + 8 * 44_100 + 44_100;
+    let vgm = vgm_psg(&[(254, 4410), (0, 8 * 44_100), (254, 44_100)], &[]);
+    let mut s = open_memory(Family::Gme, vgm, "quiet.vgm", &opts(None)).unwrap();
+    let a = read_frames(s.as_mut(), total);
+    assert_eq!(a.len(), total * 2, "track ended early");
+    let last = &a[(total - 44_100 + 2205) * 2..];
+    assert!(rms(last) > 0.05 && (f(last) - psg_freq(254)).abs() < 3.0, "last tone: rms {}, {:.1} Hz", rms(last), f(last));
+    // A silent first second: kept (not skipped), so the header's loop points land on the music.
+    let vgm = vgm_psg(&[(0, 44_100), (254, 22_050)], &[(127, 22_050)]);
+    let mut s = open_memory(Family::Gme, vgm, "late.vgm", &opts(None)).unwrap();
+    let l = s.loop_info().unwrap();
+    assert_eq!((l.start, l.end), (66_150, 88_200));
+    let a = read_frames(s.as_mut(), 88_200);
+    assert!(rms(&a[..44_000 * 2]) < 1e-3, "first second rms {}", rms(&a[..44_000 * 2]));
+    let (intro, body) = (f(&a[46_305 * 2..66_150 * 2]), f(&a[68_355 * 2..]));
+    assert!((intro - psg_freq(254)).abs() < 3.0 && (body - psg_freq(127)).abs() < 3.0, "intro {intro:.1} Hz, body {body:.1} Hz");
+    assert_eq!(s.seek(l.start).unwrap(), l.start);
+    let again = read_frames(s.as_mut(), 22_050);
+    assert!((f(&again[2205 * 2..]) - psg_freq(127)).abs() < 3.0);
+}
+
+#[test]
 fn module_loops_whole_song_and_mutes_channels() {
     let m = mod_square();
     assert_eq!(detect(None, &m, Some(m.len() as u64)), Some(Family::Openmpt));
@@ -128,6 +154,11 @@ fn module_loops_whole_song_and_mutes_channels() {
     s.set_voice_mask(0xF);
     let _ = read_frames(s.as_mut(), 4800);
     assert!(rms(&read_frames(s.as_mut(), 4800)) < 0.002);
+    // One song: any other index (including ones that are negative as C ints, -1 being libopenmpt's
+    // "all sub-songs") is out of range.
+    for sub in [1, i32::MAX as u32, 1 << 31, u32::MAX] {
+        assert!(open_memory(Family::Openmpt, mod_square(), "sq.mod", &opts(Some(sub))).is_err(), "sub-song {sub}");
+    }
 }
 
 #[test]
@@ -175,6 +206,22 @@ fn vgmstream_wav_loop_and_txth_companion_with_subsongs() {
     }
     println!("txth sub-songs: {freqs:?} Hz");
     assert!((freqs[0] - 441.0).abs() < 3.0 && (freqs[1] - 882.0).abs() < 3.0);
+    // Past the end: rejected with the file's real count (read before the handle is freed; with
+    // allocator scribbling, e.g. MallocScribble=1, a read after the free shows a garbage count).
+    for sub in [2, 3, (i32::MAX - 1) as u32] {
+        let e = VgmstreamSource::open("set/music.raw", opener.clone(), &opts(Some(sub))).err().expect("out of range");
+        assert_eq!(e.message, format!("sub-song {sub} out of range (file has 2)"));
+    }
+    // Indices vgmstream can't represent (1-based C ints) never reach it: no overflow, no wrap to
+    // the default sub-song.
+    for sub in [i32::MAX as u32, u32::MAX] {
+        let e = VgmstreamSource::open("set/music.raw", opener.clone(), &opts(Some(sub))).err().expect("out of range");
+        assert_eq!(e.message, format!("sub-song {sub} out of range"));
+    }
+    // The other early returns release the handle too: a file vgmstream rejects, a missing one.
+    let junk = Arc::new(MemoryOpener::single("junk.adx", vec![0x55; 4096]));
+    assert!(VgmstreamSource::open("junk.adx", junk.clone(), &opts(None)).is_err());
+    assert!(VgmstreamSource::open("missing.adx", junk, &opts(None)).is_err());
 }
 
 #[test]

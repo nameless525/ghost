@@ -99,7 +99,7 @@ export class IgdbClient {
 
   constructor(
     readonly clientId: string,
-    private secret: string,
+    readonly secret: string,
     private fetchImpl: FetchFn = fetch
   ) {}
 
@@ -201,9 +201,17 @@ export class Enricher {
   private sgdbWanted: number[] = []
   private igdbPausedUntil = 0
   private sgdbPausedUntil = 0
-  lastError: string | null = null
+  /** Each service's failure until it works again (or its keys change). */
+  private errors: { igdb: string | null; sgdb: string | null } = { igdb: null, sgdb: null }
 
   constructor(private deps: EnricherDeps) {}
+
+  /** What is failing now, if anything (IGDB first). */
+  get lastError(): string | null {
+    // Keys removed or edited since a failure: that failure no longer applies.
+    this.configure()
+    return [this.errors.igdb, this.errors.sgdb].filter(Boolean).join('; ') || null
+  }
 
   private now(): number {
     return (this.deps.now ?? Date.now)()
@@ -213,12 +221,31 @@ export class Enricher {
   configure(): { igdb: boolean; steamGridDb: boolean } {
     const k = this.deps.getSettings().keys
     const fetchImpl = this.deps.fetch ?? fetch
+    let edited = false
+    // New keys get a new client (no token cached with the old secret), a clean slate and a try right away.
     if (k.igdbClientId && k.igdbClientSecret) {
-      if (!this.igdb || this.igdb.clientId !== k.igdbClientId) this.igdb = new IgdbClient(k.igdbClientId, k.igdbClientSecret, fetchImpl)
-    } else this.igdb = null
+      if (!this.igdb || this.igdb.clientId !== k.igdbClientId || this.igdb.secret !== k.igdbClientSecret) {
+        this.igdb = new IgdbClient(k.igdbClientId, k.igdbClientSecret, fetchImpl)
+        this.igdbPausedUntil = 0
+        this.errors.igdb = null
+        edited = true
+      }
+    } else {
+      this.igdb = null
+      this.errors.igdb = null
+    }
     if (k.steamGridDbKey) {
-      if (!this.sgdb || this.sgdb.key !== k.steamGridDbKey) this.sgdb = new SgdbClient(k.steamGridDbKey, fetchImpl)
-    } else this.sgdb = null
+      if (!this.sgdb || this.sgdb.key !== k.steamGridDbKey) {
+        this.sgdb = new SgdbClient(k.steamGridDbKey, fetchImpl)
+        this.sgdbPausedUntil = 0
+        this.errors.sgdb = null
+        edited = true
+      }
+    } else {
+      this.sgdb = null
+      this.errors.sgdb = null
+    }
+    if (edited) this.wake?.()
     return { igdb: !!this.igdb, steamGridDb: !!this.sgdb }
   }
 
@@ -271,28 +298,37 @@ export class Enricher {
 
   private async loop(): Promise<void> {
     while (this.running) {
-      const cfg = this.configure()
+      this.configure()
       let worked = false
+      // A failure counts (and is backed off from) only while the keys it was made with are current.
+      const igdb = this.igdb
       try {
-        if (cfg.igdb && this.now() >= this.igdbPausedUntil) worked = (await this.igdbStep()) || worked
+        if (igdb && this.now() >= this.igdbPausedUntil) worked = (await this.igdbStep(igdb)) || worked
       } catch (e) {
-        this.lastError = (e as Error).message
-        this.deps.log?.(`igdb: ${this.lastError}`)
-        this.igdbPausedUntil = this.now() + (/auth|token|reject/i.test(this.lastError) ? 10 * 60_000 : 30_000)
+        const msg = (e as Error).message
+        this.deps.log?.(`igdb: ${msg}`)
+        if (this.igdb === igdb) {
+          this.errors.igdb = msg
+          this.igdbPausedUntil = this.now() + (/auth|token|reject/i.test(msg) ? 10 * 60_000 : 30_000)
+        }
       }
+      const sgdb = this.sgdb
       try {
-        if (cfg.steamGridDb && this.now() >= this.sgdbPausedUntil) worked = (await this.sgdbStep()) || worked
+        if (sgdb && this.now() >= this.sgdbPausedUntil) worked = (await this.sgdbStep(sgdb)) || worked
       } catch (e) {
-        this.lastError = (e as Error).message
-        this.deps.log?.(`steamgriddb: ${this.lastError}`)
-        this.sgdbPausedUntil = this.now() + (/key/i.test(this.lastError) ? 10 * 60_000 : 30_000)
+        const msg = (e as Error).message
+        this.deps.log?.(`steamgriddb: ${msg}`)
+        if (this.sgdb === sgdb) {
+          this.errors.sgdb = msg
+          this.sgdbPausedUntil = this.now() + (/key/i.test(msg) ? 10 * 60_000 : 30_000)
+        }
       }
       if (!this.running) break
       await this.sleep(worked ? 50 : 30_000)
     }
   }
 
-  private async igdbStep(): Promise<boolean> {
+  private async igdbStep(igdb: IgdbClient): Promise<boolean> {
     const repo = this.deps.repo
     const ids = this.wanted.splice(0, 10)
     // Never-checked games first, biggest first: a walk of games_igdb_todo (as one OR query with
@@ -316,7 +352,8 @@ export class Enricher {
       .map((id) => repo.get<{ id: number; name: string; alt_names: string; year: number | null; igdb_json: string | null }>(`SELECT id, name, alt_names, year, igdb_json FROM games WHERE id = ?`, id))
       .filter((g): g is NonNullable<typeof g> => !!g)
     if (!games.length) return false
-    const results = await this.igdb!.searchMany(games.map((g) => ({ id: g.id, name: g.name })))
+    const results = await igdb.searchMany(games.map((g) => ({ id: g.id, name: g.name })))
+    this.errors.igdb = null
     const changed: number[] = []
     const now = this.now()
     repo.tx(() => {
@@ -341,13 +378,14 @@ export class Enricher {
     return true
   }
 
-  private async sgdbStep(): Promise<boolean> {
+  private async sgdbStep(sgdb: SgdbClient): Promise<boolean> {
     const id = this.sgdbWanted.shift()
     if (id == null) return false
     const repo = this.deps.repo
     const g = repo.get<{ id: number; name: string; year: number | null; cover: string | null }>(`SELECT id, name, year, cover FROM games WHERE id = ?`, id)
     if (!g) return true
-    const data = await this.sgdb!.lookup({ name: g.name, year: g.year, hasCover: !!g.cover })
+    const data = await sgdb.lookup({ name: g.name, year: g.year, hasCover: !!g.cover })
+    this.errors.sgdb = null
     repo.run(`UPDATE games SET sgdb_id = ?, sgdb_json = ?, sgdb_checked_at = ? WHERE id = ?`, data?.id ?? null, data ? JSON.stringify(data) : null, this.now(), id)
     if (data) {
       repo.refreshGames([id])

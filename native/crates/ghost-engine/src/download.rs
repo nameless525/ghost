@@ -1,14 +1,15 @@
 //! Downloads (DESIGN §2): copy from the stream cache when the file is whole, otherwise fetch it
 //! through the cache with progress; write to a temp file next to `dest`, tag it with lofty, then
-//! rename into place. A new download with an id that is already running replaces the old job.
+//! rename into place, never over an existing file: a taken name gets a number (`Song (2).flac`),
+//! and the `Done` event reports the path used. A new download with an id that is already running
+//! replaces the old job.
 //!
 //! Chip / tracker / game-engine formats (anything `ghost-formats` decodes) and clips are rendered
 //! instead: decoded through the same source + loop stage as playback (the current loop settings,
 //! Endless counting as Album: 2 loops + 10 s fade), encoded to FLAC, tagged (title / game /
-//! author from the file fill in what the caller left empty). The file gets a `.flac` extension;
-//! the `Done` event reports the final path. Progress counts PCM bytes rendered against the PCM
-//! size of the whole track; the last progress event (before tagging) and `Done` carry the FLAC's
-//! real size.
+//! author from the file fill in what the caller left empty). The file gets a `.flac` extension.
+//! Progress counts PCM bytes rendered against the PCM size of the whole track; the last progress
+//! event (before tagging) and `Done` carry the FLAC's real size.
 //!
 //! Archive entries need the whole archive first: until it is in, progress counts the archive's
 //! bytes in the stream cache against the archive's size; then the entry's own phase reports
@@ -206,8 +207,7 @@ fn run(
         if cancel.load(Ordering::Relaxed) {
             return Err("canceled".into());
         }
-        std::fs::rename(&tmp, dest).map_err(|e| format!("move into place: {e}"))?;
-        Ok(dest.to_path_buf())
+        commit(&tmp, dest)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -215,7 +215,7 @@ fn run(
     result
 }
 
-/// Tag `tmp`, then move it to `dest` (removing `tmp` on failure).
+/// Tag `tmp`, then move it to `dest` (or a numbered name, see `commit`), removing `tmp` on failure.
 fn finish_file(tmp: &Path, dest: &Path, tags: &TagInfo, http: &Http, cancel: &AtomicBool) -> Result<PathBuf, String> {
     let result = (|| {
         if cancel.load(Ordering::Relaxed) {
@@ -226,13 +226,49 @@ fn finish_file(tmp: &Path, dest: &Path, tags: &TagInfo, http: &Http, cancel: &At
         if cancel.load(Ordering::Relaxed) {
             return Err("canceled".into());
         }
-        std::fs::rename(tmp, dest).map_err(|e| format!("move into place: {e}"))?;
-        Ok(dest.to_path_buf())
+        commit(tmp, dest)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(tmp);
     }
     result
+}
+
+/// `dest`, or for `n` > 1 the same name numbered like `Song (2).flac`.
+fn numbered(dest: &Path, n: u32) -> PathBuf {
+    if n <= 1 {
+        return dest.to_path_buf();
+    }
+    let stem = dest.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "download".into());
+    match dest.extension() {
+        Some(ext) => dest.with_file_name(format!("{stem} ({n}).{}", ext.to_string_lossy())),
+        None => dest.with_file_name(format!("{stem} ({n})")),
+    }
+}
+
+/// Move the finished `tmp` to `dest`, or to the first free numbered name next to it; returns
+/// where it went. A file already there is never replaced, and two jobs finishing at once never
+/// get the same name: the name is claimed by creating it exclusively (atomic on every file
+/// system, FAT and exFAT included, unlike hard links), then `tmp` is renamed over that empty claim.
+fn commit(tmp: &Path, dest: &Path) -> Result<PathBuf, String> {
+    for n in 1..10_000 {
+        let p = numbered(dest, n);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(claim) => {
+                drop(claim);
+                return match std::fs::rename(tmp, &p) {
+                    Ok(()) => Ok(p),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&p);
+                        Err(format!("move into place: {e}"))
+                    }
+                };
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("create {}: {e}", p.display())),
+        }
+    }
+    Err(format!("no free file name for {}", dest.display()))
 }
 
 /// An archive entry saved as-is (`run` has already fetched the archive, reporting its bytes).
@@ -249,8 +285,8 @@ fn save_entry(source: &SourceSpec, entry: &str, dest: &Path, tags: &TagInfo, ctx
     finish_file(&tmp, dest, tags, &ctx.cache.http, &ctx.cancel)
 }
 
-/// `dest` with a `.flac` extension (replacing a known audio / chip / archive extension), made
-/// unique if that file already exists.
+/// `dest` with a `.flac` extension (replacing a known audio / chip / archive extension). Taken
+/// names are numbered when the render is done (`commit`): another render may end there first.
 fn flac_dest(dest: &Path) -> PathBuf {
     let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "download".into());
     let stem = match ghost_formats::extension_of(&name) {
@@ -265,13 +301,7 @@ fn flac_dest(dest: &Path) -> PathBuf {
         }
         _ => name,
     };
-    let mut p = dest.with_file_name(format!("{stem}.flac"));
-    let mut i = 2;
-    while p.exists() {
-        p = dest.with_file_name(format!("{stem} ({i}).flac"));
-        i += 1;
-    }
-    p
+    dest.with_file_name(format!("{stem}.flac"))
 }
 
 /// Decode `source` through the loop stage and encode it to FLAC.
@@ -305,7 +335,7 @@ fn render_flac(source: &SourceSpec, dest: &Path, tags: &TagInfo, loops: (LoopMod
             }
             if ch > 2 {
                 stereo.clear();
-                source::to_stereo(&buf[..n * ch], ch, &mut stereo);
+                source::to_stereo(&buf[..n * ch], ch, st.channel_mask(), &mut stereo);
                 w.write(&stereo).map_err(|e| format!("write: {e}"))?;
             } else {
                 w.write(&buf[..n * ch]).map_err(|e| format!("write: {e}"))?;

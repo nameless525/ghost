@@ -11,7 +11,8 @@ import { useTasks } from '../../state/progress'
 import { updateSettings, useSettings } from '../../state/settings'
 import { openContextMenu } from '../../ui/ContextMenu'
 import { browseModel } from './model'
-import type { SelInfo } from './store'
+import { applyQuery } from './query'
+import { useBrowse, type SelInfo } from './store'
 import { beginAction, beginPreview, endAction, endPreview, patchPreview, setActionAlbum, useBrowseWaits, type ActionKind } from './waits'
 
 /** osu!-style "preview point" track: hardest analysed track, else the first one over a minute, else track 1. */
@@ -30,16 +31,24 @@ export function signatureIndex(tracks: TrackView[]): number {
   return long >= 0 ? long : 0
 }
 
+/** The selection's track list when it's at hand and current (a cached one a catalog change made stale isn't). */
+function freshDetail(sel: SelInfo): AlbumDetail | null {
+  return sel.detail && browseModel.hasDetail(sel.detail.album.id) ? sel.detail : null
+}
+
 /**
  * The album a selection acts on: itself, the track's album, or the group's first (signature) album.
  * `onAlbum` hears which album it is before its track list is fetched (for progress bars).
  */
 export async function albumOf(sel: SelInfo, onAlbum?: (albumId: ID) => void): Promise<AlbumDetail | null> {
-  if (sel.detail) return sel.detail
+  const fresh = freshDetail(sel)
+  if (fresh) return fresh
   const load = (id: ID) => {
     onAlbum?.(id)
     return browseModel.loadDetail(id)
   }
+  // out of date: fetched again (the old one still serves if that fails)
+  if (sel.detail) return (await load(sel.detail.album.id)) ?? sel.detail
   if (sel.album) return load(sel.album.id)
   const g = sel.group
   if (!g) return null
@@ -51,9 +60,20 @@ export async function albumOf(sel: SelInfo, onAlbum?: (albumId: ID) => void): Pr
 
 /** The selection's track list is at hand: acting on it fetches nothing first. */
 export function albumAtHand(sel: SelInfo): boolean {
-  if (sel.detail) return true
+  if (freshDetail(sel)) return true
   const id = previewAlbumId(sel)
   return !!id && browseModel.hasDetail(id)
+}
+
+/**
+ * The album whose track list the wedge wants once the selection rests on it (an album row, or a
+ * group under Album grouping), unless it's cached and current: a cached one a catalog change made
+ * stale shows meanwhile but is fetched again.
+ */
+export function restingAlbum(sel: SelInfo | null): ID | null {
+  const g = sel?.group
+  const albumId = sel?.album?.id ?? (g?.kind === 'album' ? g.key.slice(g.key.indexOf(':') + 1) : null)
+  return albumId && !browseModel.hasDetail(albumId) ? albumId : null
 }
 
 /** Start a wait for an action on `sel` when its album has to be fetched first (Browse shows it); 0 = nothing to wait for. */
@@ -71,20 +91,43 @@ export async function trackIdsOf(sel: SelInfo): Promise<ID[]> {
 // ---------------------------------------------------------------- previews
 
 let previewing: { trackId: ID; albumId: ID } | null = null
+/**
+ * A preview on its way (its album's track list loading): what it's for, and whether it started on
+ * its own (resting on a selection) rather than with P. A selection or query change drops it, and
+ * the queue starting drops an automatic one.
+ */
+let pending: { albumId: ID | null; trackId: ID | null; auto: boolean } | null = null
 let previewSeq = 0
-
-export function previewState(): { trackId: ID; albumId: ID } | null {
-  return previewing
-}
 
 export function stopPreview(): void {
   previewSeq++
+  pending = null
   endPreview()
   if (!previewing && !usePlayer.getState().preview) return
   previewing = null
   void ghost()
     .player.stopPreview()
     .catch(() => {})
+}
+
+/** Drop a preview that's still on its way (nothing audible yet); `autoOnly`: only one that started on its own. */
+export function cancelPendingPreview(autoOnly = false): void {
+  if (!pending || (autoOnly && !pending.auto)) return
+  previewSeq++
+  pending = null
+  endPreview()
+}
+
+/** The selection moved: a preview of another album stops, audible or still on its way. */
+export function previewFollowSelection(sel: SelInfo | null): void {
+  const albumId = previewAlbumId(sel)
+  if ([previewing, pending].some((c) => c && (!albumId || c.albumId !== albumId))) stopPreview()
+}
+
+/** A preview of the selection is audible or on its way. */
+function previewingSel(sel: SelInfo): boolean {
+  const albumId = previewAlbumId(sel)
+  return [previewing, pending].some((c) => c && (sel.track ? c.trackId === sel.track.id : c.albumId === albumId))
 }
 
 /** The player ended a preview on its own (the queue started playing, the time limit, an error). */
@@ -104,18 +147,28 @@ export function previewAlbumId(sel: SelInfo | null): ID | null {
   return sel.albums?.[0]?.id ?? null
 }
 
-/** Start previewing the selection's signature track (or the selected track). */
-export async function startPreview(sel: SelInfo): Promise<boolean> {
+/**
+ * Start previewing the selection's signature track (or the selected track). `auto`: on its own
+ * (resting on the selection), so only while nothing plays; P's previews may pause the queue.
+ */
+export async function startPreview(sel: SelInfo, auto = false): Promise<boolean> {
   // Already previewing (or still loading) this: leave it, and its wait, alone.
-  const cur = previewing
-  if (cur && (sel.track ? cur.trackId === sel.track.id : cur.albumId === previewAlbumId(sel))) return true
+  if (previewingSel(sel)) return true
   const seq = ++previewSeq
+  const intent = { albumId: previewAlbumId(sel), trackId: sel.track?.id ?? null, auto }
+  pending = intent
   // The wait shows on the wedge from now until it's audible: the track list (when it has to be
   // fetched), then whatever the player reports in previewLoading.
-  const w = beginPreview(sel.id, previewAlbumId(sel), sel.track?.id ?? null)
+  const w = beginPreview(sel.id, intent.albumId, intent.trackId)
   const t0 = Date.now()
-  const d = await albumOf(sel, (albumId) => patchPreview(w, { albumId }))
-  if (seq !== previewSeq || !d || !d.tracks.length) {
+  const d = await albumOf(sel, (albumId) => {
+    intent.albumId = albumId
+    patchPreview(w, { albumId })
+  })
+  if (pending === intent) pending = null
+  // Dropped meanwhile (another selection or query, P again), or an automatic one that's no longer
+  // allowed (the queue started playing): nothing starts.
+  if (seq !== previewSeq || !d || !d.tracks.length || (auto && !canAutoPreview())) {
     endPreview(w)
     return false
   }
@@ -147,11 +200,10 @@ export function canAutoPreview(): boolean {
   return st === 'idle' || st === 'paused' || st === 'error'
 }
 
-/** P: toggle a preview of the selection, even while music plays. */
+/** P: toggle a preview of the selection, even while music plays (P again while it loads drops it). */
 export async function togglePreview(sel: SelInfo | null): Promise<void> {
   if (!sel) return
-  const albumId = previewAlbumId(sel)
-  if (previewing && (sel.track ? previewing.trackId === sel.track.id : previewing.albumId === albumId)) {
+  if (previewingSel(sel)) {
     sfx.play('toggleOff', { volume: 0.5 })
     stopPreview()
     return
@@ -162,19 +214,29 @@ export async function togglePreview(sel: SelInfo | null): Promise<void> {
 
 // ---------------------------------------------------------------- play / queue / etc.
 
+/** Bumps with every play asked for in Browse, and on leaving it: an older play still fetching its album is dropped. */
+let playSeq = 0
+
+/** Leaving Browse: a play still fetching its album (or waiting for search results) doesn't start. */
+export function cancelPlay(): void {
+  playSeq++
+}
+
 export async function playSelection(sel: SelInfo | null): Promise<void> {
   if (!sel) return
+  const seq = ++playSeq
   stopPreview()
   const w = actionWait('play', sel)
   const onAlbum = (id: ID) => setActionAlbum(w, id)
   try {
+    const d = await albumOf(sel, onAlbum)
+    // a newer play (or leaving Browse) while the album loaded: this one is moot
+    if (seq !== playSeq) return
     if (sel.track) {
-      const d = sel.detail ?? (await albumOf(sel, onAlbum))
       const albumId = d?.album.id ?? sel.track.albumId
       const index = d ? Math.max(0, d.tracks.findIndex((t) => t.id === sel.track!.id)) : 0
       await trackActions.playAlbum(albumId, index)
     } else {
-      const d = await albumOf(sel, onAlbum)
       if (!d || !d.tracks.length) {
         notify({ kind: 'info', title: 'Nothing to play yet', body: sel.album?.title ?? sel.group?.title, ephemeral: true })
         return
@@ -182,13 +244,32 @@ export async function playSelection(sel: SelInfo | null): Promise<void> {
       await trackActions.playAlbum(d.album.id, 0)
     }
   } catch (err) {
+    if (seq !== playSeq) return
     sfx.play('error')
     notify({ kind: 'error', title: 'Couldn’t start playback', body: err instanceof Error ? err.message : String(err) })
     return
   } finally {
     endAction(w)
   }
-  navigate('play')
+  if (seq === playSeq) navigate('play')
+}
+
+/**
+ * Enter: play the selection of the query as typed. Until that query's results are in, the selection
+ * on screen is the previous query's, so this waits for them (running what's typed now), then plays
+ * once; nothing found: `searchOnline` looks on the web sources instead (the search box's Enter).
+ */
+export async function playResult(searchOnline: boolean): Promise<void> {
+  const seq = ++playSeq
+  applyQuery(true)
+  const gen = browseModel.gen
+  await browseModel.settled()
+  // typed on, played something else or left Browse meanwhile
+  if (seq !== playSeq || gen !== browseModel.gen) return
+  const sel = useBrowse.getState().sel
+  if (browseModel.total && sel) return playSelection(sel)
+  const text = browseModel.query.text
+  if (searchOnline && text && browseModel.total === 0 && !browseModel.pageError) useBrowse.setState({ externalAuto: text })
 }
 
 /** Run an action, turning failures into an error toast. */

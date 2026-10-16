@@ -78,8 +78,11 @@ export function extractAccent(pixels: Uint8Array, order: 'rgba' | 'bgra' = 'bgra
   let colored = 0
   for (let k = 0; k < BUCKETS; k++) {
     colored += weight[k]
+    // Neighbours only rank a bucket; the colour is its own mean, so an empty bucket between two
+    // populated ones can't win (on a tie, the bucket with more weight of its own does).
+    if (weight[k] <= 0) continue
     const score = weight[k] + 0.5 * (weight[(k + BUCKETS - 1) % BUCKETS] + weight[(k + 1) % BUCKETS])
-    if (score > bestScore) {
+    if (best < 0 || score > bestScore || (score === bestScore && weight[k] > weight[best])) {
       bestScore = score
       best = k
     }

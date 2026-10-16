@@ -99,6 +99,9 @@ interface Flight {
   followers: Set<(s: ResolveStep) => void>
 }
 
+/** A match score a provider can stand behind: 0 (or NaN) marks a known mismatch, never a source. */
+const usableConfidence = (c: number) => Number.isFinite(c) && c > 0 && c <= 1
+
 const sameStep = (a: ResolveStep, b: ResolveStep) => a.kind === b.kind && a.detail === b.detail && (a.fraction == null || b.fraction == null ? a.fraction === b.fraction : Math.abs(a.fraction - b.fraction) < 0.002)
 
 export class SourceResolver {
@@ -312,14 +315,17 @@ export class SourceResolver {
         // Candidates found earlier: re-resolve them by locator (an expired YouTube URL) instead of searching again.
         const reuse = new Map<string, number>()
         for (const r of rows) {
-          if (r.failures < MAX_REUSE_FAILURES && now - r.verified_at < SOURCE_TTL_MS) reuse.set(r.locator, Math.max(reuse.get(r.locator) ?? 0, r.confidence))
+          if (r.failures < MAX_REUSE_FAILURES && now - r.verified_at < SOURCE_TTL_MS && usableConfidence(r.confidence)) reuse.set(r.locator, Math.max(reuse.get(r.locator) ?? 0, r.confidence))
         }
+        // Only the candidates whose stored source failed skip the provider's caches (for SoundCloud
+        // that means downloading the file again).
+        const failed = new Set(rows.filter((r) => r.needs_refresh === 1).map((r) => r.locator))
         // A network search (findTrackMode 'fallback') reports its steps; a local lookup isn't a wait.
         const network = p.findTrackMode === 'fallback'
         const resolveAll = async (cands: { locator: string; confidence: number }[]): Promise<StoredStream[]> => {
           if (network && cands.length) step('stream')
           bytes.clear()
-          const settled = await Promise.allSettled(cands.map((c) => p.resolveStream(c.locator, { priority: 0, force, onBytes: onBytes(c.locator) })))
+          const settled = await Promise.allSettled(cands.map((c) => p.resolveStream(c.locator, { priority: 0, force: force && failed.has(c.locator), onBytes: onBytes(c.locator) })))
           const items: StoredStream[] = []
           settled.forEach((r, i) => {
             if (r.status === 'fulfilled') for (const info of r.value) items.push({ info, locator: cands[i].locator, confidence: cands[i].confidence })
@@ -332,7 +338,7 @@ export class SourceResolver {
           const bad = new Set(rows.filter((r) => r.failures >= MAX_REUSE_FAILURES).map((r) => r.locator))
           if (network) step('search')
           const cands = (await p.findTrack(t, { priority: 0 }))
-            .filter((c) => !bad.has(c.locator))
+            .filter((c) => !bad.has(c.locator) && usableConfidence(c.confidence))
             .sort((a, b) => b.confidence - a.confidence)
             .slice(0, MAX_CANDIDATES)
           items = await resolveAll(cands)
@@ -407,7 +413,7 @@ export class SourceResolver {
 
     const rank = () =>
       this.rows(trackId)
-        .filter((r) => order.includes(r.provider) && !exclude.has(r.cache_key) && !(r.expires_at != null && r.expires_at < now + 30_000))
+        .filter((r) => order.includes(r.provider) && !exclude.has(r.cache_key) && !(r.expires_at != null && r.expires_at < now + 30_000) && usableConfidence(r.confidence))
         .map((r) => ({ r, recentFail: r.failures > 0 && r.last_failed_at != null && now - r.last_failed_at < RECENT_FAILURE_MS ? 1 : 0 }))
         .sort(
           (a, b) =>

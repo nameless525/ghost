@@ -183,6 +183,13 @@ export interface BrowsePage {
   groups: BrowseGroup[]
 }
 
+/** Part of a carousel group's albums: `albums` from `offset`, of `total` in the group. */
+export interface AlbumPage {
+  total: number
+  offset: number
+  albums: Album[]
+}
+
 export interface CatalogStatus {
   indexing: boolean
   games: number
@@ -298,6 +305,12 @@ export interface PlayContext {
   title: string
 }
 
+/**
+ * Muted sound-chip voices, bit i = voice i (up to 64), as lowercase hex without a prefix: "0" is
+ * every voice on. Not a number: 64 bits are past its exact range. See shared/voices.ts.
+ */
+export type VoiceMask = string
+
 export interface PlayerState {
   status: PlayStatus
   current: TrackView | null
@@ -328,9 +341,10 @@ export interface PlayerState {
   error: string | null
   /**
    * Mutable sound-chip voices of the current source (chiptune rips: "Square 1", "Triangle", "Noise",
-   * …), or null when it has none. Bit i of `mask` set = voice i is muted. Resets to 0 on track change.
+   * …), or null when it has none. Bit i of `mask` set = voice i is muted (see VoiceMask). Resets to
+   * all on ("0") on track change.
    */
-  voices: { names: string[]; mask: number } | null
+  voices: { names: string[]; mask: VoiceMask } | null
   /**
    * Revision of `queue`: changes whenever the queue's order, membership or any item changes.
    * Lets a consumer of 'player:state' keep its copy of the queue (see PlayerStateEvent).

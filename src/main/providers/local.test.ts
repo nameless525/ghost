@@ -1,10 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { memoryDb } from '../catalog/testing'
 import { isNetError } from '../net/errors'
-import { albumKeyOf, LocalLibrary, LocalProvider, matchLocal, musicMetadataReader, rowFromTags, type LocalFileRow, type ScanProgress, type TagInfo } from './local'
+import { albumKeyOf, localAlbums, LocalLibrary, LocalProvider, matchLocal, musicMetadataReader, rowFromTags, type LocalFileRow, type LocalFs, type ScanProgress, type TagInfo } from './local'
 import type { CanonicalTrack } from './types'
 
 const dirs: string[] = []
@@ -61,6 +62,44 @@ describe('local: rows from tags', () => {
     writeFileSync(f, wav(2, { title: 'Dirtmouth', album: 'Hollow Knight', artist: 'Christopher Larkin' }))
     const tags = await musicMetadataReader(f)
     expect(tags).toMatchObject({ title: 'Dirtmouth', album: 'Hollow Knight', artist: 'Christopher Larkin', durationMs: 2000, lossless: true })
+  })
+})
+
+describe('local: albums', () => {
+  const M = join(tmpdir(), 'ghost-albums-test')
+  const at = (path: string, tags: TagInfo = {}) => rowFromTags(join(M, path), M, { mtimeMs: 1, size: 100 }, tags, 1)
+  const shape = (rows: LocalFileRow[]) => localAlbums(rows).map((a) => ({ ref: a.ref, title: a.title, tracks: a.tracks.map((t) => `${t.disc}·${t.number} ${t.title}`) }))
+
+  it('groups tagged files by album and album artist, discs together', () => {
+    const [a] = localAlbums([
+      at('FF7/CD2/01.flac', { title: 'Opening', album: 'Final Fantasy VII OST (Disc 2)', track: 1, codec: 'FLAC' }),
+      at('FF7/CD1/02.flac', { title: 'Bombing Mission', album: 'Final Fantasy VII OST (Disc 1)', albumArtist: 'Nobuo Uematsu', track: 2, composer: 'Nobuo Uematsu', codec: 'FLAC' }),
+      at('FF7/CD1/01.flac', { title: 'Prelude', album: 'Final Fantasy VII OST (Disc 1)', albumArtist: 'Nobuo Uematsu', track: 1, durationMs: 160_000, codec: 'FLAC' })
+    ])
+    expect(a).toMatchObject({ provider: 'local', ref: 'final fantasy vii ost|nobuo uematsu', title: 'Final Fantasy VII OST', kind: 'ost', composers: ['Nobuo Uematsu'], formats: ['flac'], totalSizes: { flac: 300 } })
+    expect(a.tracks.map((t) => `${t.disc}·${t.number} ${t.title}`)).toEqual(['1·1 Prelude', '1·2 Bombing Mission', '2·1 Opening'])
+    expect(a.tracks[0]).toMatchObject({ locator: join(M, 'FF7', 'CD1', '01.flac'), durationMs: 160_000, files: [{ format: 'flac', sizeBytes: 100 }] })
+  })
+
+  it('untagged files take their folder’s name; disc folders their parent’s; loose files belong to no album', () => {
+    expect(at('Chrono Trigger OST/CD2/01 Corridors of Time.mp3')).toMatchObject({ album: 'Chrono Trigger OST', disc_no: 2, track_no: 1, title: 'Corridors of Time' })
+    expect(shape([at('Chrono Trigger OST/CD1/01 Peaceful Days.mp3'), at('Chrono Trigger OST/CD2/01 Corridors of Time.mp3'), at('loose.mp3')])).toEqual([
+      { ref: 'chrono trigger ost|', title: 'Chrono Trigger OST', tracks: ['1·1 Peaceful Days', '2·1 Corridors of Time'] }
+    ])
+    // Files indexed before disc folders were understood: "CD1" as the album.
+    const legacy = { ...at('Chrono Trigger OST/CD1/02 Wind Scene.mp3'), album: 'CD1', disc_no: null }
+    expect(shape([legacy])).toEqual([{ ref: 'chrono trigger ost|', title: 'Chrono Trigger OST', tracks: ['1·2 Wind Scene'] }])
+  })
+
+  it('different album artists, and copies of one album in two folders, are separate albums', () => {
+    const hits = (artist: string) => at(`${artist}/1.mp3`, { title: 'One', album: 'Greatest Hits', albumArtist: artist, track: 1 })
+    expect(shape([hits('A'), hits('B')]).map((a) => a.ref)).toEqual(['greatest hits|a', 'greatest hits|b'])
+    const copy = (dir: string, ext: string) => at(`${dir}/01.${ext}`, { title: 'Enter Hallownest', album: 'Hollow Knight', track: 1 })
+    expect(shape([copy('HK FLAC', 'flac'), copy('HK MP3', 'mp3')])).toEqual([
+      { ref: `hollow knight||${join(M, 'HK FLAC')}`, title: 'Hollow Knight', tracks: ['1·1 Enter Hallownest'] },
+      { ref: `hollow knight||${join(M, 'HK MP3')}`, title: 'Hollow Knight', tracks: ['1·1 Enter Hallownest'] }
+    ])
+    expect(localAlbums([at('x/1.flac', { title: 'A', album: 'Hollow Knight Piano Collections' })])[0].kind).toBe('arrange')
   })
 })
 
@@ -152,6 +191,74 @@ describe('local: incremental scans', () => {
   })
 })
 
+describe('local: folders and files that can’t be read', () => {
+  /** The real filesystem, except for the paths given an error code (EACCES: no permission; ENOENT: gone). */
+  function failing(): LocalFs & { readdirFails: Record<string, string>; statFails: Record<string, string> } {
+    const err = (code: string) => Object.assign(new Error(`${code}: test`), { code })
+    const fs = {
+      readdirFails: {} as Record<string, string>,
+      statFails: {} as Record<string, string>,
+      readdir: async (dir: string, opts: { withFileTypes: true }) => {
+        if (fs.readdirFails[dir]) throw err(fs.readdirFails[dir])
+        return readdir(dir, opts)
+      },
+      stat: async (p: string) => {
+        if (fs.statFails[p]) throw err(fs.statFails[p])
+        return stat(p)
+      }
+    }
+    return fs
+  }
+  async function setup() {
+    const root = tmp()
+    const files = [join(root, 'A', '1.mp3'), join(root, 'A', '2.mp3'), join(root, 'B', '1.mp3'), join(root, 'B', '2.mp3')]
+    for (const f of files) {
+      mkdirSync(dirname(f), { recursive: true })
+      writeFileSync(f, 'x')
+    }
+    const fs = failing()
+    const lib = new LocalLibrary(memoryDb(), { readTags: async (p) => ({ title: basename(p) }), fs })
+    expect(await lib.scan([root])).toMatchObject({ files: 4, added: 4 })
+    return { root, files, fs, lib, paths: () => lib.rows().map((r) => r.path) }
+  }
+
+  it('an unreadable subfolder keeps its files while readable ones still update', async () => {
+    const { root, files, fs, lib, paths } = await setup()
+    fs.readdirFails[join(root, 'A')] = 'EACCES'
+    rmSync(files[2])
+    const later = new Date(Date.now() + 60_000)
+    utimesSync(files[3], later, later)
+    const r = await lib.scan([root])
+    expect(r).toMatchObject({ removed: 1, removedPaths: [files[2]], updated: 1, changedPaths: [files[3]], incomplete: [root], unavailable: [] })
+    expect(paths()).toEqual([files[0], files[1], files[3]])
+    // Readable again: nothing was lost, nothing to re-read.
+    delete fs.readdirFails[join(root, 'A')]
+    expect(await lib.scan([root])).toMatchObject({ files: 3, added: 0, updated: 0, removed: 0, incomplete: [] })
+  })
+
+  it('a subfolder that vanished while scanning is gone', async () => {
+    const { root, files, fs, lib, paths } = await setup()
+    fs.readdirFails[join(root, 'A')] = 'ENOENT'
+    expect(await lib.scan([root])).toMatchObject({ removed: 2, incomplete: [] })
+    expect(paths()).toEqual([files[2], files[3]])
+  })
+
+  it('a folder that can’t be listed is unavailable and keeps everything', async () => {
+    const { root, fs, lib } = await setup()
+    fs.readdirFails[root] = 'EACCES'
+    expect(await lib.scan([root])).toMatchObject({ files: 0, removed: 0, unavailable: [root], byRoot: [] })
+    expect(lib.count()).toBe(4)
+  })
+
+  it('a file that can’t be looked at is kept; one that vanished is gone', async () => {
+    const { root, files, fs, lib, paths } = await setup()
+    fs.statFails[files[0]] = 'EIO'
+    fs.statFails[files[1]] = 'ENOENT'
+    expect(await lib.scan([root])).toMatchObject({ removed: 1, removedPaths: [files[1]], incomplete: [root] })
+    expect(paths()).toEqual([files[0], files[2], files[3]])
+  })
+})
+
 describe('local: matching', () => {
   const row = (p: Partial<LocalFileRow>): LocalFileRow => ({
     path: '/m/x.flac',
@@ -191,6 +298,41 @@ describe('local: matching', () => {
   })
   it('different titles do not match', () => {
     expect(matchLocal([row({ title: 'Crossroads', title_key: 'crossroads' })], track('Dirtmouth', 115_000))).toEqual([])
+  })
+  it('another numbered variant on the same album is not this track', () => {
+    const ct = { albumTitle: 'Chrono Trigger', gameName: 'Chrono Trigger' }
+    const at = (title: string) => row({ path: `/m/${title}.flac`, title, title_key: title.toLowerCase(), album: 'Chrono Trigger', album_key: 'chrono trigger', duration_ms: 140_000 })
+    expect(matchLocal([at('Boss Battle 2')], track('Boss Battle 1', 140_000, ct))).toEqual([])
+    expect(matchLocal([at('Boss Battle 2'), at('Boss Battle 1')], track('Boss Battle 1', 140_000, ct)).map((m) => m.locator)).toEqual(['/m/Boss Battle 1.flac'])
+    expect(matchLocal([at('Stage 2')], track('Stage II', 140_000, ct))[0]).toMatchObject({ albumMatch: true, confidence: 1 })
+  })
+
+  it('hundreds of same-named tracks elsewhere never hide the album’s own', async () => {
+    const lib = new LocalLibrary(memoryDb())
+    const insert = lib.db.prepare(
+      `INSERT INTO local_files (path, root, mtime_ms, size, title, album, artist, album_artist, composer, track_no, disc_no, duration_ms, format, bitrate, lossless, title_key, album_key, scanned_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    const put = (path: string, tags: TagInfo) => {
+      const r = rowFromTags(path, '/music', { mtimeMs: 1, size: 1000 }, tags, 1)
+      insert.run(r.path, r.root, r.mtime_ms, r.size, r.title, r.album, r.artist, r.album_artist, r.composer, r.track_no, r.disc_no, r.duration_ms, r.format, r.bitrate, r.lossless, r.title_key, r.album_key, r.scanned_at)
+    }
+    for (let i = 0; i < 600; i++) put(`/music/a-other-${String(i).padStart(3, '0')}.flac`, { title: 'Main Theme', album: `Other ${i}`, durationMs: 120_000 })
+    put('/music/wanted.flac', { title: 'Main Theme', album: 'My Game', durationMs: 120_000 })
+    // One album bigger than the cap, its wanted track listed last.
+    for (let i = 0; i < 600; i++) put(`/music/big/${String(i).padStart(3, '0')}.flac`, { title: `Track ${i}`, album: 'Big Game', durationMs: 60_000 })
+    put('/music/big/zzz.flac', { title: 'Finale', album: 'Big Game', durationMs: 200_000 })
+    const p = new LocalProvider(lib)
+    const mine = { albumTitle: 'My Game', gameName: 'My Game' }
+    expect(lib.candidates({ title: 'Main Theme', durationMs: 120_000, ...mine }).map((r) => r.path)).toContain('/music/wanted.flac')
+    const [best] = await p.findTrack(track('Main Theme', 120_000, mine))
+    expect(best).toMatchObject({ locator: '/music/wanted.flac', confidence: 1 })
+    const [finale] = await p.findTrack(track('Finale', 200_000, { albumTitle: 'Big Game', gameName: 'Big Game' }))
+    expect(finale?.locator).toBe('/music/big/zzz.flac')
+    // Same-named tracks of other albums come closest length first (only a convincing length lets them match).
+    put('/music/zz-close.flac', { title: 'Main Theme', album: 'Elsewhere', durationMs: 90_500 })
+    const [near] = await p.findTrack(track('Main Theme', 90_000, { albumTitle: 'Not Here', gameName: 'Not Here' }))
+    expect(near).toMatchObject({ locator: '/music/zz-close.flac' })
   })
 
   it('provider: DB candidates → file sources; a vanished file is not_found', async () => {

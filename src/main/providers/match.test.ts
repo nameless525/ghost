@@ -72,6 +72,23 @@ describe('match: title similarity', () => {
   it('a one-letter typo in a long word still matches', () => {
     expect(titleSimilarity('Hallownest', 'Halownest', {})).toBe(1)
   })
+  it('another numbered variant is another track; track numbers and game names are not variants', () => {
+    expect(titleSimilarity('Boss Battle 1', 'Boss Battle 2', {})).toBe(0)
+    expect(titleSimilarity('Stage II', 'Stage 3', {})).toBe(0)
+    expect(titleSimilarity('Final Fantasy VII Main Theme', 'Final Fantasy VIII Main Theme', {})).toBe(0)
+    expect(titleSimilarity('Ending (Part 1)', 'Ending (Part 2) [2017]', {})).toBe(0)
+    // A leading track number is decoration, even when it happens to be the wanted variant's number.
+    expect(titleSimilarity('Boss Battle 1', '01 - Boss Battle 2', {})).toBe(0)
+    expect(titleSimilarity('Boss Battle 1', '02 - Boss Battle 1', {})).toBe(1)
+    expect(titleSimilarity('Dirtmouth', '02 - Dirtmouth', ctx)).toBe(1)
+    // Arabic and Roman numerals name the same variant.
+    expect(titleSimilarity('Stage II', 'Stage 2', {})).toBe(1)
+    expect(titleSimilarity('Boss Battle 2', 'Chrono Trigger OST 02 - Boss Battle II', { context: ['Chrono Trigger'] })).toBe(1)
+    // The number in a game's name doesn't name a variant, nor does a name's first word ("I" reads as 1).
+    expect(titleSimilarity('Boss Battle 1', 'Boss Battle 1 - Mega Man 2 OST', { context: ['Mega Man 2'] })).toBe(1)
+    expect(titleSimilarity('Boss Battle 1', 'Mega Man 2 - Boss Battle', { context: ['Mega Man 2'] })).toBeGreaterThan(0.6)
+    expect(titleSimilarity('I Will Be Here', 'I Will Be Here (Part 2)', {})).toBeGreaterThan(0.6)
+  })
   it('tokens', () => {
     expect(tokens('Hornet + Daughter of Hallownest & Co.')).toEqual(['hornet', 'daughter', 'of', 'hallownest', 'and', 'co'])
   })

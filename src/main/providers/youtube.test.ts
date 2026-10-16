@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isNetError } from '../net/errors'
+import { isNetError, NetError } from '../net/errors'
 import type { RunOptions, RunResult, YtDlp } from '../tools/ytdlp'
 import type { CanonicalTrack } from './types'
 import {
@@ -306,6 +306,84 @@ describe('youtube: provider over a fake yt-dlp', () => {
     t += FORCE_REUSE_MS
     await p.resolveStream('CbaFAQbCkdc#4188000-4307000', { force: true })
     expect(y.calls).toHaveLength(3)
+  })
+
+  describe('cancelling (AbortSignal)', () => {
+    /** A yt-dlp stand-in whose runs wait for `release()` (or their signal); records each run's ids and signal. */
+    function gated() {
+      let release!: () => void
+      const gate = new Promise<void>((r) => (release = r))
+      let started!: () => void
+      const running = new Promise<void>((r) => (started = r))
+      const runs: { ids: string[]; signal?: AbortSignal }[] = []
+      const y = {
+        async run(args: string[], opts?: RunOptions): Promise<RunResult> {
+          const ids = args.filter((a) => a.startsWith('https://www.youtube.com/watch?v=')).map((a) => a.slice(-11))
+          runs.push({ ids, signal: opts?.signal })
+          started()
+          await new Promise<void>((resolve, reject) => {
+            void gate.then(resolve)
+            opts?.signal?.addEventListener('abort', () => reject(new NetError('aborted', 'yt-dlp aborted')))
+          })
+          return { stdout: ids.map((id) => JSON.stringify({ ...hornet, id })).join('\n'), stderr: '', code: 0 }
+        }
+      } as unknown as YtDlp
+      return { p: new YouTubeProvider(async () => y, { now }), runs, running, release: () => release() }
+    }
+    const isAborted = (e: unknown) => isNetError(e, 'aborted')
+
+    it('an aborted call is refused before it is queued', async () => {
+      const { p, runs, release } = gated()
+      release()
+      await expect(p.resolveStream('aaaaaaaaaaa', { signal: AbortSignal.abort() })).rejects.toSatisfy(isAborted)
+      await p.resolveStream('bbbbbbbbbbb')
+      expect(runs.map((r) => r.ids)).toEqual([['bbbbbbbbbbb']])
+    })
+
+    it('a call cancelled while queued leaves the batch', async () => {
+      const { p, runs, release } = gated()
+      release()
+      const ctl = new AbortController()
+      const a = p.resolveStream('aaaaaaaaaaa', { signal: ctl.signal })
+      const b = p.resolveStream('bbbbbbbbbbb')
+      ctl.abort()
+      await expect(a).rejects.toSatisfy(isAborted)
+      expect((await b)[0].source).toMatchObject({ cacheKey: 'yt:bbbbbbbbbbb.m4a' })
+      expect(runs.map((r) => r.ids)).toEqual([['bbbbbbbbbbb']])
+      // Not memoised as failed: asked again, it is extracted.
+      await p.resolveStream('aaaaaaaaaaa')
+      expect(runs.map((r) => r.ids)).toEqual([['bbbbbbbbbbb'], ['aaaaaaaaaaa']])
+    })
+
+    it('a caller that gives up leaves the run to the others waiting on it', async () => {
+      const { p, runs, running, release } = gated()
+      const ctl = new AbortController()
+      const a = p.resolveStream('aaaaaaaaaaa#0-60000', { signal: ctl.signal })
+      const b = p.resolveStream('aaaaaaaaaaa#60000-120000')
+      const other = new AbortController()
+      const c = p.resolveStream('ccccccccccc', { signal: other.signal })
+      await running
+      ctl.abort()
+      other.abort()
+      await expect(a).rejects.toSatisfy(isAborted)
+      await expect(c).rejects.toSatisfy(isAborted)
+      expect(runs[0].signal!.aborted).toBe(false)
+      release()
+      expect((await b)[0].source).toMatchObject({ cacheKey: 'yt:aaaaaaaaaaa.m4a', clipStartMs: 60_000 })
+    })
+
+    it('once nobody waits for a running batch, its yt-dlp is stopped', async () => {
+      const { p, runs, running } = gated()
+      const ctl = new AbortController()
+      const a = p.resolveStream('aaaaaaaaaaa', { signal: ctl.signal })
+      const b = p.resolveStream('bbbbbbbbbbb', { signal: ctl.signal })
+      await running
+      expect(runs[0].ids).toEqual(['aaaaaaaaaaa', 'bbbbbbbbbbb'])
+      ctl.abort()
+      await expect(a).rejects.toSatisfy(isAborted)
+      await expect(b).rejects.toSatisfy(isAborted)
+      expect(runs[0].signal!.aborted).toBe(true)
+    })
   })
 
   it('findTrack runs one flat search and returns scored candidates', async () => {

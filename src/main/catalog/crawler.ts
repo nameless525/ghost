@@ -167,15 +167,23 @@ export class Crawler {
     })
   }
 
-  private estimate(jobId: number, sections: IndexSection[]): { done: number; total: number } {
+  /** This source's latest earlier job that still has its pages (its section lengths), or null. */
+  private previousJob(jobId: number): number | null {
+    return (
+      this.deps.repo.get<{ id: number | null }>(
+        `SELECT MAX(p.job_id) AS id FROM crawl_pages p JOIN crawl_jobs j ON j.id = p.job_id WHERE j.provider = ? AND p.job_id < ?`,
+        this.deps.provider.id,
+        jobId
+      )?.id ?? null
+    )
+  }
+
+  private estimate(jobId: number, prevJob: number | null, sections: IndexSection[]): { done: number; total: number } {
     const repo = this.deps.repo
     const known = new Map<string, number>()
     // Page counts from the previous job seed the estimate before page 1 of a section is fetched.
-    for (const r of repo.all<{ section: string; t: number }>(
-      `SELECT section, MAX(total_pages) AS t FROM crawl_pages WHERE job_id = (SELECT MAX(job_id) FROM crawl_pages WHERE job_id < ?) GROUP BY section`,
-      jobId
-    ))
-      known.set(r.section, r.t)
+    if (prevJob != null)
+      for (const r of repo.all<{ section: string; t: number }>(`SELECT section, MAX(total_pages) AS t FROM crawl_pages WHERE job_id = ? GROUP BY section`, prevJob)) known.set(r.section, r.t)
     for (const r of repo.all<{ section: string; t: number }>(`SELECT section, MAX(total_pages) AS t FROM crawl_pages WHERE job_id = ? GROUP BY section`, jobId)) known.set(r.section, r.t)
     let total = 0
     for (const s of sections) total += Math.min(known.get(s.key) ?? DEFAULT_PAGES_PER_SECTION, this.cap(s))
@@ -193,6 +201,15 @@ export class Crawler {
     const log = this.deps.log ?? (() => {})
     const pageRow = (section: string, page: number) =>
       repo.get<{ total_pages: number | null; fetched_at: number | null }>(`SELECT total_pages, fetched_at FROM crawl_pages WHERE job_id = ? AND section = ? AND page = ?`, job.id, section, page)
+    const prevJob = this.previousJob(job.id)
+    const sectionPages = (jobId: number, section: string) =>
+      repo.get<{ t: number | null }>(`SELECT MAX(total_pages) AS t FROM crawl_pages WHERE job_id = ? AND section = ?`, jobId, section)?.t ?? null
+    /**
+     * A section's length as far as known (a page that failed doesn't say): from this job's pages, or
+     * when page 1 failed, the previous job's (a second failure in a row then ends the section).
+     */
+    const knownPages = (section: string, page: number): number =>
+      sectionPages(job.id, section) ?? (page === 1 && prevJob != null ? sectionPages(prevJob, section) : null) ?? page
 
     const runStart = this.now()
     let fetched = 0
@@ -204,7 +221,7 @@ export class Crawler {
         const done = pageRow(section.key, page)
         let totalPages: number
         if (done?.fetched_at) {
-          totalPages = done.total_pages ?? 1
+          totalPages = done.total_pages ?? knownPages(section.key, page)
         } else {
           let res
           try {
@@ -236,8 +253,7 @@ export class Crawler {
               (e as Error).message.slice(0, 300)
             )
             failures = 0
-            const prev = repo.get<{ t: number | null }>(`SELECT MAX(total_pages) AS t FROM crawl_pages WHERE job_id = ? AND section = ?`, job.id, section.key)?.t
-            totalPages = prev ?? page
+            totalPages = knownPages(section.key, page)
             page++
             if (page > Math.min(totalPages, this.cap(section))) break
             continue
@@ -265,7 +281,7 @@ export class Crawler {
             this.now()
           )
           totalPages = res.totalPages
-          const est = this.estimate(job.id, sections)
+          const est = this.estimate(job.id, prevJob, sections)
           this.progress = Math.min(0.99, est.done / est.total)
           fetched++
           const elapsed = this.now() - runStart
@@ -290,8 +306,12 @@ export class Crawler {
       await repo.reclusterAll()
     }
     repo.run(`UPDATE crawl_jobs SET status = 'done', finished_at = ?, message = NULL WHERE id = ?`, this.now(), job.id)
-    // Keep crawl_pages of the last two jobs only (page-count estimates use the previous one).
-    repo.run(`DELETE FROM crawl_pages WHERE job_id < (SELECT MIN(id) FROM (SELECT id FROM crawl_jobs ORDER BY id DESC LIMIT 2))`)
+    // Keep the pages of unfinished jobs (another source's crawl, stopped part-way, resumes from them)
+    // and of each source's last finished job (its section lengths for the next crawl).
+    repo.run(
+      `DELETE FROM crawl_pages WHERE job_id IN (SELECT id FROM crawl_jobs j WHERE status = 'done'
+         AND id < (SELECT MAX(id) FROM crawl_jobs k WHERE k.provider = j.provider AND k.status = 'done'))`
+    )
     this.message = null
     this.progress = null
     log(`crawl job ${job.id} done: ${JSON.stringify(repo.counts())}`)

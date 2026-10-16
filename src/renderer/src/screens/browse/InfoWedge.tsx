@@ -50,6 +50,8 @@ interface View {
   stats: Stat[]
   source: { badge: SourceSummary | Album['formats'][number] | null; provider: string; extra: string | null; hint?: string } | null
   albums: Album[] | null
+  /** How many albums the group has (more than `albums` while a long list loads). */
+  albumsTotal: number | null
   albumId: string | null
 }
 
@@ -58,9 +60,12 @@ const uniq = <T,>(xs: T[]) => [...new Set(xs)]
 const msSum = (as: Album[]) => sumKnown(as.map((a) => a.totalMs || null))
 const trackSum = (as: Album[]) => sumKnown(as.map((a) => a.trackCount))
 const sumMs = (as: Album[]) => formatSum(msSum(as), formatTime)
-const sumTracks = (as: Album[]) => formatSum(trackSum(as), (n) => n.toLocaleString())
 /** A total with a "+": only some albums' track lists are known so far. */
 const partialHint = (what: string) => `At least ${what}: some albums’ track lists load when you open them.`
+/** A total with a "+": only the first albums of a long list are loaded so far. */
+const loadedHint = (what: string, n: number, of: number) => `At least ${what}: counted over the first ${n.toLocaleString()} of ${of.toLocaleString()} albums (the rest load as you scroll through them).`
+/** The group's albums aren't all loaded yet (a long list loads as the carousel scrolls through it). */
+const listPartial = (albums: Album[] | null, total: number | null) => !!albums && total != null && albums.length < total
 /** Why a value reads "–". */
 const UNKNOWN_TRACKS = 'Not known yet: an album’s track list loads when you open it.'
 
@@ -95,6 +100,7 @@ function yearSpan(years: (number | null)[]): string | null {
 function describe(sel: SelInfo, preferOrig: boolean, live: TrackAnalysisSummary | null): View {
   const g = sel.group
   const albums = sel.albums?.map(withDetail) ?? null
+  const albumsTotal = sel.albumsTotal
   const pick = (title: string, original: string | null) => {
     if (!original || original === title) return { title, alt: null }
     return preferOrig ? { title: original, alt: title } : { title, alt: original }
@@ -140,6 +146,7 @@ function describe(sel: SelInfo, preferOrig: boolean, live: TrackAnalysisSummary 
           }
         : { badge: null, provider: 'Found when you play it', extra: null },
       albums,
+      albumsTotal,
       albumId: t.albumId
     }
   }
@@ -170,30 +177,38 @@ function describe(sel: SelInfo, preferOrig: boolean, live: TrackAnalysisSummary 
       ],
       source: { badge: preferredFormat(al.formats), provider: providerName(al.provider), extra: otherFormats(al.formats) },
       albums,
+      albumsTotal,
       albumId: al.id
     }
   }
 
   // a group (game or bucket)
   if (!g) {
-    return { kicker: 'Loading', title: '', alt: null, line: null, facts: [], cover: null, hero: null, accent: null, stats: [], source: null, albums: null, albumId: null }
+    return { kicker: 'Loading', title: '', alt: null, line: null, facts: [], cover: null, hero: null, accent: null, stats: [], source: null, albums: null, albumsTotal: null, albumId: null }
   }
   const orig = g.kind === 'game' ? browseModel.originalTitle(g.gameId, g.title) : null
   const { title, alt } = pick(g.title, orig)
   const game = g.gameId ? browseModel.game(g.gameId) : null
-  const tracks = albums ? sumTracks(albums) : '–'
-  const sumHint = (sum: { total: number; partial: boolean } | null, what: (n: number) => string) => (!albums ? undefined : !sum ? UNKNOWN_TRACKS : sum.partial ? partialHint(what(sum.total)) : undefined)
-  const tracksHint = sumHint(albums && trackSum(albums), (n) => plural(n, 'track'))
-  const lengthHint = sumHint(albums && msSum(albums), formatTime)
+  // Over a long list's first albums only, the sums are "at least" (a "+"), never the group's total.
+  const partial = listPartial(albums, albumsTotal)
+  const atLeast = (sum: { total: number; partial: boolean } | null) => (sum && partial ? { ...sum, partial: true } : sum)
+  const trackTotal = albums && atLeast(trackSum(albums))
+  const lengthTotal = albums && atLeast(msSum(albums))
+  const tracks = albums ? formatSum(trackTotal, (n) => n.toLocaleString()) : '–'
+  const length = albums ? formatSum(lengthTotal, formatTime) : '–'
+  const sumHint = (sum: { total: number; partial: boolean } | null, what: (n: number) => string) =>
+    !albums ? undefined : !sum ? UNKNOWN_TRACKS : partial ? loadedHint(what(sum.total), albums.length, albumsTotal!) : sum.partial ? partialHint(what(sum.total)) : undefined
+  const tracksHint = sumHint(trackTotal, (n) => plural(n, 'track'))
+  const lengthHint = sumHint(lengthTotal, formatTime)
   const composers = albums ? uniq(albums.flatMap((a) => a.composers)).slice(0, 3) : []
   const years = albums && yearSpan(albums.map((a) => a.year))
   const stats: Stat[] =
     g.kind === 'game'
       ? [
-          { label: 'Albums', value: <span className="tnum">{albums?.length ?? g.albumCount}</span> },
+          { label: 'Albums', value: <span className="tnum">{albumsTotal ?? albums?.length ?? g.albumCount}</span> },
           { label: 'Tracks', value: <span className="tnum">{tracks}</span>, hint: tracksHint },
-          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span>, hint: lengthHint },
-          { label: 'Released', value: <span className="tnum">{years ?? g.year ?? '–'}</span>, hint: years ? 'When its soundtrack albums came out' : undefined }
+          { label: 'Length', value: <span className="tnum">{length}</span>, hint: lengthHint },
+          { label: 'Released', value: <span className="tnum">{years ?? g.year ?? '–'}</span>, hint: years ? (partial ? 'When the albums loaded so far came out' : 'When its soundtrack albums came out') : undefined }
         ]
       : g.kind === 'album'
         ? // its track list is still loading (then it shows as an album)
@@ -205,9 +220,13 @@ function describe(sel: SelInfo, preferOrig: boolean, live: TrackAnalysisSummary 
           ]
         : [
             { label: 'Albums', value: <span className="tnum">{g.albumCount}</span> },
-            { label: 'Games', value: <span className="tnum">{albums ? uniq(albums.map((a) => a.gameName ?? a.title)).length : '–'}</span> },
+            {
+              label: 'Games',
+              value: <span className="tnum">{albums ? `${uniq(albums.map((a) => a.gameName ?? a.title)).length}${partial ? '+' : ''}` : '–'}</span>,
+              hint: partial ? `Among the first ${albums!.length.toLocaleString()} of ${albumsTotal!.toLocaleString()} albums (the rest load as you scroll through them)` : undefined
+            },
             { label: 'Tracks', value: <span className="tnum">{tracks}</span>, hint: tracksHint },
-            { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span>, hint: lengthHint }
+            { label: 'Length', value: <span className="tnum">{length}</span>, hint: lengthHint }
           ]
   const providers = albums ? uniq(albums.map((a) => a.provider)) : []
   const formats = albums ? uniq(albums.flatMap((a) => a.formats)) : []
@@ -223,6 +242,7 @@ function describe(sel: SelInfo, preferOrig: boolean, live: TrackAnalysisSummary 
     stats,
     source: providers.length ? { badge: preferredFormat(formats), provider: providers.map(providerName).join(', '), extra: otherFormats(formats) } : null,
     albums,
+    albumsTotal,
     albumId: null
   }
 }
@@ -395,8 +415,8 @@ export function InfoWedge() {
             {v.albums && v.albums.length > 0 && (
               <div className="bw__albums">
                 <div className="bw__albums-head">
-                  {plural(v.albums.length, 'album')}
-                  {v.albums.some((a) => a.totalMs) && <> · {sumMs(v.albums)}</>}
+                  {plural(v.albumsTotal ?? v.albums.length, 'album')}
+                  {v.albums.some((a) => a.totalMs) && <> · {listPartial(v.albums, v.albumsTotal) ? formatSum({ total: msSum(v.albums)!.total, partial: true }, formatTime) : sumMs(v.albums)}</>}
                 </div>
                 {v.albums.slice(0, 5).map((a) => (
                   <div key={a.id} className={cx('bw__album', a.id === v.albumId && 'bw__album--on')}>
@@ -407,7 +427,7 @@ export function InfoWedge() {
                     <span className="bw__album-meta tnum">{albumMeta(a)}</span>
                   </div>
                 ))}
-                {v.albums.length > 5 && <div className="bw__albums-more">+{v.albums.length - 5} more</div>}
+                {(v.albumsTotal ?? v.albums.length) > 5 && <div className="bw__albums-more">+{((v.albumsTotal ?? v.albums.length) - 5).toLocaleString()} more</div>}
               </div>
             )}
           </>

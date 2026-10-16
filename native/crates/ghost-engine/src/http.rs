@@ -1,7 +1,43 @@
 //! Blocking HTTP client (ureq + rustls) shared by the stream cache, downloads and cover fetches.
+//!
+//! Every response is given up once nothing arrives for `IDLE_TIMEOUT`: ureq's timeouts are
+//! deadlines for a whole phase, which a long body can't have. A thread can also make its
+//! requests give way at once to something else (see [`interruptible`]). Both are checked on the
+//! socket (below TLS) while it waits for bytes, every `POLL`.
 
-use std::io::Read;
-use std::time::Duration;
+use std::cell::RefCell;
+use std::io::{self, Read, Write};
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
+
+use ureq::unversioned::resolver::DefaultResolver;
+use ureq::unversioned::transport::time::Duration as UreqDuration;
+use ureq::unversioned::transport::{Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout, RustlsConnector, Transport};
+
+/// A response that sends nothing for this long is dropped. Every byte restarts it, so a slow
+/// download that keeps coming is fine.
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+/// How often a request waiting for bytes checks its idle time and interrupt.
+const POLL: Duration = Duration::from_millis(100);
+
+thread_local! {
+    /// Checked by this thread's requests while they wait for bytes (see [`interruptible`]).
+    static INTERRUPT: RefCell<Option<Box<dyn Fn() -> bool>>> = const { RefCell::new(None) };
+}
+
+/// Run `f`; a request it makes on this thread that is waiting for bytes fails as soon as
+/// `interrupted` returns true (within `POLL`), dropping its connection.
+pub fn interruptible<R>(interrupted: impl Fn() -> bool + 'static, f: impl FnOnce() -> R) -> R {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            INTERRUPT.with(|i| *i.borrow_mut() = None);
+        }
+    }
+    INTERRUPT.with(|i| *i.borrow_mut() = Some(Box::new(interrupted)));
+    let _reset = Reset;
+    f()
+}
 
 pub struct Http {
     agent: ureq::Agent,
@@ -28,6 +64,10 @@ impl std::fmt::Display for HttpError {
 
 impl Http {
     pub fn new(user_agent: &str) -> Self {
+        Self::with_idle_timeout(user_agent, IDLE_TIMEOUT)
+    }
+
+    pub(crate) fn with_idle_timeout(user_agent: &str, idle: Duration) -> Self {
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(10)))
@@ -39,7 +79,9 @@ impl Http {
             .max_idle_age(Duration::from_secs(90))
             .max_idle_connections_per_host(4)
             .build();
-        Self { agent: ureq::Agent::new_with_config(config), user_agent: user_agent.to_string() }
+        // ureq's default chain (HTTP proxy, TCP, TLS), its sockets watched.
+        let connector = ().chain(ConnectProxyConnector::default()).chain(WatchedTcp(idle)).chain(RustlsConnector::default());
+        Self { agent: ureq::Agent::with_parts(config, connector, DefaultResolver::default()), user_agent: user_agent.to_string() }
     }
 
     /// GET with optional byte range (`[start, end_inclusive]`, end None = open-ended) and a body
@@ -92,6 +134,124 @@ impl Http {
             .read_to_end(&mut out)
             .map_err(|e| HttpError::Transient(format!("read: {e}")))?;
         Ok(out)
+    }
+}
+
+/// Opens TCP connections like ureq's own connector, as [`Watched`] sockets; `.0` is the idle limit.
+#[derive(Debug)]
+struct WatchedTcp(Duration);
+
+impl<In: Transport> Connector<In> for WatchedTcp {
+    type Out = Either<In, Watched>;
+
+    fn connect(&self, details: &ConnectionDetails, chained: Option<In>) -> Result<Option<Self::Out>, ureq::Error> {
+        if chained.is_some() {
+            // Through an HTTP proxy, whose own socket was opened (and is watched) here too.
+            return Ok(chained.map(Either::A));
+        }
+        let stream = connect(details)?;
+        let buffers = LazyBuffers::new(details.config.input_buffer_size(), details.config.output_buffer_size());
+        Ok(Some(Either::B(Watched { stream, buffers, idle: self.0 })))
+    }
+}
+
+/// Connect to the first resolved address that answers, each getting half the time left (the
+/// last all of it), as ureq's own connector shares it.
+fn connect(details: &ConnectionDetails) -> Result<TcpStream, ureq::Error> {
+    let budget = details.timeout.not_zero().map(|d| *d);
+    let started = Instant::now();
+    let addrs = &details.addrs[..];
+    let mut last = None;
+    for (i, addr) in addrs.iter().enumerate() {
+        let attempt = match budget.map(|b| b.saturating_sub(started.elapsed())) {
+            Some(left) if left.is_zero() => break,
+            Some(left) => TcpStream::connect_timeout(addr, if i + 1 == addrs.len() { left } else { (left / 2).max(Duration::from_millis(10)) }),
+            None => TcpStream::connect(addr),
+        };
+        match attempt {
+            Ok(s) => {
+                s.set_nodelay(details.config.no_delay())?;
+                return Ok(s);
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(match last {
+        Some(e) if !matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => e.into(),
+        _ => ureq::Error::Timeout(details.timeout.reason),
+    })
+}
+
+/// A socket whose waits for input end after `idle` without bytes, or when the thread's
+/// interrupt says so; ureq's own deadline for the phase still applies. The waits are `peek`s,
+/// so one that times out takes nothing from the socket (after a read times out, Windows leaves a
+/// socket's state undefined, bytes possibly lost).
+struct Watched {
+    stream: TcpStream,
+    buffers: LazyBuffers,
+    idle: Duration,
+}
+
+impl std::fmt::Debug for Watched {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Watched").field("peer", &self.stream.peer_addr().ok()).finish()
+    }
+}
+
+/// A wait that ended without bytes (or was interrupted by a signal): try again.
+fn no_bytes_yet(e: &io::Error) -> bool {
+    matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted)
+}
+
+impl Transport for Watched {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        &mut self.buffers
+    }
+
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        self.stream.set_write_timeout(timeout.not_zero().map(|d| *d))?;
+        match self.stream.write_all(&self.buffers.output()[..amount]) {
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => Err(ureq::Error::Timeout(timeout.reason)),
+            r => Ok(r?),
+        }
+    }
+
+    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        let started = Instant::now();
+        loop {
+            let left = match timeout.after {
+                UreqDuration::Exact(d) => d.saturating_sub(started.elapsed()),
+                UreqDuration::NotHappening => POLL,
+            };
+            if left.is_zero() {
+                return Err(ureq::Error::Timeout(timeout.reason));
+            }
+            self.stream.set_read_timeout(Some(left.min(POLL)))?;
+            match self.stream.peek(&mut [0u8; 1]) {
+                Ok(_) => break,
+                Err(e) if no_bytes_yet(&e) => {}
+                Err(e) => return Err(e.into()),
+            }
+            if INTERRUPT.with(|i| i.borrow().as_ref().is_some_and(|f| f())) {
+                return Err(io::Error::other("request no longer wanted").into());
+            }
+            if started.elapsed() >= self.idle {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, format!("no data for {} s", self.idle.as_secs_f32())).into());
+            }
+        }
+        // Bytes are there, or the end: this read doesn't wait.
+        let n = self.stream.read(self.buffers.input_append_buf())?;
+        self.buffers.input_appended(n);
+        Ok(n > 0)
+    }
+
+    fn is_open(&mut self) -> bool {
+        // A pooled connection with bytes waiting (or closed) is done with.
+        if self.stream.set_nonblocking(true).is_err() {
+            return false;
+        }
+        let idle = matches!(self.stream.peek(&mut [0u8; 1]), Err(e) if e.kind() == io::ErrorKind::WouldBlock);
+        self.stream.set_nonblocking(false).is_ok() && idle
     }
 }
 

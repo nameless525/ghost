@@ -42,6 +42,9 @@ impl AudioSource for ClipStage {
     fn channels(&self) -> usize {
         self.inner.channels()
     }
+    fn channel_mask(&self) -> Option<u32> {
+        self.inner.channel_mask()
+    }
 
     fn read(&mut self, out: &mut [f32]) -> Result<usize, SourceError> {
         if self.ended {

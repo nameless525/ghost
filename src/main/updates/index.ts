@@ -10,7 +10,7 @@ import type { GhostNotification, Settings, UpdateState } from '../../shared/type
 import { GHOST_VERSION } from '../../shared/version'
 import { GHOST_USER_AGENT } from '../net/http'
 import { RELEASES_API } from './feed'
-import { detectInstall, launchInstall, prepareInstall } from './install'
+import { detectInstall, launchInstall, prepareInstall, verifyPrepared } from './install'
 import { Updater } from './updater'
 
 export { Updater } from './updater'
@@ -47,6 +47,7 @@ export function createUpdater(o: { dir: string; getSettings: () => Settings; exi
     onState: o.onState,
     notify: o.notify,
     prepare: (file, version) => prepareInstall(target, file, version, o.dir),
+    verify: (prepared, version) => verifyPrepared(target, prepared, version),
     launch: (prepared, reopen) => launchInstall(target, prepared, { pid: process.pid, reopen, stagingDir: o.dir }),
     quit: () => app.quit(),
     readChangelog: () => readFile(join(app.getAppPath(), 'CHANGELOG.md'), 'utf8'),

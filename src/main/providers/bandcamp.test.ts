@@ -164,6 +164,13 @@ describe('bandcamp: provider', () => {
     expect(s.expiresAt).toBe(1792050430000)
   })
 
+  it('findTrack offers nothing for another cut of the piece (under half or over twice its length)', async () => {
+    const http = fakeHttp({ [searchUrl('Hollow Knight')]: fx('search-hollow-knight.html'), [ALBUM]: fx('album-hollow-knight.html') })
+    const p = new BandcampProvider(http, { now })
+    expect(await p.findTrack({ ...t, durationMs: 40_000 })).toEqual([])
+    expect(await p.findTrack({ ...t, durationMs: 400_000 })).toEqual([])
+  })
+
   it('a challenged search is `blocked` and backs off without hammering', async () => {
     const http = fakeHttp({ [searchUrl('Hollow Knight')]: fx('challenge.html'), [searchUrl('hollow knight')]: fx('challenge.html') })
     const p = new BandcampProvider(http, { now })

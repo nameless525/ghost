@@ -22,8 +22,10 @@ import type {
   TrackAnalysis,
   TrackAnalysisSummary,
   TrackView,
-  SourceMiss
+  SourceMiss,
+  VoiceMask
 } from '../../shared/types'
+import { MAX_VOICES, VOICES_ALL_ON, allVoices, formatVoiceMask, parseVoiceMask } from '../../shared/voices'
 import type { CatalogService, ResolvedSource } from '../catalog'
 import type { EngineBridge, EngineEvent, EnginePlaybackState, EngineSource, EngineTrack, EngineTrackInfo, OfflineAnalysisResult } from '../engine/types'
 import { sliderToDb } from '../engine/types'
@@ -140,6 +142,10 @@ interface Preview extends Attempt {
 
 interface PlayAccount {
   trackId: ID
+  /**
+   * This play's track length (the decoder's once it reports one), for its history threshold: not
+   * the player's current duration, which already belongs to the next track when a skip ends this one.
+   */
   durationMs: number | null
   accumMs: number
   since: number | null
@@ -240,6 +246,14 @@ export class Player implements PlayerAPI {
   private pvSeq = 0
   /** The queue item a preview paused (P while music plays): it resumes when the preview ends. */
   private hold: { seq: number } | null = null
+  /** Seq of a preview() call still fetching its track (not yet `pv`), or 0: it inherits the hold. */
+  private pvPending = 0
+  /**
+   * The user's latest request for a new queue (playTracks / playAlbum / playPlaylist) while its
+   * tracks are looked up. A newer request replaces it (the older one is dropped when it resolves);
+   * play / pause meanwhile decide whether it starts playing or paused.
+   */
+  private request: { autoplay: boolean } | null = null
   // What the current track / the preview waits on (PlayerState.loading / previewLoading).
   private readonly typical = new Typical()
   private curWait: WaitTracker | null = null
@@ -267,7 +281,7 @@ export class Player implements PlayerAPI {
   /** Chip voice names per engine id, from trackInfo (absent = the source has no mutable voices). */
   private infoVoices = new BoundedMap<string, string[]>(64)
   /** The engine's (global) voice mask as we last set it. */
-  private engineMask = 0
+  private engineMask = 0n
   private account: PlayAccount | null = null
   private lastNotice = new Map<string, number>()
 
@@ -504,7 +518,7 @@ export class Player implements PlayerAPI {
     this.finishPlay()
     this.account = {
       trackId: item.track.id,
-      durationMs: item.track.durationMs,
+      durationMs: this.infoDuration.get(item.uid) ?? item.track.durationMs,
       accumMs: 0,
       since: this.s.status === 'playing' ? this.now() : null,
       rowId: null
@@ -519,7 +533,7 @@ export class Player implements PlayerAPI {
     const a = this.account
     if (!a || a.rowId !== null) return
     const played = this.playedMs(a)
-    const dur = (this.cur?.trackId === a.trackId ? this.s.durationMs : null) ?? a.durationMs
+    const dur = a.durationMs
     const threshold = dur && dur > 0 ? Math.min(HISTORY_MIN_MS, dur * 0.5) : HISTORY_MIN_MS
     if (played >= threshold) {
       try {
@@ -745,7 +759,7 @@ export class Player implements PlayerAPI {
     this.s.error = null
     // A new track starts with every voice audible (the engine's mask is global).
     const names = this.infoVoices.get(item.uid)
-    this.s.voices = names ? { names, mask: 0 } : null
+    this.s.voices = names ? { names, mask: VOICES_ALL_ON } : null
     this.resetVoiceMask()
   }
 
@@ -761,9 +775,9 @@ export class Player implements PlayerAPI {
   }
 
   private resetVoiceMask(): void {
-    if (this.engineMask === 0) return
-    this.engineMask = 0
-    this.safe(() => this.engine.setVoiceMask?.(0))
+    if (this.engineMask === 0n) return
+    this.engineMask = 0n
+    this.safe(() => this.engine.setVoiceMask?.(0n))
   }
 
   private loadIndex(i: number, autoplay: boolean, startMs = 0): Promise<void> {
@@ -775,9 +789,19 @@ export class Player implements PlayerAPI {
     if (!item) return this.stopAtEnd()
     const seq = ++this.loadSeq
     const wasAudible = !!this.cur?.loaded && (this.s.status === 'playing' || this.s.status === 'buffering')
+    // What replaces an item a preview paused (a queue edit, a failed source) waits for it too.
+    if (this.held()) {
+      this.hold = { seq }
+      autoplay = false
+    }
     // Reuse the preloaded next's sources when the user skips to it.
     const reuse = this.pre && this.pre.id === item.uid && this.pre.sources.length ? this.pre : null
-    this.clearPreload()
+    // From its start, setCurrent promotes the engine's armed `next` (already decoding): cancelling
+    // it first would throw that audio away and open the source again.
+    if (reuse?.armed && startMs <= 0) this.dropPreload()
+    else this.clearPreload()
+    // The old track's play ends here, against its own length (before the new one's is installed).
+    this.finishPlay()
     this.s.queueIndex = i
     this.setCurrentItem(item)
     this.s.positionMs = Math.max(0, startMs)
@@ -857,7 +881,7 @@ export class Player implements PlayerAPI {
     const reason = cur.lastError ? `Last error: ${cur.lastError}` : 'No playable source found.'
     const ni = this.naturalNext()
     const nextItem = ni === null ? null : this.item(ni)
-    const giveUp = !nextItem || this.failStreak.has(nextItem.uid) || this.failStreak.size >= MAX_FAIL_STREAK || !cur.autoplay
+    const giveUp = !nextItem || this.failStreak.has(nextItem.uid) || this.failStreak.size >= MAX_FAIL_STREAK || !(cur.autoplay || this.held())
     if (giveUp) {
       const streak = this.failStreak.size
       this.failStreak.clear()
@@ -912,6 +936,14 @@ export class Player implements PlayerAPI {
     this.preSeq++
     if (this.pre?.armed) this.safe(() => this.engineSetNext(null))
     this.pre = null
+  }
+
+  /** Forget the preload but leave the engine's `next` armed: a setCurrent is about to take it over. */
+  private dropPreload(): void {
+    this.preSeq++
+    this.pre = null
+    // Overtaken by that setCurrent: a late 'advanced' into it is stale.
+    this.armedNext = null
   }
 
   /**
@@ -1060,21 +1092,25 @@ export class Player implements PlayerAPI {
 
   private onTrackInfo(info: EngineTrackInfo): void {
     const { id, durationMs } = info
+    // No length for a track with loop points: it loops endlessly now (a loop setting changed mid-track)
+    const endless = durationMs == null && info.loopEndMs != null
     if (durationMs && durationMs > 0) this.infoDuration.set(id, durationMs)
-    const count = Math.max(0, Math.floor(info.voiceCount ?? 0))
+    else if (endless) this.infoDuration.delete(id)
+    const count = Math.min(MAX_VOICES, Math.max(0, Math.floor(info.voiceCount ?? 0)))
     const names = count > 0 ? Array.from({ length: count }, (_, i) => info.voiceNames?.[i]?.trim() || `Voice ${i + 1}`) : null
     if (names) this.infoVoices.set(id, names)
     else this.infoVoices.delete(id)
     if (this.cur?.id !== id) return
-    if (durationMs && durationMs > 0) {
-      this.s.durationMs = durationMs
-      this.failStreak.clear()
+    // (Metadata isn't playback: the failure streak only resets once audio plays, see onState.)
+    if ((durationMs && durationMs > 0) || endless) {
+      this.s.durationMs = endless ? null : durationMs
+      if (this.account?.trackId === this.cur.trackId) this.account.durationMs = endless ? null : durationMs
     }
     const prev = this.s.voices
     if (!names) this.s.voices = null
-    else if (!prev || prev.names.length !== names.length || prev.names.some((n, i) => n !== names[i])) this.s.voices = { names, mask: 0 }
+    else if (!prev || prev.names.length !== names.length || prev.names.some((n, i) => n !== names[i])) this.s.voices = { names, mask: VOICES_ALL_ON }
     // A fallback source without (or with different) voices must not inherit a stale mask.
-    if (!this.s.voices || this.s.voices.mask === 0) this.resetVoiceMask()
+    if (!this.s.voices || this.s.voices.mask === VOICES_ALL_ON) this.resetVoiceMask()
     this.changed()
   }
 
@@ -1259,7 +1295,10 @@ export class Player implements PlayerAPI {
       try {
         const p = this.engine.position()
         // Self-heal if a state event was missed.
-        if (p.id === cur.id && p.playing && this.s.status === 'loading') this.setStatus('playing')
+        if (p.id === cur.id && p.playing && this.s.status === 'loading') {
+          this.failStreak.clear()
+          this.setStatus('playing')
+        }
       } catch {
         /* ignore */
       }
@@ -1410,7 +1449,7 @@ export class Player implements PlayerAPI {
     return fisherYates(items, this.rng)
   }
 
-  private setQueue(tracks: TrackView[], start: number, context: PlayContext | null): Promise<void> {
+  private setQueue(tracks: TrackView[], start: number, context: PlayContext | null, autoplay = true): Promise<void> {
     this.mutations++
     if (!tracks.length) {
       this.notify('info', 'Nothing to play', 'None of those tracks are available.')
@@ -1430,7 +1469,7 @@ export class Player implements PlayerAPI {
     this.s.context = context
     this.failStreak.clear()
     this.endPreviewForMain()
-    const loading = this.loadIndex(startIdx, true, 0)
+    const loading = this.loadIndex(startIdx, autoplay, 0)
     // After the first track's own resolve went out (it stays ahead: the warm-up is background priority).
     this.warmUpcoming(startIdx)
     return loading
@@ -1463,29 +1502,46 @@ export class Player implements PlayerAPI {
     return this.snapshot()
   }
 
-  async playTracks(trackIds: ID[], startIndex = 0, context?: PlayContext): Promise<void> {
+  /**
+   * A user request for a new queue: `lookup` finds its tracks, then `queue` says what to play. The
+   * lookups take their time (an album's track list may come from the network), so they resolve in
+   * any order: only the latest request plays (see `request`).
+   */
+  private async requestQueue<T>(lookup: () => Promise<T>, queue: (found: T) => [TrackView[], number, PlayContext | null]): Promise<void> {
     this.mark('play:request')
+    const req = (this.request = { autoplay: true })
+    try {
+      const found = await lookup()
+      if (req !== this.request) return
+      const [tracks, start, context] = queue(found)
+      void this.setQueue(tracks, start, context, req.autoplay)
+    } finally {
+      if (this.request === req) this.request = null
+    }
+  }
+
+  async playTracks(trackIds: ID[], startIndex = 0, context?: PlayContext): Promise<void> {
     const ids = (trackIds ?? []).filter((x) => typeof x === 'string')
-    const tracks = await this.library.fetchTracks(ids)
-    const found = new Set(tracks.map((t) => t.id))
-    const start = ids.slice(0, Math.max(0, startIndex)).filter((id) => found.has(id)).length
-    void this.setQueue(tracks, start, context ?? null)
+    return this.requestQueue(
+      () => this.library.fetchTracks(ids),
+      (tracks) => {
+        const found = new Set(tracks.map((t) => t.id))
+        return [tracks, ids.slice(0, Math.max(0, startIndex)).filter((id) => found.has(id)).length, context ?? null]
+      }
+    )
   }
 
   async playAlbum(albumId: ID, startIndex = 0): Promise<void> {
-    this.mark('play:request')
-    const detail = await this.catalog.album(albumId)
-    const tracks = detail.tracks.map((t) => this.library.decorateOne(t))
-    void this.setQueue(tracks, startIndex, { kind: 'album', id: albumId, title: detail.album.title })
+    return this.requestQueue(
+      () => this.catalog.album(albumId),
+      (detail) => [detail.tracks.map((t) => this.library.decorateOne(t)), startIndex, { kind: 'album', id: albumId, title: detail.album.title }]
+    )
   }
 
   async playPlaylist(playlistId: ID, startIndex = 0): Promise<void> {
-    this.mark('play:request')
-    const detail = await this.deps.playlists.get(playlistId)
-    void this.setQueue(
-      detail.items.map((i) => i.track),
-      startIndex,
-      { kind: 'playlist', id: playlistId, title: detail.playlist.name }
+    return this.requestQueue(
+      () => this.deps.playlists.get(playlistId),
+      (detail) => [detail.items.map((i) => i.track), startIndex, { kind: 'playlist', id: playlistId, title: detail.playlist.name }]
     )
   }
 
@@ -1496,14 +1552,23 @@ export class Player implements PlayerAPI {
   }
 
   async play(): Promise<void> {
+    // A new queue still being looked up starts playing.
+    if (this.request) this.request.autoplay = true
     if (!this.s.queue.length) return
     this.endPreviewForMain()
+    this.resume()
+  }
+
+  /** Make the current item audible, loading it if need be. */
+  private resume(): void {
     if (this.s.queueIndex < 0) {
       void this.loadIndex(0, true, 0)
       return
     }
     const cur = this.cur
     if (cur?.loaded) {
+      // The transport intent: a source failing from here on falls back to another one playing.
+      cur.autoplay = true
       this.safe(() => this.engine.play())
       this.setStatus('playing')
       this.changed()
@@ -1522,8 +1587,10 @@ export class Player implements PlayerAPI {
   }
 
   async pause(): Promise<void> {
-    // Paused on purpose: a running preview no longer hands playback back when it ends.
+    // Paused on purpose: a running preview no longer hands playback back when it ends, and a new
+    // queue still being looked up starts paused.
     this.hold = null
+    if (this.request) this.request.autoplay = false
     this.pauseMain()
     this.scheduleSave()
   }
@@ -1531,6 +1598,7 @@ export class Player implements PlayerAPI {
   private pauseMain(): void {
     const cur = this.cur
     if (cur?.loaded) {
+      cur.autoplay = false
       this.safe(() => this.engine.pause())
       this.refreshPosition()
       this.setStatus('paused')
@@ -1713,7 +1781,8 @@ export class Player implements PlayerAPI {
       this.scheduleSave()
       return
     }
-    const wasActive = this.s.status === 'playing' || this.s.status === 'buffering' || (this.s.status === 'loading' && !!this.cur?.autoplay)
+    // A queue a preview paused still plays: its replacement loads held (see doLoad).
+    const wasActive = this.held() || this.s.status === 'playing' || this.s.status === 'buffering' || (this.s.status === 'loading' && !!this.cur?.autoplay)
     if (survivorsBefore >= queue.length) {
       this.s.queueIndex = queue.length - 1
       this.setCurrentItem(queue[this.s.queueIndex])
@@ -1856,7 +1925,15 @@ export class Player implements PlayerAPI {
   /** Resolves true once the preview is playing, false if it was superseded or had no playable source. */
   async preview(trackId: ID, startMs?: number): Promise<boolean> {
     const seq = ++this.pvSeq
-    const [track] = await this.library.fetchTracks([trackId])
+    this.pvPending = seq
+    let track: TrackView | undefined
+    try {
+      ;[track] = await this.library.fetchTracks([trackId])
+    } finally {
+      if (this.pvPending === seq) this.pvPending = 0
+      // Nothing to play after all: give back the hold an older preview that ended meanwhile left it.
+      if (!track && seq === this.pvSeq && !this.pv) this.releaseHold()
+    }
     if (!track || seq !== this.pvSeq) return false
     const pv: Preview = {
       id: `preview:${seq}:${trackId}`,
@@ -1937,12 +2014,20 @@ export class Player implements PlayerAPI {
     this.pauseMain()
   }
 
-  /** The preview is over: resume what it paused, unless the user has since taken over. */
+  /** A preview paused the current item (not the user): it plays again when the preview ends. */
+  private held(): boolean {
+    return !!this.hold && !!this.cur && this.hold.seq === this.cur.seq
+  }
+
+  /**
+   * The preview is over: resume what it paused, unless the user has since taken over. Not play():
+   * nothing the user did, so a newer preview still on its way isn't cancelled.
+   */
   private releaseHold(): void {
     const h = this.hold
     this.hold = null
     if (!h || this.disposed || this.cur?.seq !== h.seq || this.s.status === 'playing') return
-    void this.play()
+    this.resume()
   }
 
   /**
@@ -1968,7 +2053,9 @@ export class Player implements PlayerAPI {
     this.s.preview = null
     if (had) this.changed()
     this.syncWaitPoll()
-    this.releaseHold()
+    // A newer preview still fetching its track takes the hold over: it plays in a moment.
+    const successor = this.pvPending !== 0 && this.pvPending === this.pvSeq
+    if (!successor) this.releaseHold()
   }
 
   private onPreviewEnded(id: string | undefined): void {
@@ -1991,14 +2078,14 @@ export class Player implements PlayerAPI {
     this.safe(() => this.engine.setOverlayFilter(!!active))
   }
 
-  async setVoiceMask(mask: number): Promise<void> {
+  async setVoiceMask(mask: VoiceMask): Promise<void> {
     const v = this.s.voices
     if (!v || !this.item()) return
-    const n = Math.min(v.names.length, 31)
-    const all = n >= 31 ? 0x7fffffff : (1 << n) - 1
-    const m = Number.isFinite(mask) && mask > 0 ? Math.floor(mask) & all : 0
-    if (m === v.mask && m === this.engineMask) return
-    this.s.voices = { names: v.names, mask: m }
+    // Bits past the last voice are dropped; anything that isn't a mask unmutes all.
+    const m = (parseVoiceMask(mask) ?? 0n) & allVoices(v.names.length)
+    const hex = formatVoiceMask(m)
+    if (hex === v.mask && m === this.engineMask) return
+    this.s.voices = { names: v.names, mask: hex }
     this.engineMask = m
     this.safe(() => this.engine.setVoiceMask?.(m))
     this.changed()

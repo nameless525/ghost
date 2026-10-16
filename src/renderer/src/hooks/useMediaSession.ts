@@ -38,6 +38,45 @@ function silentWavUrl(seconds = 8, rate = 8000): string {
 
 const isPlayingish = (s: PlayerState) => !!s.current && (s.status === 'playing' || s.status === 'loading' || s.status === 'buffering')
 
+/**
+ * The OS seek bar (navigator.mediaSession position state) for each player state. Sent on track /
+ * status / duration changes and seeks only (the OS extrapolates in between), not on every 1 Hz
+ * heartbeat / volume step (each is an IPC + an OS update). Cleared when there's no track or no
+ * known duration: the OS kept the previous track's range and extrapolated position under the new one.
+ */
+export function positionSync(ms: Pick<MediaSession, 'setPositionState'>, clock = () => performance.now()): (s: PlayerState) => void {
+  let posKey = ''
+  let posSent = 0
+  let posAt = 0
+  return (s) => {
+    const t = s.current
+    if (!t || !s.durationMs || s.durationMs <= 0) {
+      if (!posKey) return
+      posKey = ''
+      try {
+        ms.setPositionState()
+      } catch {
+        /* not supported */
+      }
+      return
+    }
+    const pos = livePositionMs(s)
+    const now = clock()
+    const k = `${t.id}|${s.status}|${s.durationMs}`
+    const predicted = posSent + (s.status === 'playing' ? now - posAt : 0)
+    if (k === posKey && Math.abs(pos - predicted) <= 1000) return
+    posKey = k
+    posSent = pos
+    posAt = now
+    try {
+      const dur = s.durationMs / 1000
+      ms.setPositionState({ duration: dur, playbackRate: 1, position: Math.min(dur, Math.max(0, pos / 1000)) })
+    } catch {
+      /* position > duration races */
+    }
+  }
+}
+
 export function useMediaSession(): void {
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
@@ -83,11 +122,7 @@ export function useMediaSession(): void {
 
     let lastMetaKey = ''
     let artBlob: string | null = null
-    // position state: sent on track/status/duration changes and seeks only (the OS extrapolates
-    // in between), not on every 1 Hz heartbeat / volume step (each is an IPC + an OS update)
-    let posKey = ''
-    let posSent = 0
-    let posAt = 0
+    const position = positionSync(ms)
     const apply = (s: PlayerState) => {
       want = isPlayingish(s)
       sync()
@@ -118,23 +153,7 @@ export function useMediaSession(): void {
             })
             .catch(() => {})
       }
-      if (t && s.durationMs && s.durationMs > 0) {
-        const pos = livePositionMs(s)
-        const now = performance.now()
-        const k = `${t.id}|${s.status}|${s.durationMs}`
-        const predicted = posSent + (s.status === 'playing' ? now - posAt : 0)
-        if (k !== posKey || Math.abs(pos - predicted) > 1000) {
-          posKey = k
-          posSent = pos
-          posAt = now
-          try {
-            const dur = s.durationMs / 1000
-            ms.setPositionState({ duration: dur, playbackRate: 1, position: Math.min(dur, Math.max(0, pos / 1000)) })
-          } catch {
-            /* position > duration races */
-          }
-        }
-      }
+      position(s)
     }
     apply(usePlayer.getState())
     const unsub = usePlayer.subscribe(apply)
@@ -156,6 +175,11 @@ export function useMediaSession(): void {
       URL.revokeObjectURL(url)
       ms.metadata = null
       ms.playbackState = 'none'
+      try {
+        ms.setPositionState()
+      } catch {
+        /* not supported */
+      }
     }
   }, [])
 }

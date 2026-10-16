@@ -7,7 +7,7 @@
 // selection, a focused Library track list); elsewhere they'd promise something that doesn't happen.
 import { CircleCheck, Download, Heart, ListEnd, ListPlus, ListStart, Play, Plus } from 'lucide-react'
 import { create } from 'zustand'
-import type { ID, PlayContext, Playlist, TrackView } from '@shared/types'
+import type { CatalogStatus, ID, PlayContext, Playlist, TrackView } from '@shared/types'
 import { ghost } from '../ghost'
 import { notify } from '../shell/notifications'
 import type { MenuItem } from '../ui/ContextMenu'
@@ -22,7 +22,16 @@ interface PlaylistCache {
 }
 export const usePlaylistCache = create<PlaylistCache>(() => ({ playlists: [], loaded: false }))
 
+/** At most one refetch this often for changes under the playlists (likes, catalog data). */
+const STALE_REFRESH_MS = 1000
+
 let cacheInit = false
+/** Screens showing the playlists' cards right now (watchPlaylistCache). */
+let watchers = 0
+/** What the cards show changed since the last fetch; refetched once someone looks. */
+let stale = false
+let reload = () => {}
+
 export function initPlaylistCache(): void {
   if (cacheInit) return
   cacheInit = true
@@ -30,19 +39,59 @@ export function initPlaylistCache(): void {
   // overwrites a newer one.
   let seq = 0
   let timer: ReturnType<typeof setTimeout> | undefined
+  let staleTimer: ReturnType<typeof setTimeout> | undefined
   const load = () => {
+    clearTimeout(staleTimer)
+    staleTimer = undefined
+    stale = false
     const my = ++seq
     ghost()
       .library.playlists.list()
       .then((playlists) => my === seq && usePlaylistCache.setState({ playlists, loaded: true }))
       .catch((err: unknown) => console.warn('[playlists] list failed', err))
   }
+  reload = load
+  // Smart playlists are evaluated when listed, and every card's count, length and covers come
+  // from catalog data: changes there refetch while the cards show (at most every
+  // STALE_REFRESH_MS, catalog revisions tick all through indexing), else when they next show.
+  const markStale = () => {
+    stale = true
+    if (watchers > 0 && !staleTimer) staleTimer = setTimeout(load, STALE_REFRESH_MS)
+  }
+  const anySmart = () => usePlaylistCache.getState().playlists.some((p) => p.kind === 'smart')
+  let revision: number | undefined
+  const onStatus = (s: CatalogStatus) => {
+    if (s.revision == null || s.revision === revision) return
+    const first = revision === undefined
+    revision = s.revision
+    if (!first && usePlaylistCache.getState().playlists.length) markStale()
+  }
+  // the revision this first fetch reflects (asked first, so a change in between still counts)
+  void ghost().catalog.status().then(onStatus, () => {})
   load()
+  ghost().on('catalog:status', onStatus)
   ghost().on('library:changed', (e) => {
-    if (e.kind !== 'playlists') return
-    clearTimeout(timer)
-    timer = setTimeout(load, 80)
+    if (e.kind === 'playlists') {
+      clearTimeout(timer)
+      timer = setTimeout(load, 80)
+    } else if ((e.kind === 'likes' || e.kind === 'downloaded') && anySmart()) markStale()
   })
+}
+
+/**
+ * Keep the cache fresh while a screen shows the playlists' cards (Library's Playlists tab):
+ * refetches now if something changed while nobody looked. Returns the release.
+ */
+export function watchPlaylistCache(): () => void {
+  initPlaylistCache()
+  watchers++
+  if (stale) reload()
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    watchers--
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -151,9 +151,8 @@ export class BackgroundEngine {
   }
 
   setQuality(q: 'low' | 'high'): void {
-    if (q !== this.art.quality) this.art.clearCache()
     this.quality = q
-    this.art.quality = q
+    this.art.setQuality(q)
     this.resize()
   }
 

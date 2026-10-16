@@ -31,8 +31,8 @@ import type {
 /** The `GhostEngine` class exported by the addon: the EngineBridge surface, 1:1, plus chip voice muting. */
 export type NativeGhostEngine = EngineBridge & {
   inspectArchive(source: EngineSource): Promise<ArchiveListing>
-  /** Mute chip voices on the playing tracks: bit i mutes voice i (see trackInfo `voiceNames`); 0 unmutes all. */
-  setVoiceMask(mask: number): void
+  /** Mute chip voices on the playing tracks: bit i mutes voice i (see trackInfo `voiceNames`); 0n unmutes all. */
+  setVoiceMask(mask: bigint): void
   /** Mutable voices of the current track (0 when unsupported or idle). */
   voiceCount(): number
   /** Absent in addons built before it existed. */
@@ -198,8 +198,9 @@ class NativeEngine implements EngineBridge {
   inspectArchive(source: EngineSource): Promise<ArchiveListing> {
     return this.native.inspectArchive(source)
   }
-  setVoiceMask(mask: number): void {
-    this.native.setVoiceMask(Number.isFinite(mask) && mask > 0 ? Math.floor(mask) : 0)
+  setVoiceMask(mask: bigint): void {
+    // (The addon unmutes all for a bigint outside 64 bits; a number would make it throw.)
+    this.native.setVoiceMask(typeof mask === 'bigint' ? mask : 0n)
   }
   voiceCount(): number {
     return this.native.voiceCount()

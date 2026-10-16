@@ -1,6 +1,6 @@
 //! Tiny synthetic game-music files for tests (no fixtures to ship, exact known timing).
 
-/// One tone segment: (PSG period, length in 44.1 kHz samples).
+/// One tone segment: (PSG period, length in 44.1 kHz samples). Period 0 is silence.
 pub type Segment = (u16, u32);
 
 /// SN76489 clock of the Master System.
@@ -12,10 +12,14 @@ pub fn psg_freq(period: u16) -> f64 {
 }
 
 /// A VGM (v1.50) for the SN76489: `intro` segments, then `body` segments that loop forever
-/// (no loop if `body` is empty). Channel 0 plays each segment's tone at full volume.
+/// (no loop if `body` is empty). Channel 0 plays each segment's tone at full volume (or is off).
 pub fn vgm_psg(intro: &[Segment], body: &[Segment]) -> Vec<u8> {
     fn tone(cmds: &mut Vec<u8>, period: u16, samples: u32) {
-        cmds.extend_from_slice(&[0x50, 0x80 | (period & 0x0F) as u8, 0x50, ((period >> 4) & 0x3F) as u8]);
+        if period == 0 {
+            cmds.extend_from_slice(&[0x50, 0x9F]); // channel 0 volume: off
+        } else {
+            cmds.extend_from_slice(&[0x50, 0x90, 0x50, 0x80 | (period & 0x0F) as u8, 0x50, ((period >> 4) & 0x3F) as u8]);
+        }
         let mut left = samples;
         while left > 0 {
             let n = left.min(0xFFFF);
@@ -23,7 +27,7 @@ pub fn vgm_psg(intro: &[Segment], body: &[Segment]) -> Vec<u8> {
             left -= n;
         }
     }
-    let mut cmds = vec![0x50, 0x90]; // channel 0 volume: loudest
+    let mut cmds = Vec::new();
     for &(p, n) in intro {
         tone(&mut cmds, p, n);
     }
@@ -174,6 +178,35 @@ pub fn wav_pcm16(rate: u32, frames: &[[i16; 2]], stereo: bool, looped: Option<(u
     out.extend_from_slice(&((4 + chunks.len()) as u32).to_le_bytes());
     out.extend_from_slice(b"WAVE");
     out.extend_from_slice(&chunks);
+    out
+}
+
+/// 16-bit PCM WAVE_FORMAT_EXTENSIBLE with the speaker `mask`; `interleaved` holds `channels`
+/// samples per frame, in mask order.
+pub fn wav_extensible(rate: u32, channels: u16, mask: u32, interleaved: &[i16]) -> Vec<u8> {
+    let block = 2 * channels;
+    let mut fmt = Vec::new();
+    fmt.extend_from_slice(&0xFFFEu16.to_le_bytes());
+    fmt.extend_from_slice(&channels.to_le_bytes());
+    fmt.extend_from_slice(&rate.to_le_bytes());
+    fmt.extend_from_slice(&(rate * block as u32).to_le_bytes());
+    fmt.extend_from_slice(&block.to_le_bytes());
+    fmt.extend_from_slice(&16u16.to_le_bytes());
+    fmt.extend_from_slice(&22u16.to_le_bytes());
+    fmt.extend_from_slice(&16u16.to_le_bytes());
+    fmt.extend_from_slice(&mask.to_le_bytes());
+    // KSDATAFORMAT_SUBTYPE_PCM
+    fmt.extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71]);
+    let data: Vec<u8> = interleaved.iter().flat_map(|s| s.to_le_bytes()).collect();
+    let mut out = Vec::new();
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&((4 + 8 + fmt.len() + 8 + data.len()) as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+    out.extend_from_slice(&fmt);
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
     out
 }
 

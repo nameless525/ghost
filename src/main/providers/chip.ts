@@ -20,8 +20,9 @@
 //    SN76489 / YM2612 / YM3438 / YM2413 VGMs, so packs using any other chip are skipped.
 //
 // Indexing reads listings only. `getAlbum` lists the archive with the engine's `inspectArchive`
-// (which fetches it once into the stream cache) and builds one track per playlist line or file;
-// every track's source is the archive plus an entry and sub-song, so it resolves offline.
+// (which fetches it once into the stream cache) and builds one track per playlist line or file
+// (per song for a multi-song file no playlist covers); every track's source is the archive plus an
+// entry and sub-song, so it resolves offline.
 //
 // Album refs: '<host><path>' of the joshw archive ('spc.joshw.info/c/Chrono%20Trigger%20…7z') or
 // of the vgmrips pack page ('vgmrips.net/packs/pack/<slug>').
@@ -32,6 +33,7 @@ import { foldText } from '../../shared/search'
 import type { ArchiveListing, EngineSource } from '../engine/types'
 import { NetError } from '../net/errors'
 import type { HttpClient } from '../net/http'
+import { parseChipHeader, type ChipFileInfo } from './chipfile'
 import type { AlbumHit, PlatformRef, Provider, ProviderAlbum, ProviderCallOptions, ProviderTrack, StreamInfo } from './types'
 
 export const CHIP_ID = 'chip'
@@ -752,11 +754,63 @@ function extOf(path: string): string {
 function baseName(path: string): string {
   return path.split('/').pop() ?? path
 }
+/** A chip file's name without its extension (always a known one: see isChipEntry). */
+function stemOf(path: string): string {
+  const name = baseName(path)
+  const ext = extOf(name)
+  return ext ? name.slice(0, -ext.length - 1) : name
+}
 const natural = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
 
 export function isChipEntry(path: string): boolean {
   const e = extOf(path)
   return MULTI_EXTS.has(e) || SINGLE_EXTS.has(e)
+}
+
+/** `a/./b/../c` → `a/c`; null when `..` climbs out of the archive. */
+function normPath(path: string): string | null {
+  const out: string[] = []
+  for (const seg of path.replace(/\\/g, '/').split('/')) {
+    if (!seg || seg === '.') continue
+    if (seg !== '..') out.push(seg)
+    else if (out.pop() == null) return null
+  }
+  return out.join('/')
+}
+
+/**
+ * The archive entry a playlist line names: the path relative to the playlist's folder, else to the
+ * archive root (exact, then ignoring case); else the one entry with that file name; else, for a
+ * multi-song format, the only file of that type (a playlist naming a renamed file). A name several
+ * entries share names none of them. The engine matches playlist lines to entries the same way
+ * (native nezplug.rs).
+ */
+export function playlistEntryResolver(entries: string[]): (file: string, playlistPath: string) => string | null {
+  const exact = new Map<string, string>()
+  // null: more than one entry
+  const lower = new Map<string, string | null>()
+  const byBase = new Map<string, string | null>()
+  const byExt = new Map<string, string | null>()
+  const add = (m: Map<string, string | null>, k: string, e: string) => m.set(k, m.has(k) && m.get(k) !== e ? null : e)
+  for (const e of entries) {
+    const n = normPath(e) ?? e
+    exact.set(n, e)
+    add(lower, n.toLowerCase(), e)
+    add(byBase, baseName(n).toLowerCase(), e)
+    add(byExt, extOf(n), e)
+  }
+  return (file, playlistPath) => {
+    const dir = playlistPath.slice(0, playlistPath.lastIndexOf('/') + 1)
+    for (const p of file.startsWith('/') ? [file] : [dir + file, file]) {
+      const n = normPath(p)
+      const hit = n == null ? null : (exact.get(n) ?? lower.get(n.toLowerCase()))
+      if (hit) return hit
+    }
+    const base = byBase.get(baseName(file).toLowerCase())
+    if (base !== undefined) return base
+    const ext = extOf(file)
+    return (MULTI_EXTS.has(ext) && byExt.get(ext)) || null
+  }
 }
 
 /** Locator of one song inside an archive. */
@@ -797,9 +851,12 @@ export function chipStream(archiveUrl: string, entry: string, subsong: number | 
   return { provider: CHIP_ID, source: chipSource(archiveUrl, entry, subsong), format: 'chip', lossless: false, bitrateKbps: null, sizeBytes, expiresAt: null }
 }
 
-/** "101 Presentiment" → { disc: null, number: 101, title }; "Sonic - 03 - Green Hill Zone" → 3. */
+/**
+ * "101 Presentiment" → { number: 101, title }; "Sonic - 03 - Green Hill Zone" → 3. Takes a file name
+ * without its extension: a dot left in it is part of the name ("01.Intro", "Super Mario Bros.3").
+ */
 export function cleanFileTitle(stem: string): { number: number | null; title: string } {
-  let s = stem.replace(/\.[a-z0-9]{1,6}$/i, '').trim()
+  let s = stem.trim()
   if (!/\s/.test(s) && /_/.test(s)) s = s.replace(/_/g, ' ')
   // "Game - 03 - Title" (smspower packs)
   let m = /^(.*?)\s+-\s+(\d{1,3})\s+-\s+(.+)$/.exec(s)
@@ -846,28 +903,44 @@ function stripBracketPrefixes(tracks: ProviderTrack[]): void {
 }
 
 /**
+ * Songs of different files may share a title (FM and PSG versions, two revisions of a game, the
+ * "Song 1" of two multi-song files): all stay, and each repeat of a title another file had first is
+ * named after its own file ("Opening (PSG)").
+ */
+function labelRepeatedTitles(tracks: ProviderTrack[], entries: string[]): void {
+  const stems = new Map<string, number>()
+  for (const e of entries) {
+    const k = stemOf(e).toLowerCase()
+    stems.set(k, (stems.get(k) ?? 0) + 1)
+  }
+  // Files of one name in several folders ("JP/game.nsf", "US/game.nsf") go by their path.
+  const label = (entry: string) => (stems.get(stemOf(entry).toLowerCase())! > 1 ? entry.slice(0, -extOf(entry).length - 1) : stemOf(entry))
+  const first = new Map<string, string>()
+  for (const t of tracks) {
+    const entry = t.streams![0].source.archiveEntry!
+    const k = normTitle(t.title)
+    const owner = first.get(k)
+    if (owner == null) first.set(k, entry)
+    else if (owner !== entry) t.title = `${t.title} (${label(entry)})`
+  }
+}
+
+/**
  * Tracks of a rip set from its archive listing:
- *  - NEZPlug playlists (NSF / GBS / HES / KSS sets): one track per line, in the full playlist's
- *    order (per-track playlists only when there is no full one), with sub-song, title and length;
- *  - otherwise one track per playable file (SPC sets, VGM packs, plain multi-song files), in the
- *    order of a plain .m3u if there is one, else by name.
+ *  - NEZPlug playlists (NSF / GBS / HES / KSS sets): one track per line, with sub-song, title and
+ *    length. Full playlists set the order; one-song playlists (per-track playlists, a bonus song)
+ *    then add the songs no full playlist has. A song is one entry + sub-song, listed once.
+ *  - then one track per playable file no playlist line covers (SPC sets, VGM packs, plain
+ *    multi-song files), in the order of a plain .m3u if there is one, else by name. A multi-song
+ *    file the engine sent the header of (NSF / NSFE / GBS) is one track per song, titled from an
+ *    NSFE's own list. HES and KSS headers don't say how many songs they hold (libgme reports 256
+ *    for every one), so such a file without a playlist stays one track: its first song.
  */
 export function buildChipTracks(listing: ArchiveListing, o: BuildTracksOptions): BuiltTracks {
   const entries = listing.entries.filter((e) => isChipEntry(e.path))
   const sizeOf = new Map(entries.map((e) => [e.path, e.size]))
-  const byBase = new Map<string, string>()
-  for (const e of [...entries].sort((a, b) => natural(a.path, b.path))) {
-    const k = baseName(e.path).toLowerCase()
-    if (!byBase.has(k)) byBase.set(k, e.path)
-  }
-  const resolve = (file: string): string | null => {
-    const hit = byBase.get(baseName(file).toLowerCase())
-    if (hit) return hit
-    // A playlist naming a file that was renamed: fall back to the only file of that type.
-    const ext = extOf(file)
-    const same = entries.filter((e) => extOf(e.path) === ext && MULTI_EXTS.has(ext))
-    return same.length === 1 ? same[0].path : null
-  }
+  const headOf = new Map(entries.map((e) => [e.path, e.head]))
+  const resolve = playlistEntryResolver(entries.map((e) => e.path))
   const playlists = listing.playlists
     .filter((p) => /\.m3u8?$/i.test(p.path))
     .sort((a, b) => natural(a.path, b.path))
@@ -892,72 +965,78 @@ export function buildChipTracks(listing: ArchiveListing, o: BuildTracksOptions):
   }
 
   // --- NEZPlug playlists ---------------------------------------------------------------------
-  const nez = playlists.map((p) => ({ ...p, resolved: p.lines.map((l) => ({ l, entry: MULTI_EXTS.has(extOf(l.file)) || MULTI_EXTS.has(l.type.toLowerCase()) ? resolve(l.file) : null })).filter((x) => x.entry) }))
-  const anyNez = nez.some((p) => p.resolved.length)
-  if (anyNez) {
-    // Decimal track numbers are 1-based (libgme), except KSS, and except sets that number from 0
-    // (HCS GBS sets do: "DMG-TRA-0.gbs::GBS,0,Title").
-    const zeroBased = new Map<string, boolean>()
-    for (const p of nez)
-      for (const { l, entry } of p.resolved) {
-        if (l.type.toUpperCase() === 'KSS' || (!l.hex && l.track === 0)) zeroBased.set(entry!, true)
-      }
-    const full = nez.filter((p) => p.resolved.length >= 2)
-    const use = full.length ? full : nez.filter((p) => p.resolved.length)
-    const seen = new Set<string>()
-    const titleOwner = new Map<string, string>()
-    for (const p of use) {
-      for (const { l, entry } of p.resolved) {
-        const sub = l.hex ? l.track : zeroBased.get(entry!) ? l.track : l.track - 1
-        if (sub < 0) continue
-        const key = `${entry}\u0000${sub}`
-        if (seen.has(key)) continue
-        const { title: cleaned, composer } = cleanNezTitle(l.title)
-        addComposer(composer)
-        const fromName = !full.length && p.resolved.length === 1 ? cleanFileTitle(baseName(p.path).replace(/\.m3u8?$/i, '')).title : ''
-        const title = cleaned || fromName || `Track ${tracks.length + 1}`
-        // The same song in another revision of the file (Tetris v1.0 / v1.1): keep the first.
-        const nt = normTitle(title)
-        const owner = titleOwner.get(nt)
-        if (owner && owner !== entry) continue
-        if (!owner) titleOwner.set(nt, entry!)
-        seen.add(key)
-        const duration = l.lengthMs != null && l.lengthMs > 0 ? l.lengthMs + (l.fadeMs ?? DEFAULT_FADE_MS) : null
-        push(entry!, sub, title, duration, tracks.length + 1)
-      }
+  const nez = playlists.map((p) => ({ ...p, resolved: p.lines.map((l) => ({ l, entry: MULTI_EXTS.has(extOf(l.file)) || MULTI_EXTS.has(l.type.toLowerCase()) ? resolve(l.file, p.path) : null })).filter((x) => x.entry) }))
+  // Decimal track numbers are 1-based (libgme), except KSS, and except sets that number from 0
+  // (HCS GBS sets do: "DMG-TRA-0.gbs::GBS,0,Title").
+  const zeroBased = new Map<string, boolean>()
+  for (const p of nez)
+    for (const { l, entry } of p.resolved) {
+      if (l.type.toUpperCase() === 'KSS' || (!l.hex && l.track === 0)) zeroBased.set(entry!, true)
     }
-    stripBracketPrefixes(tracks)
-    return { tracks, composers, sizeBytes: entries.reduce((s, e) => s + e.size, 0) }
+  const covered = new Set<string>()
+  const seen = new Set<string>()
+  for (const p of [...nez.filter((x) => x.resolved.length >= 2), ...nez.filter((x) => x.resolved.length === 1)]) {
+    for (const { l, entry } of p.resolved) {
+      covered.add(entry!)
+      const sub = l.hex ? l.track : zeroBased.get(entry!) ? l.track : l.track - 1
+      if (sub < 0) continue
+      const key = `${entry}\u0000${sub}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const { title: cleaned, composer } = cleanNezTitle(l.title)
+      addComposer(composer)
+      const fromName = p.resolved.length === 1 ? cleanFileTitle(baseName(p.path).replace(/\.m3u8?$/i, '')).title : ''
+      const title = cleaned || fromName || `Track ${tracks.length + 1}`
+      const duration = l.lengthMs != null && l.lengthMs > 0 ? l.lengthMs + (l.fadeMs ?? DEFAULT_FADE_MS) : null
+      push(entry!, sub, title, duration, tracks.length + 1)
+    }
   }
+  stripBracketPrefixes(tracks)
 
-  // --- one track per file ----------------------------------------------------------------------
+  // --- files no playlist line covers -----------------------------------------------------------
   const ordered: string[] = []
   for (const p of playlists)
     for (const f of p.plain) {
-      const e = byBase.get(baseName(f).toLowerCase())
+      const e = resolve(f, p.path)
       if (e && !ordered.includes(e)) ordered.push(e)
     }
   for (const e of [...entries].sort((a, b) => natural(a.path, b.path))) if (!ordered.includes(e.path)) ordered.push(e.path)
-  // An .nsfe next to the same-named .nsf carries titles and a playlist: play that one.
-  const stems = new Set(ordered.filter((p) => extOf(p) === 'nsfe').map((p) => p.replace(/\.nsfe$/i, '').toLowerCase()))
-  const files = ordered.filter((p) => !(extOf(p) === 'nsf' && stems.has(p.replace(/\.nsf$/i, '').toLowerCase())))
+  // An .nsf and the .nsfe of the same name are one rip: a playlist for either covers both, and
+  // otherwise the .nsfe (titles, a playlist of its own) plays.
+  const twin = (p: string) => p.replace(/\.nsfe?$/i, '').toLowerCase()
+  const coveredTwins = new Set([...covered].filter((p) => /\.nsfe?$/i.test(p)).map(twin))
+  const left = ordered.filter((p) => !covered.has(p) && !(/\.nsfe?$/i.test(p) && coveredTwins.has(twin(p))))
+  const nsfes = new Set(left.filter((p) => extOf(p) === 'nsfe').map(twin))
+  const files = left.filter((p) => !(extOf(p) === 'nsf' && nsfes.has(twin(p))))
+  const songsOf = (path: string): ChipFileInfo | null => {
+    const head = headOf.get(path)
+    const info = head ? parseChipHeader(extOf(path), Buffer.from(head.buffer, head.byteOffset, head.byteLength)) : null
+    return info && info.songs > 1 ? info : null
+  }
   const packByFile = new Map((o.pack ?? []).map((t) => [t.file.toLowerCase(), t]))
   const parsed = files.map((path) => {
     const pk = packByFile.get(baseName(path).toLowerCase())
-    const c = cleanFileTitle(baseName(path))
-    return { path, pk, c }
+    const c = cleanFileTitle(stemOf(path))
+    return { path, pk, c, songs: songsOf(path) }
   })
+  // After playlist songs, or beside a file of several songs, file names can't number the tracks.
+  const sequential = tracks.length > 0 || parsed.some((x) => x.songs)
   // Three-digit numbering across the whole set is disc + track ("101 …", "201 …").
   const nums = parsed.map((x) => x.c.number)
-  const discNumbered = parsed.length > 1 && nums.every((n) => n != null && n >= 101 && n < 1000 && n % 100 !== 0)
-  parsed.forEach(({ path, pk, c }, i) => {
+  const discNumbered = !sequential && parsed.length > 1 && nums.every((n) => n != null && n >= 101 && n < 1000 && n % 100 !== 0)
+  parsed.forEach(({ path, pk, c, songs }, i) => {
+    if (songs) {
+      for (let s = 0; s < songs.songs; s++) push(path, s, songs.tracks?.[s]?.title || `Song ${s + 1}`, songs.tracks?.[s]?.durationMs ?? null, tracks.length + 1)
+      return
+    }
     const multi = MULTI_EXTS.has(extOf(path))
-    const title = pk?.title || (multi && files.length === 1 && o.gameTitle ? o.gameTitle : c.title) || `Track ${i + 1}`
+    const title = pk?.title || (multi && !sequential && files.length === 1 && o.gameTitle ? o.gameTitle : c.title) || `Track ${i + 1}`
     const n = pk?.number ?? c.number
     const disc = discNumbered && n != null ? Math.floor(n / 100) : 1
-    const number = discNumbered && n != null ? n % 100 : (n ?? i + 1)
+    const number = sequential ? tracks.length + 1 : discNumbered && n != null ? n % 100 : (n ?? i + 1)
     push(path, null, title, pk?.durationMs ?? null, number, disc)
   })
+  labelRepeatedTitles(tracks, entries.map((e) => e.path))
   return { tracks, composers, sizeBytes: entries.reduce((s, e) => s + e.size, 0) }
 }
 

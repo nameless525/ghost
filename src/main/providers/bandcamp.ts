@@ -17,11 +17,13 @@ import type { ExternalAlbumHit } from '../../shared/types'
 import { baseTitle } from '../catalog/normalize'
 import { NetError } from '../net/errors'
 import type { HttpClient } from '../net/http'
-import { cleanTrackTitle, combineScore, durationFit, penaltyHits, titleSimilarity } from './match'
+import { cleanTrackTitle, combineScore, durationFit, otherCut, penaltyHits, titleSimilarity } from './match'
 import type { CanonicalTrack, Provider, ProviderAlbum, ProviderCallOptions, ProviderTrack, SourceCandidate, StreamInfo } from './types'
 import { scoreAlbumTitle } from './youtube'
 
 export const BC_ID = 'bandcamp'
+/** A fallback below this (a cover, a remix, another cut) is not the track: better to look elsewhere. */
+export const BC_MIN_CONFIDENCE = 0.5
 export const BC_SEARCH_TTL_MS = 3600_000
 const PAGE_TTL_MS = 3600_000
 /** A forced re-read accepts a page fetched this recently. */
@@ -311,10 +313,11 @@ export class BandcampProvider implements Provider {
       for (const tr of album.tracks) {
         if (!tr.streams?.length) continue
         const title = titleSimilarity(t.title, tr.title, { context: [game, album.title, t.albumTitle] })
-        if (title < 0.5) continue
+        if (title < 0.5 || otherCut(t.durationMs, tr.durationMs)) continue
         const duration = durationFit(t.durationMs, tr.durationMs)
         const trust = album.composers.some((c) => t.composers.some((x) => x.toLowerCase() === c.toLowerCase())) ? 0.9 : 0.6
         const confidence = combineScore({ title, duration, trust, quality: 0.6, penalties: penaltyHits(`${tr.title} ${album.title}`, [t.title, t.albumTitle, t.gameName]) })
+        if (confidence < BC_MIN_CONFIDENCE) continue
         out.push({ provider: BC_ID, locator: tr.locator, title: tr.title, durationMs: tr.durationMs, confidence })
       }
     }

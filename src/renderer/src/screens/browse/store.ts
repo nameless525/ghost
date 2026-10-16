@@ -13,8 +13,10 @@ export interface SelInfo {
   kind: SelKind
   gi: number
   group: BrowseGroup | null
-  /** Albums of the selected group, once loaded. */
+  /** Albums of the selected group, once loaded (a long list: as far as it's loaded). */
   albums: Album[] | null
+  /** How many albums the group has (more than `albums` holds until the rest of a long list loads), once known. */
+  albumsTotal: number | null
   album: Album | null
   /** Detail of `album` (tracks), once loaded. */
   detail: AlbumDetail | null

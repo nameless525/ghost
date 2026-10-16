@@ -14,13 +14,16 @@
 //! into finite tracks (loop count + fade, or [`LengthHint`] + fade) or lets them run forever.
 //!
 //! [`archive`] lists and extracts `.zip` / `.7z` rip sets in memory, and [`detect`] picks a
-//! decoder family from a format hint / extension and the first bytes of a file.
+//! decoder family from a format hint / extension and the first bytes of a file. [`opus`] wraps
+//! libopus (also linked here) for the engine's general-purpose decoder, whose Opus streams
+//! symphonia demuxes but can't decode.
 
 pub mod archive;
 pub mod detect;
 pub mod gme;
 pub mod nezplug;
 pub mod openmpt;
+pub mod opus;
 pub mod source;
 #[doc(hidden)]
 pub mod testdata;

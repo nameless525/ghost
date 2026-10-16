@@ -61,7 +61,7 @@ Builds aren't code-signed. Pushing a tag such as `v0.3.3` starts the [release wo
 | `src/renderer/src` | The React interface: `screens` (title, Browse, Play), `overlays` (library, settings, downloads, now playing), `shell`, `ui` (the component kit, see [`ui/README.md`](../src/renderer/src/ui/README.md)), `gfx` (PixiJS background and visualizers) |
 | `src/shared` | Types and the API contract shared by every process, and the search syntax parser |
 | `native/crates` | Rust: `ghost-engine` (audio engine), `ghost-analysis` (DSP: spectrum, beats, loudness), `ghost-formats` (chiptune and game-audio decoders), `ghost-node` (napi bindings), `ghost-art`, `ghost-cli` |
-| `native/vendor` | Vendored C/C++ decoder libraries (libgme, vgmstream, libopenmpt, libvorbis, libogg), each with its own license |
+| `native/vendor` | Vendored C/C++ decoder libraries (libgme, vgmstream, libopenmpt, libvorbis, libogg, libopus), each with its own license |
 | `scripts` | `build-native.mjs`, `cdp.mjs` (drive a running app), `perf/` (profiling and benchmarks), `smoke/` (end-to-end checks against the real sites) |
 | `resources` | App icons |
 

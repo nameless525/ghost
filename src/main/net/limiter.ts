@@ -83,11 +83,13 @@ export class HostLimiter {
   }
 
   /**
-   * How long until a job queued now would start: 0 = at once, Infinity = when a running one ends
-   * (all slots busy, or others already waiting ahead of it).
+   * How long until a job queued now at `priority` would start: 0 = at once, Infinity = when a
+   * running one ends (all slots busy, or others already waiting ahead of it: more urgent ones, and
+   * earlier ones at its own priority unless interactive, since those go newest first).
    */
-  readyIn(): number {
-    if (this.pending > 0 || this.active >= this.opts.concurrency) return Infinity
+  readyIn(priority: Priority = 2): number {
+    const ahead = priority === 0 ? 0 : this.queues.slice(0, priority + 1).reduce((n, q) => n + q.length, 0)
+    if (ahead > 0 || this.active >= this.opts.concurrency) return Infinity
     return Math.max(0, Math.max(this.lastStart + this.opts.spacingMs, this.pausedUntil) - this.now())
   }
 

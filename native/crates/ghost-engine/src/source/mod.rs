@@ -10,18 +10,20 @@
 //! 2. `format_hint` / extension / magic bytes ([`ghost_formats::detect`]): libgme (NSF, SPC,
 //!    VGZ, ...) and libopenmpt (MOD, XM, IT, ...) get the whole file in memory; vgmstream
 //!    (ADX, HCA, BRSTM, FSB, ...) streams through the cache reader.
-//! 3. Everything else: symphonia (MP3, FLAC, AAC, Vorbis, Opus, WAV, ...); vgmstream is the last
-//!    resort for unknown extensions symphonia can't probe.
+//! 3. Everything else: symphonia (MP3, FLAC, AAC, Vorbis, WAV, ...; Opus through libopus, see
+//!    [`opus`]); vgmstream is the last resort for unknown extensions symphonia can't probe.
 //! 4. `clip_start_ms` / `clip_end_ms`: the result is wrapped in a [`clip::ClipStage`].
 //!
 //! Everything downstream is shared: the [`loop_stage::LoopStage`] applies the engine's
 //! [`LoopMode`](crate::LoopMode) to sources that report loop points or a length hint, then the
-//! decode worker downmixes to stereo, resamples to the device rate and feeds the mixer.
+//! decode worker downmixes to stereo (by the channels' speaker positions, see [`to_stereo`]),
+//! resamples to the device rate and feeds the mixer.
 
 pub mod archive_cache;
 pub mod clip;
 pub mod frag;
 pub mod loop_stage;
+pub mod opus;
 pub mod symphonia_src;
 
 use std::io::Read;
@@ -310,6 +312,9 @@ impl FileOpener for CacheOpener {
 fn open_vgmstream(spec: &SourceSpec, ctx: &OpenCtx<'_>, name: &str, ext: Option<&str>, opts: &OpenOptions) -> Result<VgmstreamSource, SourceError> {
     match spec {
         SourceSpec::File { path, .. } => {
+            // vgmstream names companions (and re-opens) after this name: absolute, so a relative
+            // path's directory isn't applied a second time on top of the opener's `dir`.
+            let path = std::path::absolute(path).map_err(|e| SourceError::new(format!("open {}: {e}", path.display())))?;
             let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
             let full = path.to_string_lossy().into_owned();
             VgmstreamSource::open(&full, Arc::new(FsOpener { dir }), opts)
@@ -336,7 +341,10 @@ fn open_archive_entry(spec: &SourceSpec, entry: &str, ctx: &OpenCtx<'_>, mut opt
     match family {
         Some(f @ (Family::Gme | Family::Openmpt)) => {
             if f == Family::Gme {
-                opts.playlists = set.playlists().into_iter().filter(|(p, _)| p.to_ascii_lowercase().ends_with(".m3u")).map(|(_, t)| t).collect();
+                // Each line names the entry it means, so a line for "US/game.nsf" never describes "JP/game.nsf".
+                let m3us: Vec<_> = set.playlists().into_iter().filter(|(p, _)| p.to_ascii_lowercase().ends_with(".m3u")).collect();
+                let entries: Vec<&str> = set.files.iter().map(|(p, _)| p.as_str()).collect();
+                opts.playlists = ghost_formats::nezplug::resolve_playlists(&m3us, &entries);
             }
             Ok(Opened { source: ghost_formats::open_memory(f, data.to_vec(), &path, &opts)?, family: Some(f) })
         }
@@ -358,13 +366,74 @@ pub fn inspect_archive(spec: &SourceSpec, cache: &Arc<CacheManager>) -> Result<A
     let base = spec.base();
     let set = archive_cache::get(&base, &ctx)?;
     Ok(ArchiveListing {
-        entries: set.files.iter().map(|(p, d)| ArchiveEntryInfo { path: p.clone(), size: d.len() as u64 }).collect(),
+        entries: set.files.iter().map(|(p, d)| ArchiveEntryInfo { path: p.clone(), size: d.len() as u64, head: chip_head(p, d) }).collect(),
         playlists: set.playlists(),
     })
 }
 
+/// The start of a multi-song chip file, which says how many songs it holds (NSF / GBS: the
+/// 128-byte header; NSFE: chunks anywhere in the file, which is small: whole, up to 1 MiB).
+fn chip_head(path: &str, data: &[u8]) -> Option<Vec<u8>> {
+    let len = match ghost_formats::extension_of(path).as_deref() {
+        Some("nsf" | "gbs") => 128,
+        Some("nsfe") if data.len() <= 1 << 20 => data.len(),
+        _ => return None,
+    };
+    Some(data[..data.len().min(len)].to_vec())
+}
+
+/// The usual speaker layout (WAVE channel mask) for a channel count when a source doesn't give
+/// one, as FLAC, Vorbis, Opus and `WAVEFORMATEXTENSIBLE` define it: L R C, quad, 5.0, 5.1,
+/// 6.1 (back centre, sides), 7.1 (backs and sides).
+fn default_channel_mask(channels: usize) -> Option<u32> {
+    Some(match channels {
+        3 => 0x7,
+        4 => 0x33,
+        5 => 0x37,
+        6 => 0x3F,
+        7 => 0x70F,
+        8 => 0x63F,
+        _ => return None,
+    })
+}
+
+/// Stereo (left, right) gains of the speaker at WAVE channel-mask bit `bit` (ITU-R BS.775 style):
+/// front speakers at full level, every other one at -3 dB, each on its own side (centre speakers
+/// split equally, left/right-of-centre between their side and the centre); LFE is left out.
+fn speaker_gains(bit: u32) -> (f32, f32) {
+    use std::f32::consts::FRAC_1_SQRT_2 as C;
+    // cos / sin of 22.5°: halfway between a side and the centre, at constant power.
+    const NEAR: f32 = 0.923_879_5;
+    const FAR: f32 = 0.382_683_43;
+    match bit {
+        0 => (1.0, 0.0),                // front left
+        1 => (0.0, 1.0),                // front right
+        2 => (C, C),                    // front centre
+        6 => (NEAR, FAR),               // front left of centre
+        7 => (FAR, NEAR),               // front right of centre
+        4 | 9 | 12 | 15 => (C, 0.0),    // back, side, top front, top back left
+        5 | 10 | 14 | 17 => (0.0, C),   // back, side, top front, top back right
+        8 | 11 | 13 | 16 => (0.5, 0.5), // back, top, top front, top back centre
+        _ => (0.0, 0.0),                // LFE
+    }
+}
+
+/// Bit numbers of the speakers in `mask`, in channel order.
+fn speakers(mut mask: u32) -> impl Iterator<Item = u32> {
+    std::iter::from_fn(move || {
+        (mask != 0).then(|| {
+            let bit = mask.trailing_zeros();
+            mask &= mask - 1;
+            bit
+        })
+    })
+}
+
 /// Convert interleaved `channels`-channel audio to interleaved stereo, appending to `out`.
-pub fn to_stereo(input: &[f32], channels: usize, out: &mut Vec<f32>) {
+/// `mask` places the channels ([`AudioSource::channel_mask`]); without a usable one the usual
+/// layout for the channel count is assumed (past 7.1, the extra channels alternate left / right
+/// at -3 dB).
+pub fn to_stereo(input: &[f32], channels: usize, mask: Option<u32>, out: &mut Vec<f32>) {
     match channels {
         0 => {}
         1 => {
@@ -376,25 +445,21 @@ pub fn to_stereo(input: &[f32], channels: usize, out: &mut Vec<f32>) {
         }
         2 => out.extend_from_slice(input),
         n => {
-            // ITU-style downmix for common layouts (L R C LFE Ls Rs [Lb Rb]); extra channels are
-            // folded in at -3 dB. Normalised so a full-scale correlated signal stays <= 1.
             const C: f32 = std::f32::consts::FRAC_1_SQRT_2;
-            let norm = 1.0 / (1.0 + C + C * ((n.saturating_sub(4)) as f32 / 2.0).max(0.0));
+            let mask = mask.filter(|m| m.count_ones() as usize == n && m >> 18 == 0).or_else(|| default_channel_mask(n));
+            let gains: Vec<(f32, f32)> = match mask {
+                Some(m) => speakers(m).map(speaker_gains).collect(),
+                None => speakers(0x63F).map(speaker_gains).chain((8..n).map(|i| if i % 2 == 0 { (C, 0.0) } else { (0.0, C) })).collect(),
+            };
+            // Normalised so a full-scale correlated signal stays <= 1.
+            let (sum_l, sum_r) = gains.iter().fold((0.0f32, 0.0f32), |(l, r), g| (l + g.0, r + g.1));
+            let norm = 1.0 / sum_l.max(sum_r).max(1.0);
             out.reserve(input.len() / n * 2);
             for f in input.chunks_exact(n) {
-                let mut l = f[0];
-                let mut r = f[1];
-                if n >= 3 {
-                    l += C * f[2];
-                    r += C * f[2];
-                }
-                // f[3] is LFE: dropped.
-                for (i, &s) in f.iter().enumerate().skip(4) {
-                    if i % 2 == 0 {
-                        l += C * s;
-                    } else {
-                        r += C * s;
-                    }
+                let (mut l, mut r) = (0.0f32, 0.0f32);
+                for (&s, &(gl, gr)) in f.iter().zip(&gains) {
+                    l += gl * s;
+                    r += gr * s;
                 }
                 out.push(l * norm);
                 out.push(r * norm);
@@ -458,11 +523,92 @@ pub(crate) mod test_util {
     #[test]
     fn downmix_layouts() {
         let mut out = Vec::new();
-        to_stereo(&[0.5, -0.5], 1, &mut out);
+        to_stereo(&[0.5, -0.5], 1, None, &mut out);
         assert_eq!(out, vec![0.5, 0.5, -0.5, -0.5]);
         out.clear();
-        to_stereo(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 6, &mut out);
+        to_stereo(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 6, None, &mut out);
         assert!(out[0] <= 1.0 + 1e-6 && out[0] > 0.7);
+    }
+
+    /// Stereo (left, right) of a unit impulse in channel `c` alone.
+    fn isolated(channels: usize, mask: Option<u32>, c: usize) -> (f32, f32) {
+        let mut frame = vec![0.0; channels];
+        frame[c] = 1.0;
+        let mut out = Vec::new();
+        to_stereo(&frame, channels, mask, &mut out);
+        (out[0], out[1])
+    }
+
+    /// Every speaker lands on its own side (centre ones on both, equally), LFE is left out, and
+    /// a full-scale signal on every channel stays within full scale.
+    #[test]
+    fn downmix_follows_speaker_positions() {
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Side {
+            L,
+            R,
+            Both,
+            Off,
+        }
+        use Side::*;
+        let cases: &[(&str, u32, &[Side])] = &[
+            ("3.0", 0x7, &[L, R, Both]),
+            ("quad", 0x33, &[L, R, L, R]),
+            ("quad (side)", 0x603, &[L, R, L, R]),
+            ("3.1", 0xF, &[L, R, Both, Off]),
+            ("5.0", 0x37, &[L, R, Both, L, R]),
+            ("5.0 (side)", 0x607, &[L, R, Both, L, R]),
+            ("5.1", 0x3F, &[L, R, Both, Off, L, R]),
+            ("5.1 (side)", 0x60F, &[L, R, Both, Off, L, R]),
+            ("6.1", 0x70F, &[L, R, Both, Off, Both, L, R]),
+            ("7.1", 0x63F, &[L, R, Both, Off, L, R, L, R]),
+            ("7.1 wide", 0xFF, &[L, R, Both, Off, L, R, L, R]),
+            ("5.1.4", 0x2D63F, &[L, R, Both, Off, L, R, L, R, L, R, L, R]),
+        ];
+        for &(name, mask, sides) in cases {
+            let n = sides.len();
+            // The usual layout for the count also applies without a mask.
+            let unmasked = (default_channel_mask(n) == Some(mask)).then_some(None);
+            for m in std::iter::once(Some(mask)).chain(unmasked) {
+                for (c, &want) in sides.iter().enumerate() {
+                    let (l, r) = isolated(n, m, c);
+                    assert!(l >= 0.0 && r >= 0.0);
+                    let got = if l == 0.0 && r == 0.0 {
+                        Off
+                    } else if (l - r).abs() < 1e-6 {
+                        Both
+                    } else if l > r {
+                        L
+                    } else {
+                        R
+                    };
+                    assert_eq!(got, want, "{name} ({m:?}): channel {c} → ({l}, {r})");
+                }
+                let mut out = Vec::new();
+                to_stereo(&vec![1.0; n], n, m, &mut out);
+                let peak = out[0].max(out[1]);
+                assert!(peak <= 1.0 + 1e-6 && peak > 0.99, "{name}: full scale → {out:?}");
+            }
+        }
+        // A back-right-only quad signal is entirely on the right.
+        let (l, r) = isolated(4, Some(0x33), 3);
+        assert!(l == 0.0 && r > 0.4, "({l}, {r})");
+        // Without positions: the usual layout for the count (quad, not 3.1; 5.0 keeps both backs).
+        assert_eq!(isolated(4, None, 3).0, 0.0);
+        assert!(isolated(4, None, 3).1 > 0.0);
+        assert!(isolated(5, None, 3).0 > 0.0 && isolated(5, None, 4).1 > 0.0);
+        // A mask that doesn't match the channel count is ignored.
+        assert_eq!(isolated(4, Some(0x3F), 3), isolated(4, None, 3));
+        // Past 7.1 without positions: the extras alternate left / right.
+        assert!(isolated(10, None, 8).0 > 0.0 && isolated(10, None, 8).1 == 0.0);
+        assert!(isolated(10, None, 9).1 > 0.0 && isolated(10, None, 9).0 == 0.0);
+        // 5.1 is unchanged from the fixed L R C LFE Ls Rs downmix it replaces.
+        let frame = [0.3f32, -0.2, 0.5, 0.9, 0.1, -0.4];
+        let mut out = Vec::new();
+        to_stereo(&frame, 6, Some(0x3F), &mut out);
+        let c = std::f32::consts::FRAC_1_SQRT_2;
+        let norm = 1.0 / (1.0 + c + c);
+        assert_eq!(out, vec![(frame[0] + c * frame[2] + c * frame[4]) * norm, (frame[1] + c * frame[2] + c * frame[5]) * norm]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { extractAccent } from './accent'
 import { errorCode, isNetError, NetError } from './errors'
 import { createHttpClient, GHOST_USER_AGENT } from './http'
@@ -61,6 +61,26 @@ describe('HostLimiter', () => {
     promote(0)
     await Promise.all([blocker, a, b, c])
     expect(order).toEqual(['b', 'c', 'a'])
+  })
+
+  it('says when a job queued now would start, at its priority', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      const l = new HostLimiter({ concurrency: 2, spacingMs: 1000 })
+      const order: string[] = []
+      const first = l.schedule(async () => void order.push('first'))
+      const crawl = l.schedule(async () => void order.push('crawl'), 2) // waits out the spacing
+      // only as urgent work waiting is ahead (and interactive jobs go newest first: none is)
+      expect([l.readyIn(0), l.readyIn(1), l.readyIn(2), l.readyIn()]).toEqual([1000, 1000, Infinity, Infinity])
+      await vi.advanceTimersByTimeAsync(400)
+      const open = l.schedule(async () => void order.push('open'), 0)
+      expect([l.readyIn(0), l.readyIn(1)]).toEqual([600, Infinity])
+      await vi.advanceTimersByTimeAsync(1600)
+      await Promise.all([first, crawl, open])
+      expect(order).toEqual(['first', 'open', 'crawl'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('aborting a queued job rejects it without running', async () => {
@@ -206,6 +226,97 @@ describe('http client', () => {
     const again = await c.pageFetch('https://example.test/fast', { ttlMs: 60_000 })
     expect(again).toMatchObject({ html: '<html>p</html>', fromCache: true })
     expect(f.calls.length).toBe(1)
+  })
+
+  it('a request every caller gave up on is never joined: the next caller gets a fetch of its own', async () => {
+    const calls: string[] = []
+    const fetch = async (url: string, init?: RequestInit) => {
+      calls.push(url)
+      if (calls.length === 1) {
+        return await new Promise<Response>((_r, reject) => init!.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))
+      }
+      return new Response('fresh', { status: 200 })
+    }
+    const c = createHttpClient({ cacheDir: null, fetch })
+    const ac = new AbortController()
+    const first = c.pageFetch('https://example.test/reopen', { signal: ac.signal })
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    ac.abort()
+    // (at once: the aborted request hasn't finished unwinding yet)
+    const again = c.pageFetch('https://example.test/reopen')
+    await expect(first).rejects.toSatisfy((e: unknown) => isNetError(e, 'aborted'))
+    expect((await again).html).toBe('fresh')
+    expect(calls).toHaveLength(2)
+  })
+
+  it('a caller that already gave up starts no request and gets no page, cached or not', async () => {
+    const f = fake([() => new Response('<html>page</html>', { status: 200 })])
+    const c = createHttpClient({ cacheDir: dir, fetch: f.fetch })
+    const gone = AbortSignal.abort()
+    await expect(c.pageFetch('https://example.test/never', { signal: gone, ttlMs: 60_000 })).rejects.toSatisfy((e: unknown) => isNetError(e, 'aborted'))
+    expect(f.calls).toHaveLength(0)
+    await c.pageFetch('https://example.test/cached', { ttlMs: 60_000 })
+    await expect(c.pageFetch('https://example.test/cached', { signal: gone, ttlMs: 60_000 })).rejects.toSatisfy((e: unknown) => isNetError(e, 'aborted'))
+    await expect(c.fetchBytes('https://example.test/bytes', { signal: gone })).rejects.toSatisfy((e: unknown) => isNetError(e, 'aborted'))
+    expect(f.calls).toHaveLength(1)
+  })
+
+  it('a caller that refuses stale pages never gets one from a caller it shares a request with (either way round)', async () => {
+    const url = 'https://example.test/signed-streams'
+    const t0 = Date.now()
+    const seed = createHttpClient({ cacheDir: dir, fetch: async () => new Response('old signed stream', { status: 200 }), now: () => t0 })
+    await seed.pageFetch(url, { ttlMs: 60_000 })
+    await seed.pageFetch(url, { ttlMs: 60_000 }) // (waits for the cache write)
+    /** Whether the caller with `ac` has joined the request (it listens to its signal then). */
+    const joined = (ac: AbortController) => {
+      let yes = false
+      const add = ac.signal.addEventListener.bind(ac.signal)
+      ac.signal.addEventListener = ((...a: Parameters<typeof add>) => ((yes = true), add(...a))) as typeof add
+      return () => yes
+    }
+    for (const strictFirst of [false, true]) {
+      let fail!: () => void
+      const fetch = () => new Promise<Response>((_r, reject) => (fail = () => reject(new Error('offline'))))
+      const c = createHttpClient({ cacheDir: dir, fetch, now: () => t0 + 120_000 })
+      const strict = { ttlMs: 60_000, allowStale: false }
+      const ordinary = { ttlMs: 60_000 }
+      const ac = new AbortController()
+      const a = c.pageFetch(url, { ...(strictFirst ? strict : ordinary), retries: 0 })
+      await vi.waitFor(() => expect(fail).toBeDefined())
+      const b = c.pageFetch(url, { ...(strictFirst ? ordinary : strict), retries: 0, signal: ac.signal })
+      const hasJoined = joined(ac)
+      await vi.waitFor(() => expect(hasJoined()).toBe(true))
+      fail()
+      const [first, second] = await Promise.allSettled([a, b])
+      const [strictResult, ordinaryResult] = strictFirst ? [first, second] : [second, first]
+      expect(strictResult.status).toBe('rejected')
+      expect(isNetError((strictResult as PromiseRejectedResult).reason, 'network')).toBe(true)
+      expect(ordinaryResult).toMatchObject({ status: 'fulfilled', value: { html: 'old signed stream', stale: true } })
+    }
+  })
+
+  it('a body cut off or stalled after the headers is retried; a caller giving up meanwhile is not', async () => {
+    // (like fetch: the request's signal ends its body too)
+    const stalled = (init?: RequestInit) =>
+      new Response(new ReadableStream({ start: (ctl) => init?.signal?.addEventListener('abort', () => ctl.error(init.signal!.reason)) }), { status: 200 })
+    const cut = () => new Response(new ReadableStream({ pull: (ctl) => ctl.error(new TypeError('terminated')) }), { status: 200 })
+    const f = fake([cut, () => new Response('page', { status: 200 })])
+    const c = createHttpClient({ cacheDir: null, fetch: f.fetch, backoffMs: 1 })
+    expect((await c.pageFetch('https://example.test/cut', { retries: 2 })).html).toBe('page')
+    expect(f.calls).toHaveLength(2)
+    let n = 0
+    const g = createHttpClient({ cacheDir: null, backoffMs: 1, fetch: async (_u, init) => (n++ === 0 ? stalled(init) : new Response(new Uint8Array([1, 2, 3]))) })
+    expect([...(await g.fetchBytes('https://example.test/stall', { timeoutMs: 50, retries: 1 })).bytes]).toEqual([1, 2, 3])
+    expect(n).toBe(2)
+    // giving up while the body arrives: aborted, not retried
+    let m = 0
+    const h = createHttpClient({ cacheDir: null, backoffMs: 1, fetch: async (_u, init) => (m++, stalled(init)) })
+    const ac = new AbortController()
+    const p = h.fetchBytes('https://example.test/stall', { signal: ac.signal, retries: 3 })
+    await vi.waitFor(() => expect(m).toBe(1))
+    ac.abort()
+    await expect(p).rejects.toSatisfy((e: unknown) => isNetError(e, 'aborted'))
+    expect(m).toBe(1)
   })
 
   it('NetError carries code, status and a [code] message prefix', () => {

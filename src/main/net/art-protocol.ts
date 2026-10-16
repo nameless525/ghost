@@ -14,7 +14,9 @@
 // Sizes: every image the renderer receives is capped. Without `w` it gets the base image, at most
 // 1600 px wide (KHInsider scans can be 3000+ px PNGs). `w` snaps up to a bucket (ART_BUCKETS) so
 // each cover has at most a handful of variants on disk. Nothing is ever upscaled. Small enough
-// originals (≤ 1600 px, ≤ 1.5 MB) are kept byte-for-byte.
+// originals (≤ 1600 px, ≤ 1.5 MB) are kept byte-for-byte. An image the pipeline rejects (corrupt,
+// over its size limits, not an image) is neither served nor cached; only a format the browser reads
+// and the pipeline doesn't (AVIF, SVG, BMP) is served as fetched, within limits of its own.
 //
 // Cache: <userData>/art/<sha1[0..2]>/<sha1> (bytes) + <sha1>.json (ArtMeta). Base: sha1(url);
 // variant: sha1(`${url}#w=${bucket}`). The base meta also stores the cover's accent colour, so
@@ -22,7 +24,8 @@
 //
 // Network: Chromium's stack (`net.fetch`, Cloudflare-friendly) with `cache: 'no-store'`: this
 // cache is the only one (Chromium's HTTP cache used to hold a second copy of every cover), and
-// requests go through the shared per-host limiter so politeness limits hold app-wide.
+// requests go through the shared host scheduler (net/shared.ts; the catalog's page requests wait in
+// it too) so per-host limits, Retry-After pauses and block cooldowns hold app-wide.
 import { protocol } from 'electron'
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -31,8 +34,7 @@ import { artAccentOf, artPipelineAvailable, processArt } from '../engine/native'
 import { paths } from '../paths'
 import { perfActive } from '../perf'
 import { accentHex } from './accent'
-import { blockedMessage, isNetError, NetError } from './errors'
-import { detectBlock, GHOST_USER_AGENT, type FetchLike } from './http'
+import { isNetError, NetError } from './errors'
 import { sharedHttp } from './shared'
 
 export const ART_SCHEME = 'ghost-art'
@@ -47,6 +49,14 @@ const PASSTHROUGH_MAX_BYTES = 1_500_000
 const JPEG_QUALITY = 85
 /** Bump when the meaning of cached files changes; older entries are re-processed lazily. */
 const META_VERSION = 2
+/**
+ * Limits for an image served as fetched because only the browser reads its format (it can't be
+ * capped here): its file size, and its width and height where its header says.
+ */
+const BROWSER_ONLY_MAX_BYTES = 4_000_000
+const BROWSER_ONLY_MAX_SIDE = 4096
+/** An image found unusable isn't fetched again for this long (a server's bad moment passes). */
+const UNUSABLE_RETRY_MS = 15 * 60_000
 const CORS = { 'access-control-allow-origin': '*' }
 
 /** The bucket a requested width snaps to (smallest bucket ≥ w; the largest for anything bigger). */
@@ -179,6 +189,8 @@ interface ArtMeta {
   height: number | null
   /** Base images: '#rrggbb', or null for greyscale art. Absent = not computed yet. */
   accent?: string | null
+  /** Kept as fetched: a format only the browser reads (see browserOnly). */
+  browserOnly?: true
   at: number
 }
 
@@ -248,75 +260,37 @@ function sniffType(bytes: Buffer, header: string | null): string | null {
   return h.startsWith('image/') ? h : null
 }
 
+/**
+ * The type of an image in a format the browser reads but the native pipeline doesn't (AVIF, SVG,
+ * BMP), when it is within BROWSER_ONLY limits; null for anything else.
+ */
+function browserOnly(b: Buffer): string | null {
+  if (b.length > BROWSER_ONLY_MAX_BYTES) return null
+  const fits = (w: number, h: number) => w > 0 && h > 0 && w <= BROWSER_ONLY_MAX_SIDE && h <= BROWSER_ONLY_MAX_SIDE
+  // AVIF: an ISO-BMFF `ftyp` box with its brand; the size is in the image's `ispe` box.
+  if (b.length >= 16 && b.toString('latin1', 4, 8) === 'ftyp') {
+    const brands: string[] = []
+    for (let i = 8; i + 4 <= Math.min(b.readUInt32BE(0), b.length); i += 4) if (i !== 12) brands.push(b.toString('latin1', i, i + 4))
+    if (!brands.includes('avif') && !brands.includes('avis')) return null
+    const i = b.indexOf('ispe')
+    return i < 0 || (i + 16 <= b.length && fits(b.readUInt32BE(i + 8), b.readUInt32BE(i + 12))) ? 'image/avif' : null
+  }
+  // BMP: "BM" and a Windows bitmap header (its height is negative for top-down rows).
+  if (b.length >= 26 && b.toString('latin1', 0, 2) === 'BM' && [40, 52, 56, 108, 124].includes(b.readUInt32LE(14))) {
+    return fits(b.readInt32LE(18), Math.abs(b.readInt32LE(22))) ? 'image/bmp' : null
+  }
+  // SVG: markup whose root is <svg> (drawn at whatever size it's shown).
+  const head = b.toString('utf8', 0, Math.min(b.length, 2048)).replace(/^\uFEFF/, '')
+  if (/^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*|<!DOCTYPE[^>]*>\s*)*<svg[\s>]/i.test(head)) return 'image/svg+xml'
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Network
 
-let fetchImpl: FetchLike = async (url, init) => {
-  const { net } = await import('electron')
-  return net.fetch(url, init as Parameters<typeof net.fetch>[1])
-}
-
-/** Replace the fetch used for art (smoke tests); null restores Electron's `net.fetch`. */
-export function setArtFetch(f: FetchLike | null): void {
-  fetchImpl =
-    f ??
-    (async (url, init) => {
-      const { net } = await import('electron')
-      return net.fetch(url, init as Parameters<typeof net.fetch>[1])
-    })
-}
-
-const BLOCK_PAUSE_MS = 60_000
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-async function fetchOnce(url: string, host: string, timeoutMs: number): Promise<{ bytes: Buffer; contentType: string | null }> {
-  const http = sharedHttp()
-  if (http.blockedUntil(host)) throw new NetError('blocked', blockedMessage(host), { url })
-  const timeout = AbortSignal.timeout(timeoutMs)
-  let res: Response
-  try {
-    res = await fetchImpl(url, {
-      headers: { 'User-Agent': GHOST_USER_AGENT, Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5' },
-      signal: timeout,
-      redirect: 'follow',
-      // Our disk cache is the cache: keep Chromium's HTTP cache out of it.
-      cache: 'no-store'
-    })
-  } catch (e) {
-    if (timeout.aborted) throw new NetError('timeout', `timed out fetching ${url}`, { url })
-    throw new NetError('network', `network error fetching ${url}: ${(e as Error).message}`, { url, cause: e })
-  }
-  const type = res.headers.get('content-type')
-  if (type?.includes('text/html')) {
-    const body = await res.text()
-    if (detectBlock(res.status, res.headers, body)) {
-      http.limiter(host).pause(BLOCK_PAUSE_MS)
-      throw new NetError('blocked', blockedMessage(host), { status: res.status, url })
-    }
-  }
-  if (res.status === 404 || res.status === 410) throw new NetError('not_found', `not found: ${url}`, { status: res.status, url })
-  if (res.status === 429) {
-    const ra = Number(res.headers.get('retry-after'))
-    http.limiter(host).pause(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000)
-    throw new NetError('http', `rate limited by ${host}`, { status: 429, url, retryable: true })
-  }
-  if (!res.ok) throw new NetError('http', `HTTP ${res.status} from ${url}`, { status: res.status, url })
-  return { bytes: Buffer.from(await res.arrayBuffer()), contentType: type }
-}
-
-/** GET through the shared per-host limiter, with retries and backoff. */
-async function fetchBytes(url: string, retries: number): Promise<{ bytes: Buffer; contentType: string | null }> {
-  const host = new URL(url).host
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await sharedHttp()
-        .limiter(host)
-        .schedule(() => fetchOnce(url, host, 25_000), 1)
-    } catch (e) {
-      if (!(e instanceof NetError) || !e.retryable || attempt >= retries) throw e
-      await sleep(400 * Math.pow(3, attempt) * (0.8 + Math.random() * 0.4))
-    }
-  }
+/** GET through the shared HTTP client: its host scheduler's turns, pauses, block cooldowns and retries. */
+function fetchBytes(url: string, retries: number): Promise<{ bytes: Buffer; contentType: string | null }> {
+  return sharedHttp().fetchBytes(url, { priority: 1, timeoutMs: 25_000, retries })
 }
 
 /**
@@ -383,7 +357,8 @@ function pumpDownloads(): void {
     for (let i = waiting.length - 1; i >= 0 && downloading < DOWNLOADS; i--) {
       const d = waiting[i]
       if (d.tier !== tier || (tier === 2 && downloadingBg >= BG_DOWNLOADS)) continue
-      const ready = sharedHttp().limiter(d.host).readyIn()
+      // (at the priority fetchBytes uses: the catalog's background crawl waiting there isn't ahead)
+      const ready = sharedHttp().limiter(d.host).readyIn(1)
       if (ready > 0) {
         soonest = Math.min(soonest, ready)
         continue
@@ -446,6 +421,8 @@ export function artDownloadQueue(): { waiting: number; running: number } {
 // Pipeline
 
 const inflight = new Map<string, Promise<CachedArt>>()
+/** Covers whose image was unusable, until they may be fetched again. */
+const unusable = new Map<string, number>()
 
 /**
  * Cached image bytes for a URL, capped (fetched and processed off-thread on a miss). `w` snaps to
@@ -468,9 +445,17 @@ function load(url: string, bucket: number | undefined, bg: boolean): Promise<Cac
   return p
 }
 
+/**
+ * Written by this pipeline once it read the image (or knew it for one only the browser reads). One
+ * of unknown size otherwise is what an earlier version kept of an image it couldn't read.
+ */
+function checked(m: ArtMeta): boolean {
+  return m.v === META_VERSION && (m.width != null || !!m.browserOnly)
+}
+
 /** Older entries are fine when their size is known and within the caps (they lack an accent). */
 function baseIsCurrent(m: ArtMeta): boolean {
-  if (m.v === META_VERSION) return true
+  if (m.v === META_VERSION) return checked(m)
   return m.width != null && m.height != null && m.width <= BASE_MAX_WIDTH && m.height <= BASE_MAX_WIDTH * MAX_ASPECT
 }
 
@@ -478,13 +463,25 @@ async function loadBase(url: string, bg: boolean): Promise<CachedArt> {
   const cached = await readCached(url)
   // (Without the native pipeline there is nothing better to make of an older entry.)
   if (cached && (baseIsCurrent(cached.meta) || !artPipelineAvailable())) return cached
-  // An older entry of unknown / oversized dimensions (e.g. an untouched GIF): re-process once.
-  if (cached) return storeBase(url, cached.bytes, cached.type, false)
+  // An older entry of unknown / oversized dimensions (e.g. an untouched GIF): re-process once (one
+  // that turns out unusable is dropped, and fetched again).
+  if (cached) {
+    const again = await storeBase(url, cached.bytes, cached.type, false).catch(() => null)
+    if (again) return again
+  }
+  if ((unusable.get(url) ?? 0) > Date.now()) throw new NetError('parse', `unusable image: ${url}`, { url })
   const res = await inTurn(url, url, bg ? 2 : 1, () => fetchArt(url))
   stats.fetched++
-  const type = sniffType(res.bytes, res.contentType)
-  if (!type) throw new NetError('parse', `not an image: ${url}`, { url })
-  return storeBase(url, res.bytes, type, true)
+  try {
+    const type = sniffType(res.bytes, res.contentType)
+    if (!type) throw new NetError('parse', `not an image: ${url}`, { url })
+    return await storeBase(url, res.bytes, type, true)
+  } catch (e) {
+    // Not fetched again every time it scrolls past, but not given up on for good either.
+    if (unusable.size >= 5000) unusable.clear()
+    unusable.set(url, Date.now() + UNUSABLE_RETRY_MS)
+    throw e
+  }
 }
 
 async function storeBase(url: string, original: Buffer, type: string, fetched: boolean): Promise<CachedArt> {
@@ -509,8 +506,17 @@ async function storeBase(url: string, original: Buffer, type: string, fetched: b
       // addon caps it.
       delete meta.v
     }
-  } catch {
-    // Undecodable here (AVIF, SVG, corrupt): keep the original; Chromium may still manage.
+  } catch (e) {
+    // Not read here: kept as is only in a format the browser reads, within its limits. Corrupt,
+    // oversized or not an image at all, it is never served (nor kept: no earlier copy either).
+    const other = browserOnly(original)
+    if (!other) {
+      const p = cachePaths(url)
+      await Promise.all([rm(p.data, { force: true }), rm(p.meta, { force: true })]).catch(() => {})
+      throw new NetError('parse', `unusable image (${(e as Error).message}): ${url}`, { url })
+    }
+    meta.type = other
+    meta.browserOnly = true
     meta.accent = null
   }
   await writeCached(url, undefined, bytes, meta).catch(() => {})
@@ -530,7 +536,7 @@ const THUMB_MAX_BUCKET = 128
 
 async function loadVariant(url: string, bucket: number, bg: boolean): Promise<CachedArt> {
   const cached = await readCached(url, bucket)
-  if (cached && cached.meta.v === META_VERSION) return cached
+  if (cached && (checked(cached.meta) || !artPipelineAvailable())) return cached
   if (bucket <= THUMB_MAX_BUCKET) {
     const small = await loadThumbnail(url, bucket, bg)
     if (small) return small
@@ -576,9 +582,13 @@ async function loadThumbnail(url: string, bucket: number, bg: boolean): Promise<
       meta.type = r.mime
       meta.width = r.width
       meta.height = r.height
-    }
+    } else delete meta.v // (no native pipeline: see storeBase)
   } catch {
-    /* served as fetched */
+    // Unusable: the full-size cover instead. A browser-only format is served as fetched.
+    const other = browserOnly(res.bytes)
+    if (!other) return null
+    meta.type = other
+    meta.browserOnly = true
   }
   await writeCached(url, bucket, bytes, meta).catch(() => {})
   return { bytes, type: meta.type, meta }

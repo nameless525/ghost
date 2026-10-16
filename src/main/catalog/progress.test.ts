@@ -267,7 +267,7 @@ describe('task progress', () => {
 })
 
 describe('local folder scans', () => {
-  it('a folder the user added: looking for files, reading tags, done, and one notice', async () => {
+  it('a folder the user added: looking for files, reading tags, updating albums, done, and one notice', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ghost-scan-'))
     dirs.push(root)
     const folder = join(root, 'OST Collection')
@@ -300,17 +300,21 @@ describe('local folder scans', () => {
       const scan = events.filter(([e, p]) => e === 'progress' && (p as TaskProgress).key === 'scan').map(([, p]) => p as TaskProgress)
       expect(scan[0]).toMatchObject({ label: 'Looking for music files', fraction: null, expectMs: null, span: [0, 0.15] })
       const tags = scan.filter((p) => p.label === 'Reading tags' && !p.done)
-      expect(tags[0]).toMatchObject({ detail: '0 of 3 files', fraction: 0, span: [0.15, 1] })
+      expect(tags[0]).toMatchObject({ detail: '0 of 3 files', fraction: 0, span: [0.15, 0.9] })
+      // The folder's one album goes into the catalog before the bar ends.
+      const albums = scan.filter((p) => p.label === 'Updating albums' && !p.done)
+      expect(albums[0]).toMatchObject({ detail: '0 of 1', fraction: 0, span: [0.9, 1] })
       expect(scan.at(-1)).toMatchObject({ done: true })
       expect(scan.filter((p) => p.done)).toHaveLength(1)
       const notice = events.find(([e]) => e === 'notify')![1] as GhostNotification
       expect(notice).toMatchObject({ id: 'local-scan', kind: 'success', title: 'Added 3 tracks from OST Collection' })
       expect(lib.count()).toBe(3)
-      // The same list again: nothing to do.
-      const n = events.length
+      // The same list again: nothing to do (no scan, no notice; the status update for the new album may still go out).
+      const work = () => events.filter(([e]) => e !== 'catalog:status').length
+      const n = work()
       hook.fn!()
       await sleep(50)
-      expect(events.length).toBe(n)
+      expect(work()).toBe(n)
     } finally {
       svc.stop()
     }

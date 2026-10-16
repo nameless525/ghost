@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { homedir } from 'node:os'
-import { buildDownloadPath, expandHome, extensionFor, MAX_SEGMENT_BYTES, renderTemplateSegments, sanitizeSegment, uniquePath } from './naming'
+import { buildDownloadPath, expandHome, extensionFor, MAX_SEGMENT_BYTES, renderTemplateSegments, rendersToFlac, sanitizeSegment, uniquePath } from './naming'
 import { buildTags, fetchableUrl, templateVars } from './tags'
 import { makeAlbum, makeTrack } from '../player/testing'
 
@@ -115,9 +115,27 @@ describe('extensionFor', () => {
     expect(extensionFor('mp3', { kind: 'http', url: 'https://x/a%20b.MP3?x=1', cacheKey: 'k' })).toBe('mp3')
     expect(extensionFor('opus', { kind: 'http', url: 'https://rr.googlevideo.com/videoplayback?id=1', cacheKey: 'k', formatHint: 'webm' })).toBe('webm')
     expect(extensionFor('aac', { kind: 'http', url: 'https://x/videoplayback', cacheKey: 'k' })).toBe('m4a')
-    expect(extensionFor('chip', { kind: 'http', url: 'https://x/Super%20Metroid.spc', cacheKey: 'k' })).toBe('spc')
+    expect(extensionFor('chip', { kind: 'http', url: 'https://x/Song.minipsf', cacheKey: 'k' })).toBe('minipsf')
     expect(extensionFor('flac', { kind: 'file', path: '/a/b.flac' })).toBe('flac')
     expect(extensionFor('unknown', { kind: 'http', url: 'https://x/page.php', cacheKey: 'k' })).toBe('bin')
+    expect(extensionFor('chip', { kind: 'http', url: 'https://x/set.zip', cacheKey: 'k', archiveEntry: 'Disc 1/01.mp3' })).toBe('mp3')
+  })
+
+  it('is .flac for what the engine renders: clips and chip / tracker / game-engine formats', () => {
+    const clip = { kind: 'http', url: 'https://x/ost.webm', cacheKey: 'k', formatHint: 'webm', clipStartMs: 60_000, clipEndMs: 90_000 } as const
+    expect(extensionFor('opus', clip)).toBe('flac')
+    expect(extensionFor('wav', { kind: 'file', path: '/a/b.wav', clipStartMs: 0 })).toBe('flac')
+    expect(extensionFor('chip', { kind: 'http', url: 'https://x/Super%20Metroid.spc', cacheKey: 'k' })).toBe('flac')
+    expect(extensionFor('chip', { kind: 'http', url: 'https://x/set.7z', cacheKey: 'k', formatHint: 'nsf', archiveEntry: 'Mega Man 2.nsf', subsong: 3 })).toBe('flac')
+    expect(extensionFor('chip', { kind: 'http', url: 'https://x/a.xm', cacheKey: 'k' })).toBe('flac')
+    expect(extensionFor('unknown', { kind: 'file', path: '/a/b.BRSTM' })).toBe('flac')
+    // the engine goes by the hint before the name, as here
+    expect(rendersToFlac({ kind: 'http', url: 'https://x/a.spc', cacheKey: 'k', formatHint: 'mp3' })).toBe(false)
+    expect(rendersToFlac({ kind: 'http', url: 'https://x/stream', cacheKey: 'k', formatHint: '.VGZ' })).toBe(true)
+    expect(rendersToFlac({ kind: 'http', url: 'https://x/a.mp3', cacheKey: 'k' })).toBe(false)
+    // unknown names: only the engine's look at the data decides
+    expect(rendersToFlac({ kind: 'http', url: 'https://x/page.php', cacheKey: 'k' })).toBeNull()
+    expect(rendersToFlac({ kind: 'file', path: '/a/b.minipsf' })).toBeNull()
   })
 })
 

@@ -1,8 +1,10 @@
 // Radial spectrum ring around the logo, drawn on a 2D canvas each frame from frame().bands.
 // Mirrored left/right (bass at the top, highs flowing down both sides), with osu!-style
 // peak-hold decay so bars rise instantly and fall smoothly. When nothing plays, a faint
-// breathing shimmer keeps the ring alive.
+// breathing shimmer keeps the ring alive. Under Reduce motion only the bars follow the music:
+// no rotation, a still shimmer, no beat or kiai boosts.
 import type { AnalysisFrame } from '@shared/types'
+import { idleSeconds } from '../../gfx/visualizers/util'
 
 /** Max canvas resolution (window.__ghostGfx.ringRes in dev). */
 const RING_MAX_RES = { v: 1.5 }
@@ -44,10 +46,12 @@ export class RingVisualiser {
    * @param radius inner radius (css px) where bars start
    * @param rgb bar colour
    * @param notch 0..1: shorten the bars at the bottom of the ring, where the wordmark sits
+   * @param reduce settings' Reduce motion
    */
-  draw(dt: number, now: number, f: AnalysisFrame | null, radius: number, rgb: readonly number[], kiai: number, pulse: number, playing: boolean, notch = 0): void {
+  draw(dt: number, now: number, f: AnalysisFrame | null, radius: number, rgb: readonly number[], kiai: number, pulse: number, playing: boolean, notch = 0, reduce = false): void {
     const { ctx, size, dpr } = this
     if (!size) return
+    if (reduce) kiai = pulse = 0
     const decay = Math.exp(-dt / 150)
     const amp = this.amp
     let peak = 0
@@ -77,7 +81,7 @@ export class RingVisualiser {
     // idle shimmer fades in when there's no signal
     const idleTarget = !f || !playing ? 1 : 0
     this.idle += (idleTarget - this.idle) * (1 - Math.exp(-dt / 600))
-    this.rot += (dt / 1000) * (playing ? 0.07 + kiai * 0.12 : 0.025)
+    if (!reduce) this.rot += (dt / 1000) * (playing ? 0.07 + kiai * 0.12 : 0.025)
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, size, size)
@@ -87,7 +91,7 @@ export class RingVisualiser {
     const maxLen = radius * 0.52
     const step = Math.PI / PER_SIDE
     const hw = radius * step * 0.36
-    const t = now / 1000
+    const t = idleSeconds({ now, reduce })
     ctx.globalCompositeOperation = 'lighter'
     const alpha = Math.min(0.9, 0.32 + kiai * 0.22 + pulse * 0.1)
     ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`

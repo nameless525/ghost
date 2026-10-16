@@ -55,7 +55,7 @@ import { Kbd } from '../../ui/Kbd'
 import { ScrollArea } from '../../ui/ScrollArea'
 import { SearchInput, type SearchInputHandle } from '../../ui/SearchInput'
 import { SegmentedControl } from '../../ui/SegmentedControl'
-import { cx, portalRoot, useEvent } from '../../ui/util'
+import { cx, fromNestedControl, portalRoot, useEvent } from '../../ui/util'
 import { MiniEq } from './MiniEq'
 import { addsMatch, highlightRanges, matchIndices, queryWords, queueTexts } from './queue-search'
 import { useStableQueue } from './store'
@@ -319,6 +319,9 @@ export function QueueList({ active, tab: initialTab = 'next', className, compact
   }
 
   const onRowKey = (e: RKeyboardEvent<HTMLDivElement>, r: Row) => {
+    // Enter on the row's remove button removes (it played the row: preventDefault ate the click);
+    // the arrows still move between rows from there
+    if ((e.key === 'Enter' || e.key === 'Delete' || e.key === 'Backspace') && fromNestedControl(e)) return
     const pos = posOf(rows, r.abs)
     if (e.key === 'Enter') {
       e.preventDefault()

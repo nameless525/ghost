@@ -253,7 +253,8 @@ export function parseDuration(input: string): { ms: number; unit: number } | nul
     if (parts.slice(1).some((p) => p >= 60)) return null
     const secs = parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1]
     const frac = m[4] ? Number('0.' + m[4]) : 0
-    return { ms: Math.round((secs + frac) * 1000), unit: m[4] ? 1 : 1000 }
+    // As precise as the digits typed, like "210.5s": "3:30.5" is [3:30.5, 3:30.6).
+    return { ms: Math.round((secs + frac) * 1000), unit: m[4] ? Math.max(1, 1000 / Math.pow(10, m[4].length)) : 1000 }
   }
   // unit sequence: 1h2m3s, 4.5m, 240s, 240 (seconds)
   const re = /(\d+(?:\.\d+)?)(hours|hour|hrs|hr|h|minutes|minute|mins|min|ms|m|seconds|second|secs|sec|s)?/y

@@ -695,3 +695,187 @@ fn progress_stall_clock_runs_while_a_reader_waits() {
         assert_eq!(p.stalled, Duration::ZERO, "{p:?}");
     }
 }
+
+/// How [`serve_scripted`] answers a request.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Reply {
+    /// This many bytes of the body, then the connection closes.
+    Close(usize),
+    /// This many bytes, then nothing, the connection held open (until the server is dropped).
+    Stall(usize),
+    /// The whole body, 16 KB every this long.
+    Trickle(Duration),
+}
+
+/// HTTP/1.1 server that ignores Range (always 200, declaring the whole length) and answers the
+/// `n`-th request for a path with `script(path, n)`. Records every request's path and Range.
+pub(crate) struct ScriptedServer {
+    base: String,
+    pub requests: Arc<parking_lot::Mutex<Vec<(String, String)>>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl ScriptedServer {
+    pub fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base)
+    }
+
+    pub fn requests_for(&self, path: &str) -> usize {
+        self.requests.lock().iter().filter(|(p, _)| p == path).count()
+    }
+}
+
+impl Drop for ScriptedServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn serve_scripted(data: Arc<Vec<u8>>, script: impl Fn(&str, usize) -> Reply + Send + Sync + 'static) -> ScriptedServer {
+    use std::io::{BufRead, BufReader, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let stop = Arc::new(AtomicBool::new(false));
+    let script = Arc::new(script);
+    let (rq, st) = (requests.clone(), stop.clone());
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let (data, rq, st, script) = (data.clone(), rq.clone(), st.clone(), script.clone());
+            std::thread::spawn(move || {
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut w = s;
+                let mut line = String::new();
+                if r.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let mut range = String::new();
+                loop {
+                    let mut h = String::new();
+                    if r.read_line(&mut h).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let h = h.trim_end();
+                    if h.is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = h.split_once(':') {
+                        if k.eq_ignore_ascii_case("range") {
+                            range = v.trim().to_string();
+                        }
+                    }
+                }
+                let n = {
+                    let mut seen = rq.lock();
+                    let n = seen.iter().filter(|(p, _)| *p == path).count();
+                    seen.push((path.clone(), range));
+                    n
+                };
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", data.len());
+                if w.write_all(head.as_bytes()).is_err() {
+                    return;
+                }
+                match script(&path, n) {
+                    Reply::Close(k) => {
+                        let _ = w.write_all(&data[..k]);
+                    }
+                    Reply::Stall(k) => {
+                        let _ = w.write_all(&data[..k]);
+                        let _ = w.flush();
+                        while !st.load(Ordering::Relaxed) {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                    }
+                    Reply::Trickle(every) => {
+                        for piece in data.chunks(16 * 1024) {
+                            std::thread::sleep(every);
+                            if w.write_all(piece).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    ScriptedServer { base: format!("http://127.0.0.1:{port}"), requests, stop }
+}
+
+/// Wait (bounded) until the server has had `n` requests for `path`.
+fn await_requests(srv: &ScriptedServer, path: &str, n: usize) {
+    let t = Instant::now();
+    while srv.requests_for(path) < n {
+        assert!(t.elapsed() < Duration::from_secs(10), "{:?}", srv.requests.lock());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A server that ignores Range closes its first response early; the retry (the whole file, no
+/// Range) sends a little, then nothing, holding the connection. A fresh URL for the same cache
+/// key (the player re-resolving the track) must not wait behind that response.
+#[test]
+fn stalled_whole_file_response_gives_way_to_a_fresh_url() {
+    let data = test_data(1024 * 1024, 50);
+    let srv = serve_scripted(data.clone(), |path, n| match (path, n) {
+        ("/broken", 0) => Reply::Close(1024),
+        ("/broken", _) => Reply::Stall(1024),
+        _ => Reply::Trickle(Duration::ZERO),
+    });
+    // Readers give up after 2 s; a silent response only after `http::IDLE_TIMEOUT` (15 s).
+    let mgr = CacheManager::new_for_test(tmp_dir("stalled-fresh"), 1 << 30, Duration::from_secs(2));
+    let mut old = mgr.open_reader(&spec(&srv.url("/broken"), "stalled"), None).unwrap();
+    let mut buf = vec![0u8; 1024];
+    old.read_exact(&mut buf).unwrap();
+    assert_eq!(&buf[..], &data[..1024]);
+    await_requests(&srv, "/broken", 2);
+    let mut fresh = mgr.open_reader(&spec(&srv.url("/fresh"), "stalled"), None).unwrap();
+    let mut all = Vec::new();
+    fresh.read_to_end(&mut all).unwrap();
+    assert_eq!(all, *data);
+    // The old reader goes on from the same entry.
+    old.read_exact(&mut buf).unwrap();
+    assert_eq!(&buf[..], &data[1024..2048]);
+    let ranges: Vec<_> = srv.requests.lock().iter().map(|(p, r)| (p.clone(), !r.is_empty())).collect();
+    assert_eq!(&ranges[..2], [("/broken".to_string(), true), ("/broken".to_string(), false)]);
+    assert!(ranges[2..].iter().all(|(p, _)| p == "/fresh"), "{ranges:?}");
+}
+
+/// The same stalled response, and its reader leaves: the fetcher must not hold the entry (its
+/// socket, its thread) waiting on it.
+#[test]
+fn stalled_whole_file_response_is_dropped_with_its_last_reader() {
+    let data = test_data(1024 * 1024, 51);
+    let srv = serve_scripted(data.clone(), |_, n| if n == 0 { Reply::Close(1024) } else { Reply::Stall(1024) });
+    let mgr = CacheManager::new_for_test(tmp_dir("stalled-left"), 1 << 30, Duration::from_secs(8));
+    let mut r = mgr.open_reader(&spec(&srv.url("/broken"), "left"), None).unwrap();
+    let mut buf = vec![0u8; 1024];
+    r.read_exact(&mut buf).unwrap();
+    await_requests(&srv, "/broken", 2);
+    drop(r);
+    let t = Instant::now();
+    while mgr.progress("left").is_some() {
+        assert!(t.elapsed() < Duration::from_secs(10), "a stalled response kept the entry open");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A response that sends nothing for the idle limit is dropped (and the request retried); a slow
+/// one that keeps coming is not, however long it takes in all.
+#[test]
+fn whole_file_responses_idle_out_but_slow_ones_finish() {
+    let data = test_data(512 * 1024, 52);
+    // The last response takes ~1.6 s in all, but no gap in it comes near the 1 s idle limit.
+    let srv = serve_scripted(data.clone(), |_, n| match n {
+        0 => Reply::Close(1024),
+        1 => Reply::Stall(1024),
+        _ => Reply::Trickle(Duration::from_millis(50)),
+    });
+    let mut mgr = CacheManager::new_for_test(tmp_dir("idle"), 1 << 30, Duration::from_secs(8));
+    Arc::get_mut(&mut mgr).unwrap().http = Arc::new(crate::http::Http::with_idle_timeout("ghost-test", Duration::from_secs(1)));
+    let mut r = mgr.open_reader(&spec(&srv.url("/slow"), "idle"), None).unwrap();
+    let mut all = Vec::new();
+    r.read_to_end(&mut all).unwrap();
+    assert_eq!(all, *data);
+    assert_eq!(srv.requests_for("/slow"), 3, "{:?}", srv.requests.lock());
+}

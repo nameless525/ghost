@@ -223,6 +223,8 @@ pub struct DownloadOptions {
 pub struct ArchiveEntryInfo {
     pub path: String,
     pub size: u64,
+    /// Multi-song chip files (NSF, NSFE, GBS): the bytes that say how many songs they hold.
+    pub head: Option<Vec<u8>>,
 }
 
 /// What `inspect_archive` found: every file, plus the text of the `.m3u` / `.txt` files
@@ -472,9 +474,11 @@ impl Engine {
     pub fn set_analysis_demand(&self, on: bool) {
         self.cmd(engine::Cmd::AnalysisDemand(on));
     }
-    /// Applies live to playing tracks that carry loop points.
+    /// Applies live to playing tracks that carry loop points; their new length comes as a
+    /// `TrackInfo` (duration `None`: Endless).
     pub fn set_loop(&self, mode: LoopMode, count: u32, fade_sec: f32) {
         self.inner.loops.set(mode, count, if fade_sec.is_finite() { fade_sec } else { 10.0 });
+        self.cmd(engine::Cmd::Loops);
     }
     pub fn set_normalization(&self, enabled: bool, target_lufs: f32, mode: NormalizationMode) {
         // A NaN target would make every voice gain NaN (and poison the limiter state).
@@ -554,8 +558,8 @@ impl Engine {
 
     /// Copy/fetch the source to `dest`, tag it, emit `EngineEvent::Download` progress.
     /// Chip / tracker / game-engine formats and clips are rendered to FLAC (see
-    /// [`DownloadOptions`]); the file then gets a `.flac` extension, and the `Done` event carries
-    /// the final path.
+    /// [`DownloadOptions`]); the file then gets a `.flac` extension. An existing file is never
+    /// replaced (a taken name is numbered, `Song (2).flac`): the `Done` event carries the final path.
     pub fn download(&self, download_id: String, source: SourceSpec, dest: PathBuf, tags: TagInfo) {
         self.download_with(download_id, source, dest, tags, DownloadOptions::default());
     }

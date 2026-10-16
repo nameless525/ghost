@@ -13,9 +13,9 @@ export const CATALOG_SCHEMA_VERSION = 2
  * Format of the FTS documents (ftsFold + search aliases). Bump it when that changes: existing
  * catalogs rebuild their FTS rows in the background on the next start.
  */
-export const FTS_VERSION = 2
+export const FTS_VERSION = 3
 /** Version of the album → game clustering rules (normalize.ts). A change re-clusters on next start. */
-export const CLUSTER_VERSION = 2
+export const CLUSTER_VERSION = 3
 /** catalog_meta key: a crawl ended with its full re-cluster left to a later one (see Crawler). */
 export const RECLUSTER_PENDING = 'recluster_pending'
 

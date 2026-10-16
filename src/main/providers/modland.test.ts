@@ -285,6 +285,14 @@ describe('modland: names', () => {
     expect(modlandTrackTitles(['earthbound (battle01)', 'a bad dream'], 'Earthbound').map((t) => t.title)).toEqual(['Battle01', 'A Bad Dream'])
     expect(modlandTrackTitles(['01 - プレリュード'], 'ファイナルファンタジーIV')).toEqual([{ number: 1, title: 'プレリュード' }])
   })
+
+  it('track titles: a short name after a numbered dot is the title, not an extension', () => {
+    expect(modlandTrackTitles(['01.Intro', '02.Theme', '03.A'], 'Game')).toEqual([
+      { number: 1, title: 'Intro' },
+      { number: 2, title: 'Theme' },
+      { number: 3, title: 'A' }
+    ])
+  })
 })
 
 describe('modland: building the index', () => {
@@ -379,6 +387,16 @@ describe('modland: building the index', () => {
     expect(modlandAlbumHit(album('nsf/- unknown/mother.nsfe')).onlyForKnownGame).toBeUndefined()
     expect(modlandAlbumHit(album('spc/chrono trigger')).onlyForKnownGame).toBeUndefined()
     expect(modlandAlbumHit(album('gbs/m. maekawa/adventure island 2.gbs')).onlyForKnownGame).toBeUndefined()
+  })
+
+  it('folder tracks: files of one name in two composer folders are two songs unless they are copies', () => {
+    const lines = ['100\tNintendo SPC/A/Game/01.spc', '200\tNintendo SPC/B/Game/01.spc', '150\tNintendo SPC/A/Game/02.spc', '150\tNintendo SPC/B/Game/02.spc'].join('\n')
+    const tracks = folderTracks(buildModlandIndex(lines, 0).byRef.get('spc/game')!)
+    expect(tracks.map((t) => [t.locator, t.title, t.files[0].sizeBytes])).toEqual([
+      ['Nintendo SPC/A/Game/01.spc', 'Track 1', 100],
+      ['Nintendo SPC/B/Game/01.spc', 'Track 1 (B)', 200],
+      ['Nintendo SPC/A/Game/02.spc', 'Track 2', 150]
+    ])
   })
 
   it('folder tracks: disc numbering, extras last, streams', () => {

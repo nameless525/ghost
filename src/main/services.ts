@@ -99,6 +99,7 @@ function unavailableCatalog(reason: string): CatalogService {
     reindex: fail,
     browse: async (q: BrowseQuery) => ({ total: 0, offset: q.offset, groups: [] }),
     groupAlbums: async () => [],
+    groupAlbumPage: async (_key, _q, offset) => ({ total: 0, offset, albums: [] }),
     album: fail,
     game: async () => null,
     tracks: async () => [],
@@ -296,6 +297,7 @@ export async function createServices(send: Broadcast): Promise<ServicesHandle> {
       reindex: () => catalog.reindex(),
       browse: (q) => catalog.browse(q),
       groupAlbums: (groupKey, q) => catalog.groupAlbums(groupKey, q),
+      groupAlbumPage: (groupKey, q, offset, limit) => catalog.groupAlbumPage(groupKey, q, offset, limit),
       album: async (albumId) => {
         const d = await catalog.album(albumId)
         return { ...d, tracks: library.decorate(d.tracks) }

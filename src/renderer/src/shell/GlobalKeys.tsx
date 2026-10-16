@@ -4,7 +4,7 @@ import { ghost } from '../ghost'
 import { useSettings, updateSettings } from '../state/settings'
 import { useUI } from '../state/ui'
 import { sfx } from '../sound'
-import { useKeybinding } from './keys'
+import { focusedControlTakesKey, useKeybinding } from './keys'
 import { lazyModule, useLazyModule } from './lazyModule'
 import { goBack } from './navigation'
 import { closeShortcuts, openShortcuts, useShortcutsSheet } from './shortcuts'
@@ -23,20 +23,13 @@ function SheetLoader({ open }: { open: boolean }) {
   return Sheet ? <Sheet open={open} onClose={closeShortcuts} /> : null
 }
 
-const isActivatable = (el: Element | null) =>
-  !!el && (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'SUMMARY' || ['button', 'menuitem', 'option', 'switch', 'tab', 'radio', 'checkbox'].includes(el.getAttribute('role') ?? ''))
-
 export function GlobalKeys() {
   // Space: play/pause, unless a keyboard-focused control wants Space for itself. A control
   // that merely kept focus after a mouse click is blurred instead of being re-activated.
   useKeybinding(
     'Space',
     () => {
-      const el = document.activeElement as HTMLElement | null
-      if (isActivatable(el)) {
-        if (el!.matches(':focus-visible')) return false
-        el!.blur()
-      }
+      if (focusedControlTakesKey()) return false
       void ghost().player.toggle()
     },
     { scope: 'global', repeat: false }

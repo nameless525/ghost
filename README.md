@@ -31,7 +31,7 @@ No account, no ads, no tracking. Everything GHOST knows lives on your computer.
 - **Visuals that follow the beat.** Three visualizers, beat-synced motion, a "kiai" glow on the most intense passages, and a BPM and intensity rating for each track you play.
 - **Your library.** Queue (with search), playlists, smart playlists, likes, history, and downloads saved with full tags and cover art.
 - **Keyboard first.** Every action has a key, the way osu!'s song select does. Press <kbd>?</kbd> anywhere to see them all.
-- **Your own music too.** Add your music folders and they show up beside everything else.
+- **Your own music too.** Add your music folders: their albums show up in Browse under their games, marked Local, and play from your files, even offline. They also stand in for the same tracks from other sources.
 
 ## Screenshots
 
@@ -66,7 +66,7 @@ GHOST isn't signed with a paid developer certificate, so your system will ask on
 
 ### Updates
 
-From 0.4.0 on, GHOST checks for a new release once a day. It downloads it in the background ("Updating GHOST to 0.4.1"), checks it against its SHA-256 checksum, and installs it when you quit, or right away with **Restart to update** in the top bar. The first launch after an update shows what's new. Turn **Install updates automatically** off in Settings → About to be asked first instead.
+From 0.4.0 on, GHOST checks for a new release each time it starts (a few seconds in, so it doesn't slow startup) and once a day while it stays open. It downloads it in the background ("Updating GHOST to 0.4.1"), checks it against its SHA-256 checksum, and installs it when you quit, or right away with **Restart to update** in the top bar. The first launch after an update shows what's new. Turn **Install updates automatically** off in Settings → About to be asked first instead.
 
 The `.deb` package can't replace itself (that needs administrator rights): GHOST tells you when a release is out, and you install it the same way as before. The AppImage, the Windows installer and the Mac app in Applications update themselves.
 
@@ -108,7 +108,7 @@ npm run dev
 | Layer | Built with |
 |---|---|
 | Interface | Electron, React 19, PixiJS for the background and visualizers, Web Animations for motion |
-| Audio engine | Rust (symphonia, cpal, rubato) bound to Node with napi-rs, plus libgme, vgmstream and libopenmpt for game formats |
+| Audio engine | Rust (symphonia, cpal, rubato) bound to Node with napi-rs, plus libgme, vgmstream and libopenmpt for game formats and libopus for Opus |
 | Catalog | SQLite with full-text search, in a worker thread; one paced crawler per source |
 | Live analysis | The engine publishes the spectrum and waveform to shared memory, which the interface reads every frame without any messaging |
 
@@ -126,8 +126,8 @@ These archives are run by fans, often at their own expense. If you use one a lot
 
 ## Acknowledgements
 
-GHOST stands on the work of many others: the archivists behind [KHInsider](https://downloads.khinsider.com), [Zophar's Domain](https://www.zophar.net/music), [Modland](https://modland.com), [vgmrips](https://vgmrips.net) and the [Internet Archive](https://archive.org); the [game-music-emu](https://github.com/libgme/game-music-emu), [vgmstream](https://github.com/vgmstream/vgmstream), [libopenmpt](https://lib.openmpt.org), [symphonia](https://github.com/pdeljanov/Symphonia) and [yt-dlp](https://github.com/yt-dlp/yt-dlp) projects; and [osu!](https://osu.ppy.sh), whose song select inspired the interface. GHOST isn't affiliated with any of them.
+GHOST stands on the work of many others: the archivists behind [KHInsider](https://downloads.khinsider.com), [Zophar's Domain](https://www.zophar.net/music), [Modland](https://modland.com), [vgmrips](https://vgmrips.net) and the [Internet Archive](https://archive.org); the [game-music-emu](https://github.com/libgme/game-music-emu), [vgmstream](https://github.com/vgmstream/vgmstream), [libopenmpt](https://lib.openmpt.org), [Opus](https://opus-codec.org), [symphonia](https://github.com/pdeljanov/Symphonia) and [yt-dlp](https://github.com/yt-dlp/yt-dlp) projects; and [osu!](https://osu.ppy.sh), whose song select inspired the interface. GHOST isn't affiliated with any of them.
 
 ## License
 
-GHOST is released under the [MIT License](LICENSE). The decoder libraries in `native/vendor/` keep their own licenses (LGPL-2.1+ for libgme, BSD-3-Clause for libopenmpt, libogg and libvorbis, and ISC-style for vgmstream); see each library's folder.
+GHOST is released under the [MIT License](LICENSE). The decoder libraries in `native/vendor/` keep their own licenses (LGPL-2.1+ for libgme, BSD-3-Clause for libopenmpt, libogg, libvorbis and libopus, and ISC-style for vgmstream); see each library's folder.

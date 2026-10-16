@@ -92,6 +92,8 @@ export class CatalogClient {
   readonly catalog: CatalogService
   private ep: RpcEndpoint | null = null
   private queue: Queued[] = []
+  /** Set by close(): no worker is coming, so calls fail with this instead of queueing. */
+  private closed: Error | null = null
   private settings: Settings | null = null
   private started = false
   private ready = false
@@ -108,6 +110,7 @@ export class CatalogClient {
   /** Connect a (new) worker. Queued calls are sent; settings and `start` are replayed. */
   attach(port: PortLike): void {
     this.ep?.close(new Error('The catalog worker was replaced.'))
+    this.closed = null
     this.ready = false
     this.ep = new RpcEndpoint(port, this.handlers(), {
       broadcast: (event, payload) => {
@@ -139,9 +142,10 @@ export class CatalogClient {
     this.ready = false
   }
 
-  /** Fail queued calls too (shutting down for good). */
+  /** Fail queued calls, and new ones until a worker is attached again (shut down, or the catalog can't run). */
   close(reason: Error): void {
     this.detach(reason)
+    this.closed = reason
     for (const c of this.queue) c.reject(reason)
     this.queue = []
   }
@@ -200,7 +204,10 @@ export class CatalogClient {
 
   private send(method: string, args: unknown[]): Promise<unknown> {
     const ep = this.ep
-    if (!ep) return new Promise((resolve, reject) => this.queue.push({ method, args, resolve, reject }))
+    if (!ep) {
+      if (this.closed) return Promise.reject(this.closed)
+      return new Promise((resolve, reject) => this.queue.push({ method, args, resolve, reject }))
+    }
     const t0 = performance.now()
     const p = ep.call(method, args)
     const record = (ok: boolean) => {
@@ -222,6 +229,8 @@ export class CatalogClient {
   }
 
   private fire(method: string, args: unknown[]): void {
+    // Nobody waits on these: after a terminal failure (already reported) they're dropped quietly.
+    if (this.closed) return
     this.send(method, args).catch((e) => this.log(`${method} failed: ${(e as Error)?.message ?? e}`))
   }
 

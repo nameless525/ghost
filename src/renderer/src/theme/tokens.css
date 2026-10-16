@@ -44,7 +44,7 @@
   --accent-hi-rgb: 255 140 192;
   --accent-lo: #b23a78; /* deeper, for gradients */
   --accent-lo-rgb: 178 58 120;
-  --accent-ink: #ffffff; /* text on an accent fill */
+  --accent-ink: #1a1024; /* text on an accent fill: the dark ink reads best on every normalised accent */
 
   /* ---- per-overlay hues (osu!-style: each overlay owns a colour) ---- */
   --hue-browse: #ff66aa;

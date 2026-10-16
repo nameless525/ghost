@@ -26,6 +26,22 @@ fn voice(key: u64, data: &[f32], eof: bool) -> Box<Voice> {
     voice_with(key, Bus::Music, data, eof)
 }
 
+/// A voice whose decoder is still running: `data` is buffered, the producer feeds the rest.
+fn live_voice(key: u64, bus: Bus, data: &[f32]) -> (Box<Voice>, rtrb::Producer<f32>) {
+    let (mut p, c) = rtrb::RingBuffer::new(RATE as usize * 4);
+    p.push_entire_slice(data).unwrap();
+    let shared = VoiceShared::new(key);
+    shared.origin_set.store(true, Ordering::Release);
+    (Box::new(Voice::new(key, key as u32, bus, c, shared, 1.0)), p)
+}
+
+/// What the decoder does at the end: the last frames, then EOF.
+fn finish(p: &mut rtrb::Producer<f32>, shared: &VoiceShared, data: &[f32], end: u64) {
+    p.push_entire_slice(data).unwrap();
+    shared.end_pos.store(end, Ordering::Release);
+    shared.eof.store(true, Ordering::Release);
+}
+
 fn sine(frames: usize, freq: f32, amp: f32, phase0: usize) -> Vec<f32> {
     (0..frames)
         .flat_map(|i| {
@@ -110,6 +126,28 @@ fn pause_resume_has_no_clicks() {
     assert!(events(&mut link).contains(&MixerEvent::Paused));
 }
 
+/// A seek that lands while a pause still fades out: the new voice waits for playback instead of
+/// starting into the fade (where its first frames would be lost unheard).
+#[test]
+fn seek_during_pause_fade_waits_for_play() {
+    let (mut m, mut link, _) = mixer(false);
+    let a: Vec<f32> = vec![0.5; RATE as usize * 2];
+    let b = sine(RATE as usize, 300.0, 0.5, 0);
+    send(&mut link, MixerCmd::SetCurrent { voice: Some(voice(1, &a, true)), fade_frames: 0 });
+    send(&mut link, MixerCmd::Play);
+    render(&mut m, 4_800, 512);
+    assert_eq!(events(&mut link), vec![MixerEvent::Started(1)]);
+    send(&mut link, MixerCmd::Pause);
+    send(&mut link, MixerCmd::SetCurrent { voice: Some(voice(2, &b, true)), fade_frames: 480 });
+    render(&mut m, 4_800, 512);
+    assert_eq!(events(&mut link), vec![MixerEvent::Paused]);
+    send(&mut link, MixerCmd::Play);
+    let lat = m.latency_frames();
+    let out = render(&mut m, 4_800, 512);
+    assert_eq!(events(&mut link), vec![MixerEvent::Started(2)]);
+    assert_eq!(&out[lat * 2..4_800 * 2], &b[..(4_800 - lat) * 2], "voice 2 didn't start from its first frame");
+}
+
 #[test]
 fn seek_style_switch_is_click_free() {
     let (mut m, mut link, _) = mixer(false);
@@ -180,6 +218,54 @@ fn crossfade_is_equal_power_and_advances() {
     assert!(ev.contains(&MixerEvent::Advanced { from: 1, to: 2 }), "{ev:?}");
     // Smooth throughout.
     assert!(max_jump(&out[lat * 2..]) < 0.01);
+}
+
+/// The crossfade point comes while the next track is still short of its prefill: the current one
+/// plays on at full level, and the (shorter) crossfade starts once the next one can play.
+#[test]
+fn crossfade_waits_until_the_next_track_can_play() {
+    let (mut m, mut link, _) = mixer(false);
+    let a: Vec<f32> = vec![0.5; RATE as usize * 2]; // 1 s DC
+    let xf = RATE / 2;
+    send(&mut link, MixerCmd::SetTransition(Transition::Crossfade(xf)));
+    send(&mut link, MixerCmd::SetCurrent { voice: Some(voice(1, &a, true)), fade_frames: 0 });
+    let (b, mut feed) = live_voice(2, Bus::Music, &[]);
+    let b_shared = b.shared.clone();
+    send(&mut link, MixerCmd::SetNext(Some(b)));
+    send(&mut link, MixerCmd::Play);
+    let lat = m.latency_frames();
+    let waited = xf as usize + 2_000;
+    let out = render(&mut m, waited + lat, 500);
+    assert_eq!(events(&mut link), vec![MixerEvent::Started(1)], "advanced into a track that can't play");
+    assert!(out[(xf as usize + lat) * 2..].iter().all(|&s| s == 0.5), "current track faded before the next one could play");
+    // The next track arrives: the overlap is what is left of the current one.
+    finish(&mut feed, &b_shared, &vec![0.5; RATE as usize * 2], RATE as u64);
+    let rest = render(&mut m, RATE as usize, 500);
+    assert_eq!(events(&mut link), vec![MixerEvent::Advanced { from: 1, to: 2 }, MixerEvent::Started(2)]);
+    // It starts with this render, `waited + lat` frames into the current track (heard `lat` later).
+    let mid = lat + (RATE as usize - waited - lat) / 2;
+    let expect = 0.5 * 2.0 * (std::f32::consts::FRAC_PI_4).cos();
+    assert!((rest[mid * 2] - expect).abs() < 0.01, "mid {} expect {expect}", rest[mid * 2]);
+    let all: Vec<f32> = out.into_iter().chain(rest).collect();
+    assert!(max_jump(&all[lat * 2..]) < 0.01);
+}
+
+/// The next track never gets ready: the current one plays to its end at full level, then the
+/// player moves on as at any track end (and waits for the next one there).
+#[test]
+fn crossfade_falls_back_to_a_plain_end() {
+    let (mut m, mut link, _) = mixer(false);
+    let a: Vec<f32> = vec![0.5; RATE as usize * 2];
+    send(&mut link, MixerCmd::SetTransition(Transition::Crossfade(RATE / 2)));
+    send(&mut link, MixerCmd::SetCurrent { voice: Some(voice(1, &a, true)), fade_frames: 0 });
+    let (b, _feed) = live_voice(2, Bus::Music, &[]);
+    send(&mut link, MixerCmd::SetNext(Some(b)));
+    send(&mut link, MixerCmd::Play);
+    let lat = m.latency_frames();
+    let out = render(&mut m, RATE as usize + lat + 4_800, 500);
+    assert_eq!(events(&mut link), vec![MixerEvent::Started(1), MixerEvent::Advanced { from: 1, to: 2 }]);
+    assert!(out[lat * 2..(RATE as usize + lat) * 2].iter().all(|&s| s == 0.5), "current track faded");
+    assert!(out[(RATE as usize + lat) * 2..].iter().all(|&s| s == 0.0));
 }
 
 #[test]
@@ -278,6 +364,31 @@ fn preview_ducks_music_and_ends() {
     assert!((out[out.len() - 2] - 0.5).abs() < 1e-3, "unducked {}", out[out.len() - 2]);
 }
 
+/// Stopping a preview whose stream has stalled (nothing buffered, or less than its fade): its fade
+/// runs on device time, it ends, the music comes back up, and frames arriving afterwards never sound.
+#[test]
+fn stopping_a_starved_preview_ends_it() {
+    for (buffered, before_stop) in [(9_600, 12_000), (12_000, 512)] {
+        let (mut m, mut link, _) = mixer(false);
+        let music: Vec<f32> = vec![0.5; RATE as usize * 8];
+        send(&mut link, MixerCmd::SetCurrent { voice: Some(voice(1, &music, true)), fade_frames: 0 });
+        send(&mut link, MixerCmd::Play);
+        let (pv, mut feed) = live_voice(9, Bus::Preview, &vec![0.25; buffered * 2]);
+        send(&mut link, MixerCmd::Preview(pv));
+        render(&mut m, before_stop, 512);
+        assert_eq!(events(&mut link), vec![MixerEvent::Started(1), MixerEvent::PreviewStarted(9)], "buffered {buffered}");
+        send(&mut link, MixerCmd::StopPreview);
+        let out = render(&mut m, RATE as usize, 512);
+        assert_eq!(events(&mut link), vec![MixerEvent::PreviewEnded(9)], "buffered {buffered}");
+        assert!(m.preview.is_none());
+        assert!((out[out.len() - 2] - 0.5).abs() < 1e-6, "music still ducked: {}", out[out.len() - 2]);
+        // The stream recovers: nothing of it is heard any more.
+        feed.push_entire_slice(&vec![0.25; RATE as usize]).unwrap();
+        let out = render(&mut m, RATE as usize / 2, 512);
+        assert!(out.iter().all(|&s| (s - 0.5).abs() < 1e-6), "late preview frames sounded (buffered {buffered})");
+    }
+}
+
 #[test]
 fn preview_auto_stops_after_30s() {
     let (mut m, mut link, _) = mixer(false);
@@ -340,6 +451,39 @@ fn offline_readiness_waits_for_data() {
     m.process_commands();
     assert!(m.is_active());
     assert!(!m.offline_ready(512), "only 100 frames buffered and not EOF");
+}
+
+/// Offline gapless: a first track shorter than one output block ends inside the very block it
+/// starts in, so the sink must wait for the next track before rendering it, or a gap of silence
+/// is baked into the render.
+#[test]
+fn offline_waits_for_next_when_the_first_track_ends_in_its_first_block() {
+    let sig = sine(5_100, 441.0, 0.8, 0);
+    let split = 100;
+    for block in [64, 512, 4096, 8192] {
+        let (mut m, mut link, _) = mixer(true);
+        send(&mut link, MixerCmd::SetCurrent { voice: Some(voice(1, &sig[..split * 2], true)), fade_frames: 0 });
+        let (b, mut feed) = live_voice(2, Bus::Music, &[]);
+        let b_shared = b.shared.clone();
+        send(&mut link, MixerCmd::SetNext(Some(b)));
+        send(&mut link, MixerCmd::Play);
+        // What the null sink does: render a block once it is ready, else wait for the decoders.
+        let lat = m.latency_frames();
+        let mut out = Vec::new();
+        let mut waited = false;
+        m.process_commands();
+        while out.len() < (sig.len() / 2 + lat) * 2 {
+            if !m.offline_ready(block) {
+                assert!(!waited, "block {block}: still not ready with the next track decoded");
+                waited = true;
+                finish(&mut feed, &b_shared, &sig[split * 2..], (sig.len() / 2 - split) as u64);
+                continue;
+            }
+            out.extend(render(&mut m, block, block));
+        }
+        assert!(waited, "block {block}: rendered without the next track");
+        assert_eq!(&out[lat * 2..(sig.len() / 2 + lat) * 2], &sig[..], "block {block}");
+    }
 }
 
 /// Render cost of the RT path (perf audit): `cargo test --release -p ghost-engine --lib

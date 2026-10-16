@@ -14,7 +14,7 @@ import type { EngineBridge, EngineEvent } from '../engine/types'
 import type { Broadcast } from '../ipc'
 import type { DownloadRecord, DownloadsRepo } from '../library/downloads-repo'
 import { ACCESS_DENIED } from '../net/errors'
-import { buildDownloadPath, expandHome, extensionFor, uniquePath } from './naming'
+import { buildDownloadPath, expandHome, extensionFor, rendersToFlac, uniquePath } from './naming'
 import { buildTags, templateVars } from './tags'
 
 export type DownloadCatalog = Pick<CatalogService, 'album' | 'albumOf' | 'resolveSources' | 'getAnalysis' | 'markSourceFailed'>
@@ -50,6 +50,11 @@ interface Job {
   dest: string | null
   /** engine.download() has been called for the current source. */
   launched: boolean
+  /**
+   * Id the engine knows the current attempt by (one per engine.download call): events of an
+   * earlier attempt of the same item, e.g. a canceled one before a retry, then match no job.
+   */
+  engineId: string | null
   track: TrackView | null
   lastError: string | null
   /** Already re-resolved once after a 401/403/410. */
@@ -73,6 +78,7 @@ export class DownloadManager implements DownloadsAPI {
   private readonly seq = new Map<ID, number>()
   private nextSeq = 0
   private readonly active = new Map<ID, Job>()
+  private attempts = 0
   private readonly reserved = new Set<string>()
   private readonly batches = new Map<string, Batch>()
   private readonly repo: DownloadsRepo
@@ -209,8 +215,9 @@ export class DownloadManager implements DownloadsAPI {
     const { ids, label } = await this.targetTrackIds(target)
     const unique = [...new Set(ids)]
     if (!unique.length) return
-    const busy = new Set([...this.items.values()].filter((r) => !FINAL.includes(r.status)).map((r) => r.trackId))
     const tracks = await this.deps.library.fetchTracks(unique)
+    // Taken after the last await, so an overlapping enqueue's rows (inserted below, synchronously) count.
+    const busy = this.busyTracks()
     const fresh = tracks.filter((t) => !busy.has(t.id) && !this.deps.library.downloadedPath(t.id))
     const skipped = tracks.length - fresh.length
     if (!fresh.length) {
@@ -258,6 +265,16 @@ export class DownloadManager implements DownloadsAPI {
     this.pump()
   }
 
+  /** Tracks with an unfinished download (one per track at most). */
+  private busyTracks(): Set<ID> {
+    return new Set([...this.items.values()].filter((r) => !FINAL.includes(r.status)).map((r) => r.trackId))
+  }
+
+  /** The job still owns its item: not canceled, not replaced by a retry, and the manager is running. */
+  private live(job: Job): boolean {
+    return !job.canceled && !this.disposed && this.active.get(job.id) === job
+  }
+
   private pump(): void {
     if (this.disposed) return
     while (this.active.size < this.concurrency) {
@@ -265,7 +282,7 @@ export class DownloadManager implements DownloadsAPI {
         .filter((r) => r.status === 'queued' && !this.active.has(r.id))
         .sort((a, b) => a.createdAt - b.createdAt || (this.seq.get(a.id) ?? 0) - (this.seq.get(b.id) ?? 0))[0]
       if (!next) return
-      const job: Job = { id: next.id, canceled: false, sources: [], srcIdx: -1, dest: null, launched: false, track: null, lastError: null }
+      const job: Job = { id: next.id, canceled: false, sources: [], srcIdx: -1, dest: null, launched: false, engineId: null, track: null, lastError: null }
       this.active.set(next.id, job)
       void this.track(this.start(next, job))
     }
@@ -276,23 +293,23 @@ export class DownloadManager implements DownloadsAPI {
     rec.error = null
     try {
       const [track] = await this.deps.library.fetchTracks([rec.trackId])
-      if (job.canceled) return
+      if (!this.live(job)) return
       if (!track) throw new Error('This track is no longer in the catalog.')
       job.track = track
       const sources = await this.deps.catalog.resolveSources(rec.trackId, { quality: this.deps.getSettings().sources.quality })
-      if (job.canceled) return
+      if (!this.live(job)) return
       job.sources = sources
       if (!sources.length) throw new Error('No downloadable source found.')
       await this.launchNext(rec, job)
     } catch (e) {
-      if (!job.canceled) this.fail(rec, job, (e as Error)?.message ?? String(e))
+      if (this.live(job)) this.fail(rec, job, (e as Error)?.message ?? String(e))
     }
   }
 
   private async reresolve(rec: DownloadRecord, job: Job): Promise<void> {
     try {
       const fresh = await this.deps.catalog.resolveSources(rec.trackId, { quality: this.deps.getSettings().sources.quality })
-      if (job.canceled) return
+      if (!this.live(job)) return
       if (fresh.length) {
         job.sources = fresh
         job.srcIdx = -1
@@ -305,7 +322,7 @@ export class DownloadManager implements DownloadsAPI {
 
   private async launchNext(rec: DownloadRecord, job: Job): Promise<void> {
     for (;;) {
-      if (job.canceled) return
+      if (!this.live(job)) return
       const src = job.sources[++job.srcIdx]
       if (!src) return this.fail(rec, job, job.lastError ?? 'Every source failed.')
       const track = job.track!
@@ -315,8 +332,10 @@ export class DownloadManager implements DownloadsAPI {
       } catch {
         meta = null
       }
-      if (job.canceled) return
+      if (!this.live(job)) return
       const settings = this.deps.getSettings()
+      // Named (and reserved) as what the engine will write: a render is a .flac whatever the source.
+      const render = rendersToFlac(src.source)
       const ext = extensionFor(src.format, src.source)
       const base = buildDownloadPath({ baseDir: expandHome(settings.library.downloadDir), template: settings.library.namingTemplate, vars: templateVars(track, meta?.album ?? null, meta?.game ?? null), ext })
       if (job.dest) this.reserved.delete(job.dest.toLowerCase())
@@ -329,19 +348,28 @@ export class DownloadManager implements DownloadsAPI {
       } catch {
         analysis = null
       }
+      // A cancel (or retry) while the tags loaded already released `dest` and settled the item.
+      if (!this.live(job)) return
       const tags = buildTags(track, meta?.album ?? null, meta?.game ?? null, analysis)
-      rec.format = src.format
+      rec.format = render ? 'flac' : src.format
       rec.totalBytes = src.sizeBytes ?? null
       rec.bytes = 0
       rec.progress = 0
       if (meta?.album && !rec.albumTitle) rec.albumTitle = meta.album.title
+      // Set before the call: an engine may report synchronously (the null engine fails at once).
+      const engineId = `${rec.id}:${++this.attempts}`
+      job.engineId = engineId
       try {
         this.mkdirp(dirname(dest))
-        this.deps.engine.download(rec.id, src.source, dest, tags)
+        // Pin the engine's render choice to the one the name was built from (null: the engine sniffs).
+        this.deps.engine.download(engineId, src.source, dest, tags, render === null ? undefined : { renderFlac: render })
       } catch (e) {
+        job.engineId = null
         job.lastError = (e as Error)?.message ?? String(e)
         continue
       }
+      // Already over (and handled) if the engine reported a terminal event synchronously.
+      if (job.engineId !== engineId || !this.live(job)) return
       job.launched = true
       this.setStatus(rec, 'downloading')
       return
@@ -351,8 +379,8 @@ export class DownloadManager implements DownloadsAPI {
   /** Engine 'download' events. */
   handleEngineEvent(e: EngineEvent): void {
     if (e.type !== 'download') return
-    const rec = this.items.get(e.downloadId)
-    const job = this.active.get(e.downloadId)
+    const job = this.jobOfAttempt(e.downloadId)
+    const rec = job && this.items.get(job.id)
     if (!rec || !job || job.canceled) return
     switch (e.status) {
       case 'progress': {
@@ -370,6 +398,7 @@ export class DownloadManager implements DownloadsAPI {
         const msg = e.error ?? 'Download failed.'
         job.lastError = msg
         job.launched = false
+        job.engineId = null
         const src = job.sources[job.srcIdx]
         if (src) {
           try {
@@ -391,12 +420,19 @@ export class DownloadManager implements DownloadsAPI {
         return
       }
       case 'canceled':
+        job.canceled = true
         this.finishJob(rec, job)
         if (rec.status !== 'canceled') this.setStatus(rec, 'canceled')
         this.settleBatch(rec)
         this.pump()
         return
     }
+  }
+
+  /** The active job whose current engine attempt is `engineId` (at most `concurrency` to look through). */
+  private jobOfAttempt(engineId: string): Job | undefined {
+    for (const job of this.active.values()) if (job.engineId === engineId) return job
+    return undefined
   }
 
   private finishJob(rec: DownloadRecord, job: Job): void {
@@ -464,9 +500,9 @@ export class DownloadManager implements DownloadsAPI {
     const job = this.active.get(id)
     if (job) {
       job.canceled = true
-      if (job.launched) {
+      if (job.launched && job.engineId) {
         try {
-          this.deps.engine.cancelDownload(id)
+          this.deps.engine.cancelDownload(job.engineId)
         } catch (e) {
           console.error('[downloads] cancelDownload failed:', e)
         }
@@ -482,6 +518,12 @@ export class DownloadManager implements DownloadsAPI {
   async retry(id: ID): Promise<void> {
     const rec = this.items.get(id)
     if (!rec || (rec.status !== 'error' && rec.status !== 'canceled')) return
+    // As in enqueue: a newer download of this track is queued or already on disk.
+    const busy = this.busyTracks().has(rec.trackId)
+    if (busy || this.deps.library.downloadedPath(rec.trackId)) {
+      this.notify('info', busy ? 'Already downloading' : 'Already downloaded', rec.title, rec.cover, `dl-dupe-${rec.trackId}`)
+      return
+    }
     rec.error = null
     rec.bytes = 0
     rec.progress = 0

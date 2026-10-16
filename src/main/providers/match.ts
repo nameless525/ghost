@@ -68,6 +68,26 @@ function canon(t: string): string {
   return ROMAN[t] ?? t
 }
 
+const isNumber = (t: string) => /^\d+$/.test(t)
+
+/**
+ * The numbers that tell variants apart ("Boss Battle 2", "Stage II"), from canon'd tokens: not a
+ * leading number (a track / upload number, "02 - Dirtmouth", "Hollow Knight OST 03 - …", or the
+ * start of a name, "I Will Be Here") and not part of a game or album name ("Mega Man 2 OST").
+ * `skip`: other decoration that may precede the name.
+ */
+function variantNumbers(toks: string[], names: string[][], skip: (t: string) => boolean = () => false): Set<number> {
+  const decor = new Array<boolean>(toks.length).fill(false)
+  for (const n of names) {
+    if (!n.length || !n.some((t) => !isNumber(t))) continue
+    for (let i = 0; i + n.length <= toks.length; i++) {
+      if (n.every((t, k) => toks[i + k] === t)) for (let k = 0; k < n.length; k++) decor[i + k] = true
+    }
+  }
+  for (let i = 0; i < toks.length && (decor[i] || isNumber(toks[i]) || skip(toks[i])); i++) decor[i] = true
+  return new Set(toks.filter((t, i) => !decor[i] && isNumber(t)).map(Number))
+}
+
 export interface SimilarityContext {
   /** Game / album names whose tokens may decorate the candidate title. */
   context?: (string | null | undefined)[]
@@ -86,9 +106,15 @@ export function titleSimilarity(canonical: string, candidate: string, ctx: Simil
   const ignorable = new Set<string>()
   for (const c of ctx.context ?? []) for (const t of tokens(c)) if (!wantSet.has(canon(t))) ignorable.add(canon(t))
   for (const t of tokens(ctx.channel?.replace(/\s+-\s+topic$/i, ''))) if (!wantSet.has(canon(t))) ignorable.add(canon(t))
-  const have = tokens(candidate)
-    .map(canon)
-    .filter((t) => wantSet.has(t) || !(ignorable.has(t) || NOISE.has(t) || /^\d+$/.test(t)))
+  const all = tokens(candidate).map(canon)
+  // Another variant ("Boss Battle 2" for "Boss Battle 1", "Stage 3" for "Stage II") is another track.
+  const names = [...(ctx.context ?? []), ctx.channel?.replace(/\s+-\s+topic$/i, '')].map((c) => tokens(c).map(canon))
+  const wantNums = variantNumbers(want, names)
+  if (wantNums.size) {
+    const haveNums = variantNumbers(all, names, (t) => !wantSet.has(t) && (ignorable.has(t) || NOISE.has(t)))
+    if (haveNums.size && [...wantNums].some((n) => !haveNums.has(n)) && [...haveNums].some((n) => !wantNums.has(n))) return 0
+  }
+  const have = all.filter((t) => wantSet.has(t) || !(ignorable.has(t) || NOISE.has(t) || isNumber(t)))
   if (!have.length) return 0
   const used = new Array(have.length).fill(false)
   let hit = 0
@@ -112,6 +138,11 @@ export function durationFit(expectedMs: number | null | undefined, actualMs: num
   if (d <= 2000) return 1
   if (d >= 15000) return 0
   return Math.round((1 - (d - 2000) / 13000) * 1000) / 1000
+}
+
+/** Under half or over twice the track's length (both known): another cut of the piece (a loop, a medley, a jingle). */
+export function otherCut(wantMs: number | null | undefined, gotMs: number | null | undefined): boolean {
+  return wantMs != null && gotMs != null && wantMs > 0 && gotMs > 0 && (gotMs > wantMs * 2 || gotMs * 2 < wantMs)
 }
 
 /** Not-the-original markers: each costs PENALTY_WEIGHT unless the canonical text has it too. */

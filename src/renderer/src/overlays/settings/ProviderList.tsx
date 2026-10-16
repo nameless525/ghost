@@ -16,7 +16,7 @@ import { relativeTime } from '../library/common'
 import { Highlight, patchSettings } from './controls'
 
 export const PROVIDERS: Record<string, { name: string; icon: ReactNode; description: string; tone: string }> = {
-  local: { name: 'Local files', icon: <HardDrive />, description: 'Your own music folders, matched to the catalog. Always the fastest.', tone: '#9aa6c4' },
+  local: { name: 'Local files', icon: <HardDrive />, description: 'Your own music folders: their albums show up in Browse, and catalog tracks you have play from them. Always the fastest.', tone: '#9aa6c4' },
   chip: { name: 'Chiptune rips', icon: <Cpu />, description: 'Original sound-chip files (NSF, SPC, VGM…) rendered live with real loop points.', tone: '#5ee6a0' },
   bandcamp: { name: 'Bandcamp', icon: <Disc3 />, description: 'Official releases straight from composers and labels, searched on demand.', tone: '#4fc3e8' },
   khinsider: { name: 'KHInsider', icon: <Archive />, description: 'The big video game music archive: MP3 and FLAC album rips.', tone: '#f6c75c' },

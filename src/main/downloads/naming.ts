@@ -176,9 +176,41 @@ function extOf(pathOrUrl: string): string | null {
   return m ? m[1].toLowerCase() : null
 }
 
-/** File extension for a source, preferring what the stream actually is (saved as-is, never re-encoded). */
+// The engine's decoder families by extension (ghost-formats: libgme, libopenmpt, vgmstream) and the
+// general-purpose formats it leaves to its standard decoder. Keep in step with ghost-formats/detect.rs.
+const RENDERED_EXTS = new Set([
+  'nsf', 'nsfe', 'spc', 'gbs', 'vgm', 'vgz', 'hes', 'kss', 'ay', 'sap', 'gym',
+  'mod', 'xm', 'it', 's3m', 'umx', 'mo3', 'mptm',
+  'adx', 'hca', 'brstm', 'bcstm', 'bfstm', 'fsb', 'wem', 'xwb', 'awb', 'acb'
+])
+const COMMON_EXTS = new Set([
+  'wav', 'wave', 'aif', 'aiff', 'aifc', 'mp3', 'mp2', 'mp1', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'm4b', 'mp4', 'aac', 'alac', 'webm',
+  'mkv', 'mka', 'caf', 'wma', 'ac3', 'weba'
+])
+
+/**
+ * Whether the engine renders `source` to FLAC instead of saving it as-is, by its own default
+ * (download.rs): clips always, chip / tracker / game-engine formats by extension, which it takes
+ * from the format hint first, or from an archive entry's name. null: only the engine's look at
+ * the data can tell (its 'done' event names the file it wrote).
+ */
+export function rendersToFlac(source: EngineSource): boolean | null {
+  if (source.clipStartMs != null || source.clipEndMs != null) return true
+  const hint = source.formatHint?.trim().toLowerCase().replace(/^\.+/, '')
+  const ext =
+    source.archiveEntry != null ? extOf(source.archiveEntry) : hint && !hint.includes('/') ? hint : extOf(source.kind === 'http' ? source.url : source.path)
+  if (!ext) return null
+  if (RENDERED_EXTS.has(ext)) return true
+  return COMMON_EXTS.has(ext) ? false : null
+}
+
+/**
+ * File extension for a source: 'flac' when the engine renders it, otherwise what the stream
+ * actually is (saved as-is, never re-encoded).
+ */
 export function extensionFor(format: AudioFormat, source: EngineSource): string {
-  const fromLoc = extOf(source.kind === 'http' ? source.url : source.path)
+  if (rendersToFlac(source)) return 'flac'
+  const fromLoc = extOf(source.archiveEntry ?? (source.kind === 'http' ? source.url : source.path))
   if (fromLoc && AUDIO_EXTS.has(fromLoc)) return fromLoc
   const hint = source.formatHint?.toLowerCase().replace(/^\./, '')
   if (hint && AUDIO_EXTS.has(hint)) return hint

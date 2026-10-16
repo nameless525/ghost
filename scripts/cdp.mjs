@@ -57,7 +57,9 @@ if (cmd === 'eval') {
   const code = key.length === 1 ? `Key${key.toUpperCase()}` : key
   const keyCode = { Enter: 13, Escape: 27, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, Space: 32, F2: 113, Backspace: 8, Tab: 9, PageDown: 34, PageUp: 33 }[key] || key.toUpperCase().charCodeAt(0)
   const k = key === 'Space' ? ' ' : key
-  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code: key === 'Space' ? 'Space' : code, windowsVirtualKeyCode: keyCode, modifiers, text: k.length === 1 && !(modifiers & 6) ? k : undefined })
+  // (Enter carries "\r" as from a real keyboard: without it a focused button isn't pressed)
+  const text = key === 'Enter' && !(modifiers & 6) ? '\r' : k.length === 1 && !(modifiers & 6) ? k : undefined
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code: key === 'Space' ? 'Space' : code, windowsVirtualKeyCode: keyCode, modifiers, text })
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: key === 'Space' ? 'Space' : code, windowsVirtualKeyCode: keyCode, modifiers })
   console.log('key', key)
 } else if (cmd === 'type') {

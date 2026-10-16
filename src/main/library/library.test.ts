@@ -125,9 +125,39 @@ describe('playlists', () => {
     // and setting one makes it smart again
     const s = await t.playlists.update(p.id, { query: 'platform=snes' })
     expect(s.kind).toBe('smart')
+  })
+
+  it('duplicating a smart playlist gives the hand-sortable copy of its tracks its hint promises', async () => {
+    const t = setup()
+    t.catalog.smart = (q) => (q === 'platform=snes' ? ['b1', 'a2', 'b1'] : [])
+    const p = await t.playlists.create('SNES', { query: 'platform=snes', description: 'chips' })
     const dup = await t.playlists.duplicate(p.id)
-    expect(dup.kind).toBe('smart')
-    expect(dup.query).toBe('platform=snes')
+    expect(dup).toMatchObject({ name: 'SNES (copy)', kind: 'manual', query: null, description: 'chips', trackCount: 2 })
+    await t.playlists.moveItem(dup.id, 1, 0)
+    expect(ids(await t.playlists.get(dup.id))).toEqual(['a2', 'b1'])
+    // the original keeps its query
+    expect((await t.playlists.get(p.id)).playlist).toMatchObject({ kind: 'smart', query: 'platform=snes' })
+  })
+
+  it('reorder and undo positions count only the tracks get() shows', async () => {
+    const t = setup()
+    const p = await t.playlists.create('Gaps', { trackIds: ['gone', 'a1', 'b1', 'lost', 'c1'] })
+    let d = await t.playlists.get(p.id)
+    expect(ids(d)).toEqual(['a1', 'b1', 'c1'])
+    await t.playlists.moveItem(p.id, 1, 0) // b1 up past a1
+    expect(ids(await t.playlists.get(p.id))).toEqual(['b1', 'a1', 'c1'])
+    await t.playlists.moveItem(p.id, 0, 2) // b1 down past the hidden row to the end
+    d = await t.playlists.get(p.id)
+    expect(ids(d)).toEqual(['a1', 'c1', 'b1'])
+    // remove the middle one, then undo puts it back where it was
+    await t.playlists.removeItems(p.id, [d.items[1].uid])
+    expect(ids(await t.playlists.get(p.id))).toEqual(['a1', 'b1'])
+    await t.playlists.addTracks(p.id, ['c1'], 1)
+    expect(ids(await t.playlists.get(p.id))).toEqual(['a1', 'c1', 'b1'])
+    // the unresolved rows are kept, positions stay contiguous
+    const rows = t.db.prepare('SELECT track_id, position FROM playlist_items WHERE playlist_id = ? ORDER BY position').all(p.id) as { track_id: string; position: number }[]
+    expect(rows.map((r) => r.track_id).filter((x) => x === 'gone' || x === 'lost')).toEqual(['gone', 'lost'])
+    expect(rows.map((r) => r.position)).toEqual([0, 1, 2, 3, 4])
   })
 
   it('exports an .m3u8 with durations, local paths for downloads and stream URLs otherwise', async () => {
@@ -155,6 +185,41 @@ describe('playlists', () => {
         ''
       ].join('\n')
     )
+  })
+
+  it('exports chapters, archive entries and sub-songs only as downloads or another plain source, and says what it left out', async () => {
+    const t = setup()
+    const dir = mkdtempSync(join(tmpdir(), 'ghost-m3u-'))
+    tmpDirs.push(dir)
+    t.settings.library.downloadDir = dir
+    const ost = 'https://www.youtube.com/watch?v=full-ost'
+    const chapter = (id: string, start: number) => httpSource(id, 'yt', { source: { kind: 'http', url: ost, cacheKey: 'yt:ost', clipStartMs: start, clipEndMs: start + 30_000 } })
+    t.catalog.sources.set('a1', [chapter('a1', 0)])
+    t.catalog.sources.set('a2', [chapter('a2', 30_000)])
+    t.catalog.sources.set('b1', [httpSource('b1', 'chip', { source: { kind: 'http', url: 'https://x/set.7z', cacheKey: 'set', archiveEntry: 'b1.nsf', subsong: 1 } })])
+    t.catalog.sources.set('c1', [chapter('c1', 60_000), httpSource('c1', 'whole')]) // a plain source further down
+    t.catalog.sources.set('d1', [chapter('d1', 90_000)])
+    const local = join(dir, 'd1.flac')
+    t.files.add(local)
+    t.library.noteDownloaded('d1', local)
+    const p = await t.playlists.create('Mix', { trackIds: ['a1', 'a2', 'b1', 'c1', 'd1'] })
+    t.bc.clear()
+    const text = readFileSync(await t.playlists.exportM3U(p.id), 'utf8')
+    expect(text).toBe(
+      [
+        '#EXTM3U',
+        '#PLAYLIST:Mix',
+        '# part of a longer file, download it to include it: Alpha Game - Track a1',
+        '# part of a longer file, download it to include it: Alpha Game - Track a2',
+        '# part of a longer file, download it to include it: Game One - Track b1',
+        '#EXTINF:-1,Game One - Track c1',
+        'https://cdn.example/c1/whole.mp3',
+        '#EXTINF:180,Game One - Track d1',
+        'd1.flac',
+        ''
+      ].join('\n')
+    )
+    expect(t.bc.of('notify')).toEqual([expect.objectContaining({ kind: 'info', title: 'Left 3 tracks out of the M3U' })])
   })
 
   it('renderM3U uses -1 for unknown durations and strips newlines', () => {
@@ -220,5 +285,51 @@ describe('likes, history, downloaded, decoration', () => {
     const again = createLibrary({ db: t.db, catalog: t.catalog, broadcast: t.bc.broadcast, getSettings: () => t.settings, fileExists: (p) => t.files.has(p) })
     expect(again.library.isDownloaded('b1')).toBe(true)
     expect(again.library.isDownloaded('a1')).toBe(false)
+  })
+
+  /** A finished download as the manager records it: the row, then the library. */
+  const done = (t: ReturnType<typeof setup>, id: string, trackId: string, path: string) => {
+    t.library.downloads.insert({ id, trackId, title: trackId, gameName: null, albumTitle: '', cover: null, status: 'done', progress: 1, bytes: 1, totalBytes: 1, path, error: null, createdAt: 1, format: 'mp3', batch: null, finishedAt: t.clock.t })
+    t.library.noteDownloaded(trackId, path)
+  }
+
+  it('pruning keeps a download that replaced the missing file during the check, and overlapping checks agree', async () => {
+    const t = setup()
+    done(t, 'old', 'a1', '/m/a1.mp3') // its file is gone
+    const listing = t.api.downloaded() // checks are out...
+    t.files.add('/m/a1 (2).mp3')
+    done(t, 'new', 'a1', '/m/a1 (2).mp3') // ...when a fresh download of the track finishes
+    await listing
+    expect(t.library.downloads.get('new')?.path).toBe('/m/a1 (2).mp3')
+    expect(t.library.downloadedPath('a1')).toBe('/m/a1 (2).mp3')
+    expect((await t.api.downloaded()).map((x) => x.id)).toEqual(['a1'])
+    // two listings at once over one missing file: both settle, one prune
+    done(t, 'b', 'b1', '/m/b1.mp3')
+    t.bc.clear()
+    const both = await Promise.allSettled([t.api.downloaded(), t.api.downloaded()])
+    expect(both.map((r) => (r.status === 'fulfilled' ? r.value.map((x) => x.id) : r.reason))).toEqual([['a1'], ['a1']])
+    expect(t.library.isDownloaded('b1')).toBe(false)
+    expect(t.library.downloads.get('b')).toBeNull()
+    expect(t.bc.of('library:changed')).toEqual([{ kind: 'downloaded', id: 'b1' }])
+  })
+
+  it('pruning missing downloads tells every view, with one event for the lot', async () => {
+    const t = setup()
+    done(t, 'x', 'a1', '/m/a1.mp3')
+    done(t, 'y', 'a2', '/m/a2.mp3')
+    done(t, 'z', 'b1', '/m/b1.mp3')
+    t.files.add('/m/b1.mp3')
+    const changed: string[][] = []
+    t.library.onTracksChanged((ids) => changed.push(ids))
+    t.bc.clear()
+    expect(t.library.decorateOne(makeTrack('a1')).downloaded).toBe(true)
+    expect((await t.api.downloaded()).map((x) => x.id)).toEqual(['b1'])
+    expect(t.bc.of('library:changed')).toEqual([{ kind: 'downloaded' }])
+    expect(changed).toEqual([['a2', 'a1']])
+    expect(t.library.decorateOne(makeTrack('a1')).downloaded).toBe(false)
+    // nothing more to prune: nothing to say
+    t.bc.clear()
+    await t.api.downloaded()
+    expect(t.bc.of('library:changed')).toEqual([])
   })
 })

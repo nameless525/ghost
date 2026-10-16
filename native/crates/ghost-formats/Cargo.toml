@@ -1,6 +1,6 @@
 [package]
 name = "ghost-formats"
-description = "Game-music decoders for the GHOST engine: libgme, libvgmstream and libopenmpt (vendored, statically linked), plus zip/7z rip-set archives"
+description = "Game-music decoders for the GHOST engine: libgme, libvgmstream and libopenmpt (vendored, statically linked), plus zip/7z rip-set archives and libopus"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

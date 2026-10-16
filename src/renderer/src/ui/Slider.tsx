@@ -47,6 +47,44 @@ export interface SliderProps {
 /** Wheel distance (px) per step: one mouse notch; a trackpad swipe accumulates to it. */
 const WHEEL_NOTCH = 40
 
+/**
+ * How often a live value (a seek bar during playback) reaches aria-valuenow / aria-valuetext.
+ * Slower while focused: screen readers speak a focused slider's every change, and the clock
+ * shouldn't tick aloud. The user's own changes (keys, drag, wheel) are written at once.
+ */
+const ARIA_LIVE_MS = 1000
+const ARIA_LIVE_FOCUSED_MS = 5000
+
+/** A slider's current value for assistive tech, written to the element without a re-render. */
+export class AriaValue {
+  /** When the value was last written (ms, performance.now() domain). */
+  private at = -Infinity
+  private valueNow = ''
+  private valueText: string | null = null
+
+  constructor(private el: () => Element | null) {}
+
+  /** Write `v` now (a controlled value, or the user's own change). */
+  write(v: number, min: number, max: number, format: ((v: number) => string) | undefined, at = 0): void {
+    const el = this.el()
+    if (!el) return
+    this.at = at
+    const c = Math.max(min, Math.min(max, v))
+    const valueNow = String(Math.round(c * 1000) / 1000)
+    if (valueNow !== this.valueNow) el.setAttribute('aria-valuenow', (this.valueNow = valueNow))
+    const text = format ? format(c) : null
+    if (text === this.valueText) return
+    this.valueText = text
+    if (text === null) el.removeAttribute('aria-valuetext')
+    else el.setAttribute('aria-valuetext', text)
+  }
+
+  /** A live value, polled every frame: written at a modest cadence. */
+  poll(v: number, min: number, max: number, format: ((v: number) => string) | undefined, at: number, focused: boolean): void {
+    if (at - this.at >= (focused ? ARIA_LIVE_FOCUSED_MS : ARIA_LIVE_MS)) this.write(v, min, max, format, at)
+  }
+}
+
 export function Slider({
   value = 0,
   live,
@@ -82,6 +120,9 @@ export function Slider({
   const range = max - min || 1
   const st = step ?? range / 100
   const withTicks = ticks ?? variant !== 'seek'
+  const aria = useRef<AriaValue>(null)
+  aria.current ??= new AriaValue(() => root.current)
+  const writeAria = (v: number) => aria.current!.write(v, min, max, format, performance.now())
 
   const writeV = (v: number) => {
     // quantised to ~1/4096 of the track (under a device pixel on any seek bar)
@@ -91,17 +132,24 @@ export function Slider({
     root.current?.style.setProperty('--v', f.toFixed(4))
   }
 
-  // controlled value → css
+  // controlled value → css (and aria)
   useEffect(() => {
-    if (!dragging.current && wheelValue.current === null && !live) writeV(value)
+    if (dragging.current || wheelValue.current !== null || live) return
+    writeV(value)
+    writeAria(value)
   })
 
   // live value → css, every frame (and at once when polling resumes, before the next paint)
   useLayoutEffect(() => {
-    if (liveActive && live && !dragging.current) writeV(live())
+    if (!live || dragging.current) return
+    if (liveActive) writeV(live())
+    writeAria(live())
   }, [liveActive]) // eslint-disable-line react-hooks/exhaustive-deps
-  useTicker(() => {
-    if (!dragging.current && wheelValue.current === null && live) writeV(live())
+  useTicker((_dt, now) => {
+    if (dragging.current || wheelValue.current !== null || !live) return
+    const v = live()
+    writeV(v)
+    aria.current!.poll(v, min, max, format, now, document.activeElement === root.current)
   }, !!live && liveActive)
 
   const valueAt = (clientX: number, r: DOMRect = root.current!.getBoundingClientRect()) => {
@@ -123,6 +171,7 @@ export function Slider({
   const emit = useEvent((v: number, commit: boolean) => {
     dragValue.current = v
     writeV(v)
+    writeAria(v)
     onChange?.(v)
     if (commit) onCommit?.(v)
   })
@@ -233,7 +282,7 @@ export function Slider({
     emit(v, true)
   }
 
-  const shown = live ? undefined : value
+  // aria-valuenow / aria-valuetext are written by AriaValue, not rendered
   return (
     <div
       ref={root}
@@ -242,8 +291,6 @@ export function Slider({
       aria-label={ariaLabel}
       aria-valuemin={min}
       aria-valuemax={max}
-      aria-valuenow={shown}
-      aria-valuetext={format && shown !== undefined ? format(shown) : undefined}
       aria-disabled={disabled || undefined}
       className={cx('g-slider', `g-slider--${variant}`, isDragging && 'is-dragging', disabled && 'g-slider--disabled', className)}
       style={{ ...hueStyle(hue), ...style }}
@@ -252,6 +299,7 @@ export function Slider({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onKeyDown={onKeyDown}
+      onFocus={() => writeAria(current())}
     >
       <div className="g-slider__track">
         {background && <div className="g-slider__bg">{background}</div>}

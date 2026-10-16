@@ -18,7 +18,7 @@ use ghost_analysis::realtime::RealtimeAnalyzer;
 use ghost_analysis::AnalysisFrame;
 use parking_lot::{Condvar, Mutex};
 
-use crate::clock::Clock;
+use crate::clock::{Clock, Segment};
 use crate::mixer::TapBlock;
 use crate::util::epoch_us;
 
@@ -140,6 +140,8 @@ fn run(shared: Arc<AnalysisShared>, clock: Arc<Clock>, rx: Receiver<TapMsg>) {
     let mut analyzer = RealtimeAnalyzer::new(rate);
     let mut fifo: Vec<f32> = Vec::with_capacity(16_384);
     let mut fifo_frame: u64 = 0;
+    // (first frame, end frame, preview stamp) of each block in `fifo`.
+    let mut previews: VecDeque<(u64, u64, Segment)> = VecDeque::new();
     let mut last_track: (u64, u32) = (0, 0);
     let mut scratch = AnalysisFrame::default();
     let mut last_data = Instant::now();
@@ -155,6 +157,7 @@ fn run(shared: Arc<AnalysisShared>, clock: Arc<Clock>, rx: Receiver<TapMsg>) {
                     hop = (rate / HOPS_PER_SEC) as usize;
                     analyzer = RealtimeAnalyzer::new(rate);
                     fifo.clear();
+                    previews.clear();
                     last_data = Instant::now();
                 }
                 Ok(TapMsg::Wake) => {
@@ -177,9 +180,11 @@ fn run(shared: Arc<AnalysisShared>, clock: Arc<Clock>, rx: Receiver<TapMsg>) {
                 if fifo.is_empty() || b.dev_frame != expected {
                     // Start, or a gap (dropped blocks / device switch): restart the hop grid.
                     fifo.clear();
+                    previews.clear();
                     fifo_frame = b.dev_frame;
                 }
                 fifo.extend_from_slice(&b.data[..b.frames as usize * 2]);
+                previews.push_back((b.dev_frame, b.dev_frame + b.frames as u64, b.preview));
             }
         }
         let mut consumed = 0usize;
@@ -187,9 +192,15 @@ fn run(shared: Arc<AnalysisShared>, clock: Arc<Clock>, rx: Receiver<TapMsg>) {
             let samples = &fifo[consumed..consumed + hop * 2];
             let last_frame = fifo_frame + hop as u64 - 1;
             let seg = clock.at_frame(last_frame);
-            let (voice, seq, pos_ms, epoch) = match seg {
-                Some(s) => (s.voice, s.seq, s.pos_at_frame(last_frame) as f64 * 1000.0 / s.rate.max(1) as f64, s.epoch_of_frame(last_frame)),
-                None => (0, 0, 0.0, epoch_us()),
+            let preview = previews.iter().rev().find(|p| p.0 <= last_frame && last_frame < p.1).map(|p| p.2).filter(|p| p.voice != 0);
+            let at = |s: &Segment| s.pos_at_frame(last_frame) as f64 * 1000.0 / s.rate.max(1) as f64;
+            let (voice, seq, pos_ms, epoch) = match (seg, preview) {
+                // While no music advances (none loaded, paused, not started) what is heard is the
+                // preview: frames carry its identity, not the waiting track's.
+                (Some(s), Some(p)) if !s.advancing => (p.voice, p.seq, at(&p), s.epoch_of_frame(last_frame)),
+                (Some(s), _) => (s.voice, s.seq, at(&s), s.epoch_of_frame(last_frame)),
+                (None, Some(p)) => (p.voice, p.seq, at(&p), epoch_us()),
+                (None, None) => (0, 0, 0.0, epoch_us()),
             };
             if (voice, seq) != last_track {
                 // New track or seek: don't smear smoothing across the discontinuity.
@@ -218,6 +229,9 @@ fn run(shared: Arc<AnalysisShared>, clock: Arc<Clock>, rx: Receiver<TapMsg>) {
         }
         if consumed > 0 {
             fifo.drain(..consumed);
+            while previews.front().is_some_and(|p| p.1 <= fifo_frame) {
+                previews.pop_front();
+            }
         }
         if got {
             last_data = Instant::now();

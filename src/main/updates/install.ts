@@ -9,8 +9,8 @@
 // release is out (Settings / the prompt link to it).
 
 import { spawn } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
-import { chmod, copyFile, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { existsSync, writeFileSync } from 'node:fs'
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { InstallKind } from './feed'
 
@@ -73,43 +73,71 @@ export const run: Run = (cmd, args) =>
     p.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`${basename(cmd)} failed: ${err.trim() || `exit ${code}`}`))))
   })
 
+/** Throws unless `app` is GHOST's bundle at `version` (its Info.plist says so). */
+async function checkBundle(app: string, version: string, exec: Run): Promise<void> {
+  const plist = join(app, 'Contents', 'Info.plist')
+  const id = (await exec('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', plist])).trim()
+  const v = (await exec('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString', plist])).trim()
+  if (id !== 'dev.ghost.app') throw new Error(`the disk image holds ${id}, not GHOST`)
+  if (v !== version) throw new Error(`the disk image holds GHOST ${v}, not ${version}`)
+}
+
 /**
  * Make the downloaded `file` ready to install, checking that it is `version`. Returns what
  * `launchInstall` needs: the staged app (macOS), the installer (Windows), the AppImage (Linux,
- * already in place).
+ * already in place). A failure leaves nothing of this release behind, and never touches a release
+ * staged before it.
  */
 export async function prepareInstall(target: InstallTarget, file: string, version: string, stagingDir: string, exec: Run = run): Promise<string> {
   if (target.kind === 'mac-app') {
-    const mnt = join(stagingDir, 'mount')
-    await rm(mnt, { recursive: true, force: true })
-    await mkdir(mnt, { recursive: true })
-    await exec('hdiutil', ['attach', '-nobrowse', '-noautoopen', '-readonly', '-noverify', '-mountpoint', mnt, file])
+    // A folder of its own per release: the one staged before stays whole until this one is ready.
+    const stage = await mkdtemp(join(stagingDir, `stage-${version}-`))
     try {
-      const name = (await readdir(mnt)).find((n) => n.endsWith('.app'))
-      if (!name) throw new Error('the disk image has no app in it')
-      const staged = join(stagingDir, name)
-      await rm(staged, { recursive: true, force: true })
-      await exec('ditto', [join(mnt, name), staged])
-      const plist = join(staged, 'Contents', 'Info.plist')
-      const id = (await exec('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', plist])).trim()
-      const v = (await exec('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString', plist])).trim()
-      if (id !== 'dev.ghost.app') throw new Error(`the disk image holds ${id}, not GHOST`)
-      if (v !== version) throw new Error(`the disk image holds GHOST ${v}, not ${version}`)
-      return staged
-    } finally {
-      await exec('hdiutil', ['detach', mnt, '-force']).catch(() => {})
+      const mnt = join(stage, 'mount')
+      await mkdir(mnt)
+      await exec('hdiutil', ['attach', '-nobrowse', '-noautoopen', '-readonly', '-noverify', '-mountpoint', mnt, file])
+      try {
+        const name = (await readdir(mnt)).find((n) => n.endsWith('.app'))
+        if (!name) throw new Error('the disk image has no app in it')
+        const staged = join(stage, name)
+        await exec('ditto', [join(mnt, name), staged])
+        await checkBundle(staged, version, exec)
+        return staged
+      } finally {
+        await exec('hdiutil', ['detach', mnt, '-force']).catch(() => {})
+        // (only once it's empty: never into a disk image that is still mounted)
+        await rmdir(mnt).catch(() => {})
+      }
+    } catch (e) {
+      await rm(stage, { recursive: true, force: true }).catch(() => {})
+      throw e
     }
   }
   if (target.kind === 'appimage' && target.path) {
     // Beside the running one (same filesystem, so the swap is a rename), then swapped in.
     const next = `${target.path}.update`
-    await copyFile(file, next)
-    await chmod(next, 0o755)
-    await rename(next, target.path)
+    try {
+      await copyFile(file, next)
+      await chmod(next, 0o755)
+      await rename(next, target.path)
+    } catch (e) {
+      await rm(next, { force: true }).catch(() => {})
+      throw e
+    }
     return target.path
   }
   if (target.kind === 'nsis') return file
   throw new Error('GHOST can’t install updates here')
+}
+
+/**
+ * Throws unless `prepared` (from prepareInstall, recorded before a restart) is still there and, on
+ * macOS, still GHOST's bundle at `version`.
+ */
+export async function verifyPrepared(target: InstallTarget, prepared: string, version: string, exec: Run = run): Promise<void> {
+  if (!existsSync(prepared)) throw new Error(`${prepared} is gone`)
+  if (target.kind === 'mac-app') await checkBundle(prepared, version, exec)
+  else if (target.kind === 'appimage' && prepared !== target.path) throw new Error(`${prepared} isn’t this AppImage`)
 }
 
 /** The macOS swap, run once GHOST has quit: $1 pid, $2 the app, $3 the staged new app, $4 1 to reopen. */
@@ -122,9 +150,12 @@ while kill -0 "$pid" 2>/dev/null; do
   sleep 0.1
 done
 old="$app.old-version"
+[ -x "$staged/Contents/MacOS/GHOST" ] || exit 1
 rm -rf "$old"
 mv "$app" "$old" || exit 1
-if ! mv "$staged" "$app"; then
+# The old version goes only once the new one is in place, whole.
+if ! mv "$staged" "$app" || [ ! -x "$app/Contents/MacOS/GHOST" ]; then
+  rm -rf "$app"
   mv "$old" "$app"
   exit 1
 fi

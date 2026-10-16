@@ -132,7 +132,7 @@ describe('bucket aggregation in chunks', () => {
     expect(qe.browse(q).total).toBe(before) // within the stale window
     t = 5000
     expect(qe.browse(q).total).toBe(before) // stale, refresh scheduled
-    await new Promise((r) => setTimeout(r, 50))
+    await qe.idle()
     expect(qe.browse(q).total).toBe(before + 1)
   })
 })

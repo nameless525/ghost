@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { accentFamily, hexToRgb, mix, normalizeAccent, oklch, rgbToHex } from './color'
+import { accentFamily, contrast, fromOklch, hexToRgb, mix, normalizeAccent, oklch, rgbToHex } from './color'
+import { HUES } from './index'
 
 describe('color', () => {
   it('hex round-trips', () => {
@@ -22,5 +23,24 @@ describe('color', () => {
   it('accent ink is dark on light accents, white on saturated ones', () => {
     expect(accentFamily('#ffd23f').ink).toBe('#1a1024')
     expect(accentFamily('#7a2cff').ink).toBe('#ffffff')
+  })
+  it('accent ink is the more legible one on the default pink and the section hues', () => {
+    for (const hex of ['#ff66aa', '#5aa8ff', '#c779ff', ...Object.values(HUES)]) {
+      const { base, ink } = accentFamily(hex)
+      expect(ink, hex).toBe('#1a1024')
+      expect(contrast(base, hexToRgb(ink)), hex).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+  it('every normalised art accent gets an ink that reads as body text on it', () => {
+    let worst = Infinity
+    for (let l = 0.05; l <= 0.95; l += 0.1)
+      for (let c = 0; c <= 0.3; c += 0.05)
+        for (let h = 0; h < 2 * Math.PI; h += Math.PI / 12) {
+          const { base, ink } = accentFamily(normalizeAccent(fromOklch(l, c, h)))
+          const chosen = contrast(base, hexToRgb(ink))
+          expect(chosen).toBeGreaterThanOrEqual(Math.max(contrast(base, [255, 255, 255]), contrast(base, hexToRgb('#1a1024'))))
+          worst = Math.min(worst, chosen)
+        }
+    expect(worst).toBeGreaterThanOrEqual(4.5)
   })
 })

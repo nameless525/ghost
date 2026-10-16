@@ -96,11 +96,15 @@ pub struct TapBlock {
     pub dev_frame: u64,
     pub frames: u32,
     pub data: [f32; MAX_BLOCK * 2],
+    /// The preview playing in this block (`voice` 0: none), from the block's first frame. The
+    /// audible clock follows the music only (it is the transport's position), so the analysis
+    /// learns from this what it hears while no music advances.
+    pub preview: Segment,
 }
 
 impl TapBlock {
     pub fn new() -> Self {
-        Self { dev_frame: 0, frames: 0, data: [0.0; MAX_BLOCK * 2] }
+        Self { dev_frame: 0, frames: 0, data: [0.0; MAX_BLOCK * 2], preview: Segment::default() }
     }
 }
 
@@ -455,11 +459,13 @@ impl Mixer {
                     return false;
                 }
                 // The next voice matters only once the current one ends (or a crossfade is due)
-                // within this block. A chained next only fills after the current one is decoded.
+                // within this block, also when the current one only starts in it (a track, or
+                // what is left of it, shorter than a block). A chained next only fills after the
+                // current one is decoded.
                 if let Some(n) = &self.next {
-                    let ending = c.started && done(c) && c.available() < frames;
+                    let ending = done(c) && c.available() < frames;
                     let xfade_due = matches!(self.transition, Transition::Crossfade(xf)
-                        if c.started && c.remaining().is_some_and(|r| r <= xf as u64 + frames as u64));
+                        if c.remaining().is_some_and(|r| r <= xf as u64 + frames as u64));
                     if (ending || xfade_due) && !ready_start(n) {
                         return false;
                     }
@@ -496,6 +502,7 @@ impl Mixer {
         // Mix frames are heard `limiter latency` frames after the output frame they're mixed into.
         let lat_us = self.limiter.latency() as u64 * 1_000_000 / self.rate as u64;
         self.seg.begin(self.dev_frame, epoch_us + lat_us);
+        self.tap.preview = Segment::default();
 
         if self.transport_running() {
             self.render_music(n);
@@ -618,12 +625,15 @@ impl Mixer {
             }
             let rate = self.rate;
             let prefill = self.prefill;
+            let playing = self.playing;
             let Some(cur) = self.current.as_mut() else {
                 self.seg.piece(off, n - off, 0, 0, 0, false);
                 break;
             };
             if !cur.started {
-                if cur.try_start(prefill, rate, offline) {
+                // Not while a pause fades out (a seek right after pausing): its first frames
+                // would be faded away unheard, and it would count as playing.
+                if playing && cur.try_start(prefill, rate, offline) {
                     let key = cur.key;
                     self.emit(MixerEvent::Started(key));
                     continue;
@@ -646,9 +656,11 @@ impl Mixer {
                 self.emit(MixerEvent::Underrun(key, false));
                 continue;
             }
-            if let (Transition::Crossfade(xf), Some(_)) = (self.transition, self.next.as_ref()) {
+            if let (Transition::Crossfade(xf), Some(nx)) = (self.transition, self.next.as_ref()) {
                 if let Some(rem) = cur.remaining() {
-                    if rem > 0 && rem <= xf as u64 {
+                    // Not before the next track can play: until then this one goes on at full
+                    // level, and the overlap shrinks (or it ends as if there were no crossfade).
+                    if rem > 0 && rem <= xf as u64 && nx.can_start(prefill, offline) {
                         self.start_crossfade(rem.min(xf as u64) as u32, off);
                         continue;
                     }
@@ -759,7 +771,11 @@ impl Mixer {
         }
         let p = self.preview.as_mut().unwrap();
         let k = p.available().min(n);
-        p.mix_into(&mut self.prev[..k * 2], k, false);
+        // Fading out (stopped, or at its time limit), it ends once it runs dry: silent from then
+        // on, it must not wait on the network to finish its fade, nor sound when frames come late.
+        let dry = self.preview_fading && k < n && !p.finished(offline);
+        self.tap.preview = Segment { dev_frame: self.dev_frame, frames: k as u32, rate, epoch_us: 0, voice: p.key, seq: p.seq, pos: p.pos, advancing: true };
+        p.mix_into(&mut self.prev[..k * 2], k, dry);
         if k > 0 {
             self.content_end = self.content_end.max(self.dev_frame + k as u64);
         }
@@ -768,7 +784,7 @@ impl Mixer {
             p.env.retarget(0.0, (PREVIEW_AUTO_FADE_SEC * rate as f32) as u32, Curve::SCurve);
             self.preview_fading = true;
         }
-        let faded = self.preview_fading && p.env.done();
+        let faded = self.preview_fading && (p.env.done() || dry);
         if faded || p.finished(offline) || (p.failed() && p.available() == 0) {
             let p = self.preview.take().unwrap();
             let key = p.key;

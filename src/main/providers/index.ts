@@ -69,7 +69,7 @@ export interface RegistryDeps {
   db?: DB
   /** yt-dlp (default: the shared instance under <userData>/bin). */
   ytdlp?: () => Promise<YtDlp>
-  /** fetch for archive.org's JSON APIs. */
+  /** fetch for archive.org's JSON APIs (default: through `http`, in archive.org's turn with its covers). */
   fetch?: typeof fetch
   /** The engine's archive lister, for chiptune rip sets (without it their albums can't open). */
   inspectArchive?: (source: EngineSource, ctx?: { progressKey?: string }) => Promise<ArchiveListing>
@@ -88,7 +88,7 @@ export function createDefaultRegistry(http: HttpClient, deps: RegistryDeps = {})
     .register(new ZopharProvider(http))
   const cacheDir = deps.cacheDir
   if (cacheDir) r.register(new ModlandProvider({ http, cacheDir, log: (m) => log(`modland: ${m}`) }))
-  r.register(new ArchiveProvider({ fetch: deps.fetch })).register(new YouTubeProvider(deps.ytdlp ?? sharedYtDlp, { log }))
+  r.register(new ArchiveProvider({ fetch: deps.fetch, http })).register(new YouTubeProvider(deps.ytdlp ?? sharedYtDlp, { log }))
   // SoundCloud only serves HLS now, which the engine can't open: tracks are fetched once with
   // yt-dlp into a size-capped cache, so it needs a folder.
   if (cacheDir) r.register(new SoundCloudProvider(deps.ytdlp ?? sharedYtDlp, { log: (m) => log(`soundcloud: ${m}`), cacheDir: join(cacheDir, 'soundcloud') }))

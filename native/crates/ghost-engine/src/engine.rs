@@ -20,7 +20,7 @@ use crate::output::{self, NullOutput, OutputStream, ERR_REBUILD};
 use crate::source::loop_stage::LoopSettings;
 use crate::util::{db_to_lin, epoch_us};
 use crate::voice::{self, Bus, Continuation, Voice, VoiceShared, PLAY_STARTED, PLAY_WAITING};
-use crate::{DeviceInfo, EngineEvent, LoadProgress, NormalizationMode, PlaybackState, PositionInfo, Slot, SourceSpec, TrackInfo, TrackLoad};
+use crate::{DeviceInfo, EngineEvent, LoadProgress, LoopMode, NormalizationMode, PlaybackState, PositionInfo, Slot, SourceSpec, TrackInfo, TrackLoad};
 
 /// Device enumeration cadence without change notifications (and the idle loop's longest sleep).
 const DEVICE_POLL: Duration = Duration::from_millis(1500);
@@ -57,6 +57,8 @@ pub enum Cmd {
     Overlay(bool),
     Preview { track: TrackLoad, start_ms: u64 },
     StopPreview,
+    /// The loop settings changed (they are read live; see `Controller::loops_changed`).
+    Loops,
     SetDevice(Option<String>),
     /// Whether anyone shows the live analysis (see `Clock::analysis_wanted`).
     AnalysisDemand(bool),
@@ -68,8 +70,33 @@ pub enum OutputMode {
     Offline { rate: u32, block: usize, sink: Sender<Vec<f32>> },
 }
 
-/// (voice key, track id, duration ms) for position lookups.
-type VoiceEntry = (u64, Arc<str>, Option<u64>);
+/// (track id, duration ms) of a voice, for position lookups.
+type VoiceEntry = (Arc<str>, Option<u64>);
+
+/// Retired voices whose entries are kept: the audible clock goes on naming a voice for a moment
+/// (the output latency) after the mixer let go of it.
+const RETIRED_VOICES: usize = 64;
+
+/// Voice key → entry, for every voice the mixer may still play (the current track however many
+/// previews come and go) and the most recently retired ones.
+#[derive(Default)]
+struct VoiceRegistry {
+    live: HashMap<u64, VoiceEntry>,
+    retired: VecDeque<(u64, VoiceEntry)>,
+}
+
+impl VoiceRegistry {
+    fn get(&self, key: u64) -> Option<&VoiceEntry> {
+        self.live.get(&key).or_else(|| self.retired.iter().rev().find(|e| e.0 == key).map(|e| &e.1))
+    }
+
+    fn get_mut(&mut self, key: u64) -> Option<&mut VoiceEntry> {
+        match self.live.get_mut(&key) {
+            Some(e) => Some(e),
+            None => self.retired.iter_mut().rev().find(|e| e.0 == key).map(|e| &mut e.1),
+        }
+    }
+}
 
 /// What `Engine::load_progress` reads for one slot, published by the controller whenever the
 /// slot's track or voice changes.
@@ -89,7 +116,7 @@ pub struct LoadWatch {
 pub struct Shared {
     pub clock: Arc<Clock>,
     pub analysis: Arc<AnalysisShared>,
-    voices: Mutex<VecDeque<VoiceEntry>>,
+    voices: Mutex<VoiceRegistry>,
     pub devices: Mutex<Vec<DeviceInfo>>,
     /// `devices` holds a real enumeration (possibly empty), so callers needn't enumerate.
     pub devices_polled: AtomicBool,
@@ -109,7 +136,7 @@ impl Shared {
         Self {
             clock: Arc::new(Clock::new()),
             analysis: Arc::new(AnalysisShared::default()),
-            voices: Mutex::new(VecDeque::with_capacity(64)),
+            voices: Mutex::new(VoiceRegistry::default()),
             devices: Mutex::new(Vec::new()),
             devices_polled: AtomicBool::new(false),
             transport_playing: AtomicBool::new(false),
@@ -154,23 +181,28 @@ impl Shared {
     }
 
     fn register_voice(&self, key: u64, id: &str, duration_ms: Option<u64>) {
+        self.voices.lock().live.insert(key, (Arc::from(id), duration_ms));
+    }
+
+    /// The mixer let go of the voice (or went away with it).
+    fn retire_voice(&self, key: u64) {
         let mut v = self.voices.lock();
-        if v.len() >= 64 {
-            v.pop_front();
+        if let Some(e) = v.live.remove(&key) {
+            if v.retired.len() >= RETIRED_VOICES {
+                v.retired.pop_front();
+            }
+            v.retired.push_back((key, e));
         }
-        v.push_back((key, Arc::from(id), duration_ms));
     }
 
     fn set_voice_duration(&self, key: u64, duration_ms: Option<u64>) {
-        for e in self.voices.lock().iter_mut() {
-            if e.0 == key {
-                e.2 = duration_ms;
-            }
+        if let Some(e) = self.voices.lock().get_mut(key) {
+            e.1 = duration_ms;
         }
     }
 
     fn voice(&self, key: u64) -> Option<(Arc<str>, Option<u64>)> {
-        self.voices.lock().iter().rev().find(|e| e.0 == key).map(|e| (e.1.clone(), e.2))
+        self.voices.lock().get(key).cloned()
     }
 
     /// Audible position right now.
@@ -205,7 +237,11 @@ struct Track {
     info: Option<TrackInfo>,
     started: bool,
     ever_started: bool,
+    /// Its voice ran dry or its decoder failed: it waits for data, not only for playback.
+    stalled: bool,
+    /// What `EngineEvent::Buffering` last said: a wait for data while playback is requested.
     buffering: bool,
+    /// Since when playback has been requested without the voice producing audio.
     pending_since: Option<Instant>,
     gain_db: f32,
 }
@@ -224,6 +260,7 @@ impl Track {
             info: None,
             started: false,
             ever_started: false,
+            stalled: false,
             buffering: false,
             pending_since: None,
             gain_db: 0.0,
@@ -255,6 +292,8 @@ pub struct Controller {
     loud_rx: Receiver<Loudness>,
     jobs: Arc<JobPool>,
     loops: Arc<LoopSettings>,
+    /// The loop settings the playing tracks were last brought in line with.
+    loops_seen: (LoopMode, u32, f32),
     tap_tx: Sender<TapMsg>,
 
     mode: OutputMode,
@@ -334,6 +373,7 @@ impl Controller {
             loud_tx,
             loud_rx,
             jobs: init.jobs,
+            loops_seen: init.loops.get(),
             loops: init.loops,
             tap_tx: init.tap_tx,
             mode: init.mode,
@@ -508,6 +548,7 @@ impl Controller {
         self.out = Out::None;
         for v in self.voices.values() {
             v.cancel();
+            self.shared.retire_voice(v.key);
         }
         self.voices.clear();
         if self.open_output(true) {
@@ -522,7 +563,8 @@ impl Controller {
         if ours {
             p.position_ms.max(0.0) as u64
         } else {
-            0
+            // Not heard yet (loaded paused): where its voice starts.
+            cur.shared.as_ref().map_or(0, |s| s.origin.load(Ordering::Relaxed) * 1000 / self.rate.max(1) as u64)
         }
     }
 
@@ -535,6 +577,7 @@ impl Controller {
                 cur.key = v.key;
                 cur.shared = Some(sh);
                 cur.started = false;
+                cur.stalled = false;
                 cur.pending_since = Some(Instant::now());
                 self.send(MixerCmd::SetCurrent { voice: Some(v), fade_frames: 0 });
                 self.send(if self.playing { MixerCmd::Play } else { MixerCmd::Pause });
@@ -887,7 +930,12 @@ impl Controller {
             Cmd::SetCurrent { track, start_ms, autoplay } => self.set_current(track, start_ms, autoplay),
             Cmd::SetNext(t) => self.set_next(t),
             Cmd::Play => {
-                if self.current.is_some() {
+                if let Some(c) = self.current.as_mut() {
+                    // A track not producing audio (seeked or ran dry while paused) has waited only
+                    // for permission so far: buffering counts from now.
+                    if c.stalled || (!c.started && c.ever_started) {
+                        c.pending_since = Some(Instant::now());
+                    }
                     self.playing = true;
                     self.send(MixerCmd::Play);
                     self.update_state();
@@ -896,6 +944,8 @@ impl Controller {
             Cmd::Pause => {
                 self.playing = false;
                 self.send(MixerCmd::Pause);
+                // Paused, nothing is waited for: a stall shows again once playback is requested.
+                self.set_buffering(false);
                 self.update_state();
             }
             Cmd::Stop => {
@@ -940,7 +990,14 @@ impl Controller {
                 self.send(MixerCmd::SetOverlay(on));
             }
             Cmd::Preview { track, start_ms } => self.preview(track, start_ms),
-            Cmd::StopPreview => self.send(MixerCmd::StopPreview),
+            Cmd::StopPreview => {
+                // Its fade plays from what is buffered; nothing more is needed from the stream.
+                if let Some(s) = self.preview.as_ref().and_then(|p| p.shared.as_ref()) {
+                    s.cancel();
+                }
+                self.send(MixerCmd::StopPreview);
+            }
+            Cmd::Loops => self.loops_changed(),
             Cmd::AnalysisDemand(on) => {
                 let was = self.shared.clock.analysis_wanted.swap(on, Ordering::Relaxed);
                 // back on: the analysis thread may be in its deep-idle poll (2 s)
@@ -1090,8 +1147,34 @@ impl Controller {
             c.key = key;
             c.shared = Some(sh);
             c.started = false;
+            c.stalled = false;
             c.pending_since = Some(Instant::now());
             self.rechain(old_shared);
+        }
+    }
+
+    /// The loop settings changed. The loop stages of playing tracks follow them at once; each
+    /// looped track's worker then reports its new length and end estimate. Waking the workers
+    /// gets that done promptly; an Endless track stops counting on its old end right here, so
+    /// it can't crossfade or advance on it meanwhile (a worker may wait on the network).
+    fn loops_changed(&mut self) {
+        let now = self.loops.get();
+        if now == self.loops_seen {
+            return;
+        }
+        self.loops_seen = now;
+        for v in self.voices.values().filter(|v| v.loop_bound.load(Ordering::Acquire)) {
+            if now.0 == LoopMode::Endless {
+                v.est_end.store(u64::MAX, Ordering::Release);
+            }
+            v.wake();
+        }
+        // A worker that already decoded to the end of the old plan (its last seconds are in the
+        // ring) can't take up the new one: start the track over where it is heard.
+        let finished = self.current.as_ref().and_then(|c| c.shared.as_ref()).is_some_and(|s| s.loop_bound.load(Ordering::Acquire) && s.chain.lock().closed);
+        if finished {
+            let pos = self.current_position_ms();
+            self.seek(pos);
         }
     }
 
@@ -1133,6 +1216,7 @@ impl Controller {
         for v in garbage {
             v.shared.cancel();
             self.voices.remove(&v.key);
+            self.shared.retire_voice(v.key);
             drop(v);
         }
         for e in evs {
@@ -1146,6 +1230,7 @@ impl Controller {
                 if let Some(c) = self.current.as_mut().filter(|c| c.key == key) {
                     c.started = true;
                     c.ever_started = true;
+                    c.stalled = false;
                     c.pending_since = None;
                     if c.buffering {
                         self.set_buffering(false);
@@ -1192,8 +1277,14 @@ impl Controller {
                 }
             }
             MixerEvent::Underrun(key, on) => {
-                if self.current.as_ref().is_some_and(|c| c.key == key) {
-                    self.set_buffering(on);
+                if let Some(c) = self.current.as_mut().filter(|c| c.key == key) {
+                    c.stalled = on;
+                    if !on {
+                        c.pending_since = None;
+                    }
+                    // Ran dry as a pause faded out: it shows once playback is requested (`tick`).
+                    let show = on && self.playing;
+                    self.set_buffering(show);
                 }
             }
             MixerEvent::PreviewStarted(_) => {}
@@ -1228,14 +1319,15 @@ impl Controller {
 
     fn on_worker(&mut self, w: WorkerEvent) {
         match w {
-            WorkerEvent::Info { key, rate, channels, duration_ms, meta, loop_ms, voices } => {
+            WorkerEvent::Info { key, rate, channels, duration_ms, looped, meta, loop_ms, voices } => {
                 let mut emit = None;
                 let mut dur = None;
                 if let Some((slot, t)) = self.track_by_key(key) {
                     let meta = *meta;
                     let info = TrackInfo {
                         id: t.load.id.clone(),
-                        duration_ms: duration_ms.or(t.load.expected_duration_ms),
+                        // A looped track without a length is Endless, not of unknown length.
+                        duration_ms: if looped { duration_ms } else { duration_ms.or(t.load.expected_duration_ms) },
                         sample_rate: rate,
                         channels,
                         codec: meta.codec,
@@ -1251,7 +1343,9 @@ impl Controller {
                         voice_names: if voices > 0 { meta.voice_names } else { Vec::new() },
                     };
                     dur = info.duration_ms;
-                    if t.info.is_none() && slot != 2 {
+                    // First heard of, or a new voice of it (a seek) found another length (the
+                    // loop settings changed since the last one opened).
+                    if slot != 2 && t.info.as_ref().is_none_or(|i| i.duration_ms != info.duration_ms) {
                         emit = Some(info.clone());
                     }
                     t.info = Some(info);
@@ -1262,11 +1356,31 @@ impl Controller {
                 }
                 self.update_state();
             }
+            WorkerEvent::Duration { key, duration_ms } => {
+                let mut emit = None;
+                if let Some((slot, t)) = self.track_by_key(key) {
+                    if let Some(info) = t.info.as_mut().filter(|i| i.duration_ms != duration_ms) {
+                        info.duration_ms = duration_ms;
+                        // The playing track's length changed under the player; a preloaded one
+                        // reports it when it starts.
+                        if slot == 0 {
+                            emit = Some(info.clone());
+                        }
+                    }
+                }
+                self.shared.set_voice_duration(key, duration_ms);
+                if let Some(i) = emit {
+                    self.emit(EngineEvent::TrackInfo(i));
+                }
+            }
             WorkerEvent::Error { key, message } => {
                 if let Some((slot, t)) = self.track_by_key(key) {
                     let id = t.load.id.clone();
-                    self.emit(EngineEvent::Error { id: Some(id), message, recoverable: true });
                     if slot == 0 {
+                        t.stalled = true;
+                    }
+                    self.emit(EngineEvent::Error { id: Some(id), message, recoverable: true });
+                    if slot == 0 && self.playing {
                         self.set_buffering(true);
                     }
                 } else if let Some((_, id, _)) = self.ended.iter().rev().find(|(k, _, _)| *k == key) {
@@ -1361,9 +1475,11 @@ impl Controller {
     // ---------------------------------------------------------------- periodic
 
     fn tick(&mut self) {
-        // A seek that hasn't produced audio quickly counts as buffering.
+        // Playback requested and no audio coming quickly (after a seek, or resuming a track that
+        // ran dry) counts as buffering. Paused, a voice only waits for permission.
         if let Some(c) = &self.current {
-            if !c.started && c.ever_started && !c.buffering && c.pending_since.is_some_and(|t| t.elapsed() > SEEK_BUFFERING_AFTER) {
+            let waiting = c.stalled || (!c.started && c.ever_started);
+            if self.playing && waiting && !c.buffering && c.pending_since.is_some_and(|t| t.elapsed() > SEEK_BUFFERING_AFTER) {
                 self.set_buffering(true);
             }
         }
@@ -1467,6 +1583,109 @@ fn same_source(a: &SourceSpec, b: &SourceSpec) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A controller without an output (mixer commands go nowhere), driven by hand.
+    fn controller() -> (Controller, Receiver<EngineEvent>) {
+        let dir = std::env::temp_dir().join(format!("ghost-ctl-test-{}-{}", std::process::id(), epoch_us()));
+        let (events, rx) = crossbeam_channel::unbounded();
+        let (_, cmd_rx) = crossbeam_channel::unbounded();
+        let (tap_tx, _) = crossbeam_channel::unbounded();
+        let (sink, _) = crossbeam_channel::unbounded();
+        let c = Controller::new(ControllerInit {
+            cache: CacheManager::new_for_test(dir, 1 << 30, Duration::from_secs(8)),
+            events,
+            shared: Arc::new(Shared::new()),
+            cmd_rx,
+            jobs: Arc::new(JobPool::new(1)),
+            loops: Arc::new(LoopSettings::default()),
+            tap_tx,
+            mode: OutputMode::Offline { rate: 48_000, block: 512, sink },
+        });
+        (c, rx)
+    }
+
+    /// State and buffering events since the last call.
+    fn transport(rx: &Receiver<EngineEvent>) -> Vec<String> {
+        rx.try_iter()
+            .filter_map(|e| match e {
+                EngineEvent::State { state, .. } => Some(format!("{state:?}")),
+                EngineEvent::Buffering { buffering, .. } => Some(format!("buffering {buffering}")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Buffering is a wait for data while playback is requested. Paused, a voice only waits for
+    /// permission: a seek, or a voice that ran dry, shows as paused, and a wait that goes on once
+    /// playback resumes shows as buffering again.
+    #[test]
+    fn buffering_shows_only_while_playback_is_requested() {
+        let (mut c, rx) = controller();
+        let load = TrackLoad { id: "t".into(), source: SourceSpec::file("t.wav"), lufs: None, album_lufs: None, album_key: None, expected_duration_ms: None };
+        let mut t = Track::new(load, 1);
+        t.key = 7;
+        t.info = Some(TrackInfo::default());
+        c.current = Some(t);
+        c.handle(Cmd::Play);
+        c.on_mixer(MixerEvent::Started(7));
+        transport(&rx);
+        // What `seek` leaves behind, long enough ago to count as buffering if it were playing.
+        let seeked = |c: &mut Controller| {
+            let t = c.current.as_mut().unwrap();
+            t.started = false;
+            t.pending_since = Some(Instant::now() - SEEK_BUFFERING_AFTER * 4);
+        };
+        let waited = |c: &mut Controller| c.current.as_mut().unwrap().pending_since = Some(Instant::now() - SEEK_BUFFERING_AFTER * 4);
+
+        // Seeking while paused.
+        c.handle(Cmd::Pause);
+        seeked(&mut c);
+        c.tick();
+        assert_eq!(transport(&rx), ["Paused"]);
+        // Resumed: buffering only if the audio doesn't come quickly.
+        c.handle(Cmd::Play);
+        c.tick();
+        assert_eq!(transport(&rx), ["Playing"]);
+        waited(&mut c);
+        c.tick();
+        assert_eq!(transport(&rx), ["buffering true", "Buffering"]);
+        c.on_mixer(MixerEvent::Started(7));
+        assert_eq!(transport(&rx), ["buffering false", "Playing"]);
+
+        // Pausing during an underrun.
+        c.on_mixer(MixerEvent::Underrun(7, true));
+        assert_eq!(transport(&rx), ["buffering true", "Buffering"]);
+        c.handle(Cmd::Pause);
+        waited(&mut c);
+        c.tick();
+        assert_eq!(transport(&rx), ["buffering false", "Paused"]);
+        c.handle(Cmd::Play);
+        c.tick();
+        assert_eq!(transport(&rx), ["Playing"]);
+        waited(&mut c);
+        c.tick();
+        assert_eq!(transport(&rx), ["buffering true", "Buffering"]);
+        c.on_mixer(MixerEvent::Underrun(7, false));
+        assert_eq!(transport(&rx), ["buffering false", "Playing"]);
+    }
+
+    /// The current track keeps its id and length however many other voices come and go.
+    #[test]
+    fn registry_keeps_live_voices() {
+        let s = Shared::new();
+        s.register_voice(1, "current", Some(60_000));
+        for key in 2..200 {
+            s.register_voice(key, "preview", None);
+            s.retire_voice(key);
+        }
+        assert_eq!(s.voice(1), Some((Arc::from("current"), Some(60_000))));
+        // Retired ones linger a while, then go.
+        assert!(s.voice(199).is_some() && s.voice(2).is_none());
+        assert_eq!(s.voices.lock().retired.len(), RETIRED_VOICES);
+        s.retire_voice(1);
+        s.set_voice_duration(1, Some(1));
+        assert_eq!(s.voice(1), Some((Arc::from("current"), Some(1))));
+    }
 
     #[test]
     fn gain_lufs_prefers_measurements_then_the_best_guess() {

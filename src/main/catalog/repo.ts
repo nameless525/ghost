@@ -584,7 +584,6 @@ export class CatalogRepo {
 
   private writeAlbumDetail(albumId: number, d: ProviderAlbum): void {
     const now = this.now()
-    const totalMs = d.tracks.reduce((s, t) => s + (t.durationMs ?? 0), 0) || null
     const prev = this.get<{ platforms: string; cover: string | null; year: number | null; added_at: number | null }>(`SELECT platforms, cover, year, added_at FROM albums WHERE id = ?`, albumId)
     if (!prev) throw new Error(`album ${albumId} vanished`)
     const platforms = d.platforms.length ? d.platforms : null
@@ -596,7 +595,7 @@ export class CatalogRepo {
       `UPDATE albums SET title = ?, title_from_ref = 0, sort_title = ?, title_original = ?, alt_titles = ?, kind = ?, kind_rank = ?, type_label = ?,
          year = ?, sort_year = ?, platforms = COALESCE(?, platforms), catalog_no = COALESCE(?, catalog_no), developers = ?, publishers = ?,
          composers = ?, cover = COALESCE(?, cover), thumb = COALESCE(?, thumb), images = ?, formats = ?, sizes = ?, track_count = ?,
-         total_ms = ?, sort_len = ?, description = ?, ext_id = ?, added_at = ?, sort_added = ?, detail_at = ?, detail_error = NULL,
+         description = ?, ext_id = ?, added_at = ?, sort_added = ?, detail_at = ?, detail_error = NULL,
          art_checked_at = ?, gone = 0
        WHERE id = ?`,
       d.title,
@@ -619,8 +618,6 @@ export class CatalogRepo {
       JSON.stringify(d.formats),
       JSON.stringify(d.totalSizes),
       d.tracks.length,
-      totalMs,
-      totalMs ?? UNKNOWN_LEN,
       d.description,
       d.externalId,
       addedAt,
@@ -666,6 +663,30 @@ export class CatalogRepo {
       }
     })
     for (const [loc, id] of existing) if (!seen.has(loc)) this.run(`UPDATE tracks SET removed = 1 WHERE id = ?`, id)
+    this.writeAlbumAggregates(albumId)
+  }
+
+  /**
+   * An album's length and intensity from its active tracks as stored: a refresh keeps durations
+   * that analysis learned when the provider still omits them, and removed tracks stop counting.
+   * The caller refreshes the album's game in the same transaction.
+   */
+  private writeAlbumAggregates(albumId: number): void {
+    const r = this.get<{ total: number | null; intensity: number | null }>(
+      `SELECT SUM(t.duration_ms) AS total, AVG(an.intensity) AS intensity FROM tracks t LEFT JOIN analysis an ON an.track_id = t.id
+       WHERE t.album_id = ? AND t.removed = 0`,
+      albumId
+    )
+    const totalMs = r?.total || null
+    const intensity = r?.intensity ?? null
+    this.run(
+      `UPDATE albums SET total_ms = ?, sort_len = ?, intensity = ?, sort_intensity = ? WHERE id = ?`,
+      totalMs,
+      totalMs ?? UNKNOWN_LEN,
+      intensity,
+      intensity ?? UNKNOWN_INTENSITY,
+      albumId
+    )
   }
 
   markAlbumError(albumId: number, error: string, gone = false): void {
@@ -739,11 +760,12 @@ export class CatalogRepo {
     if (!albumIds.length) return
     const touched = new Set<number>()
     const ftsDirty = new Set<number>(albumIds)
+    const movedTracks: number[] = []
     this.tx(() => {
       for (let i = 0; i < albumIds.length; i += 500) {
         const chunk = albumIds.slice(i, i + 500)
-        const rows = this.all<{ id: number; title: string; kind: AlbumKind; game_id: number | null; game_key: string | null }>(
-          `SELECT id, title, kind, game_id, game_key FROM albums WHERE id IN (${chunk.map(() => '?').join(',')})`,
+        const rows = this.all<{ id: number; title: string; kind: AlbumKind; game_id: number | null; game_key: string | null; detail_at: number | null }>(
+          `SELECT id, title, kind, game_id, game_key, detail_at FROM albums WHERE id IN (${chunk.map(() => '?').join(',')})`,
           ...chunk
         )
         // Primary (non-mergeable) albums in this batch count before the mergeable ones look for a head.
@@ -757,12 +779,15 @@ export class CatalogRepo {
           const gid = this.gameIdFor(key, r.title)
           if (r.game_id !== gid) {
             this.run(`UPDATE albums SET game_id = ? WHERE id = ?`, gid, r.id)
+            if (r.detail_at != null) movedTracks.push(r.id)
             if (r.game_id != null) touched.add(r.game_id)
           }
           touched.add(gid)
         }
       }
       for (const id of this.refreshGames([...touched])) ftsDirty.add(id)
+      // Track search documents carry the game's names (as refreshGames left them).
+      for (const id of movedTracks) this.updateTrackFts(id)
     })
     this.updateAlbumFts([...ftsDirty])
   }
@@ -773,7 +798,7 @@ export class CatalogRepo {
    */
   refreshGames(gameIds: number[]): number[] {
     const ftsDirty: number[] = []
-    const renamed: number[] = []
+    const retitled: number[] = []
     if (!gameIds.length) return ftsDirty
     this.tx(() => {
       for (let i = 0; i < gameIds.length; i += 400) {
@@ -809,6 +834,9 @@ export class CatalogRepo {
           if (!g) continue
           const as = byGame.get(id) ?? []
           if (!as.length) {
+            // Gone albums (still played from likes, playlists, downloads) become game-less rather
+            // than keep an id SQLite hands to the next new game.
+            this.run(`UPDATE albums SET game_id = NULL WHERE game_id = ?`, id)
             this.run(`DELETE FROM games WHERE id = ?`, id)
             for (const c of this.liveGameCaches) c.delete(g.norm_key)
             continue
@@ -861,7 +889,7 @@ export class CatalogRepo {
           const hasPrimary = as.some((a) => !MERGEABLE_KINDS.has(a.kind)) ? 1 : 0
           const altJson = JSON.stringify(alt.slice(0, 16))
           if (name !== g.name || altJson !== g.alt_names || franchise !== g.franchise) for (const a of as) ftsDirty.push(a.id)
-          if (name !== g.name) renamed.push(id)
+          if (name !== g.name || altJson !== g.alt_names) retitled.push(id)
           this.run(
             `UPDATE games SET name = ?, sort_name = ?, alt_names = ?, year = ?, sort_year = ?, platforms = ?, franchise = ?, cover = ?, hero = ?, logo = ?,
                accent = CASE WHEN cover IS ? THEN accent ELSE NULL END, album_count = ?, has_primary = ?, added_at = ?, total_ms = ?, sort_len = ?,
@@ -889,8 +917,8 @@ export class CatalogRepo {
           )
         }
       }
-      // Track search documents carry the game name too.
-      for (const id of renamed) this.updateTrackFtsForGame(id)
+      // Track search documents carry the game's names too.
+      for (const id of retitled) this.updateTrackFtsForGame(id)
     })
     return ftsDirty
   }
@@ -942,6 +970,8 @@ export class CatalogRepo {
     const allGames: number[] = []
     this.liveGameCaches.add(idByKey)
     const moved: number[] = []
+    const movedTracks: number[] = []
+    const edited: number[] = []
     const touched = new Set<number>()
     const used = new Set<number>()
     try {
@@ -956,13 +986,31 @@ export class CatalogRepo {
         await slice()
       }
       for (let i = 0; i < rows.length; i += 1000) {
+        const chunk = rows.slice(i, i + 1000)
         this.tx(() => {
-          for (const r of rows.slice(i, i + 1000)) {
+          // The albums as they are now: one edited while this pass yielded (an album page applied,
+          // a pin) keeps what that write assigned and is assigned again below, from its current
+          // title, instead of from the key computed off the snapshot.
+          const live = new Map(
+            this.all<Row & { gone: number; detail_at: number | null }>(
+              `SELECT id, title, kind, game_id, game_key, gone, detail_at FROM albums WHERE id BETWEEN ? AND ?`,
+              chunk[0].id,
+              chunk[chunk.length - 1].id
+            ).map((a) => [a.id, a])
+          )
+          for (const r of chunk) {
+            const cur = live.get(r.id)
+            if (!cur || cur.gone) continue
+            if (cur.title !== r.title || cur.kind !== r.kind || cur.game_key !== r.game_key || cur.game_id !== r.game_id) {
+              edited.push(r.id)
+              continue
+            }
             const gid = this.gameIdFor(keys.get(r.id)!, r.title, idByKey)
             used.add(gid)
             if (r.game_id !== gid) {
               this.run(`UPDATE albums SET game_id = ? WHERE id = ?`, gid, r.id)
               moved.push(r.id)
+              if (cur.detail_at != null) movedTracks.push(r.id)
               if (r.game_id != null) touched.add(r.game_id)
               touched.add(gid)
             }
@@ -986,6 +1034,18 @@ export class CatalogRepo {
       for (const id of this.refreshGames(t.slice(i, i + 400))) dirty.add(id)
       await yieldFn()
     }
+    // Track search documents carry the game's names: those of the albums that moved.
+    for (let i = 0; i < movedTracks.length; i += 20) {
+      this.tx(() => {
+        for (const id of movedTracks.slice(i, i + 20)) this.updateTrackFts(id)
+      })
+      await yieldFn()
+    }
+    for (let i = 0; i < edited.length; i += BACKGROUND_TX_ROWS) {
+      this.assignGames(edited.slice(i, i + BACKGROUND_TX_ROWS))
+      await yieldFn()
+    }
+    this.clearStrayGameRefs()
     for (const id of await this.refreshFranchises(yieldFn)) dirty.add(id)
     const d = [...dirty]
     for (let i = 0; i < d.length; i += 400) {
@@ -996,6 +1056,27 @@ export class CatalogRepo {
     this.setMeta(RECLUSTER_PENDING, '0')
     this.revision++
     await this.compactFts(yieldFn)
+  }
+
+  /**
+   * Gone albums still pointing at a game that isn't theirs: deleted before deletions cleared such
+   * references (see refreshGames), its id possibly reused by a new game since. No game beats a
+   * wrong one. Their own game's key is their pin, their title's key or its head's.
+   */
+  private clearStrayGameRefs(): void {
+    const stray: number[] = []
+    for (const r of this.all<{ id: number; title: string; game_key: string | null; norm_key: string | null }>(
+      `SELECT a.id, a.title, a.game_key, g.norm_key FROM albums a INDEXED BY albums_facts LEFT JOIN games g ON g.id = a.game_id
+       WHERE a.gone = 1 AND a.game_id IS NOT NULL`
+    )) {
+      const k = r.norm_key
+      if (k != null && (k === r.game_key || k === gameKey(r.title) || k === headKey(r.title))) continue
+      stray.push(r.id)
+    }
+    if (!stray.length) return
+    this.tx(() => {
+      for (const id of stray) this.run(`UPDATE albums SET game_id = NULL WHERE id = ?`, id)
+    })
   }
 
   /** Heuristic franchises: a shared head ("Final Fantasy" from "Final Fantasy VI") across ≥2 games. */
@@ -1127,16 +1208,28 @@ export class CatalogRepo {
 
   updateTrackFts(albumId: number): void {
     this.tx(() => {
-      const rows = this.all<{ id: number; title: string; removed: number; composers: string; album_title: string; album_composers: string; game_name: string | null }>(
-        `SELECT t.id, t.title, t.removed, t.composers, a.title AS album_title, a.composers AS album_composers, g.name AS game_name
+      const rows = this.all<{
+        id: number
+        title: string
+        removed: number
+        composers: string
+        album_title: string
+        album_alt: string
+        album_composers: string
+        game_name: string | null
+        game_alt: string | null
+      }>(
+        `SELECT t.id, t.title, t.removed, t.composers, a.title AS album_title, a.alt_titles AS album_alt, a.composers AS album_composers,
+                g.name AS game_name, g.alt_names AS game_alt
          FROM tracks t JOIN albums a ON a.id = t.album_id LEFT JOIN games g ON g.id = a.game_id WHERE t.album_id = ?`,
         albumId
       )
       const del = this.st(`DELETE FROM track_fts WHERE rowid = ?`)
       const ins = this.st(`INSERT INTO track_fts(rowid, title, album, game, composers) VALUES (?, ?, ?, ?, ?)`)
       const first = rows[0]
-      const albumDoc = first ? ftsDoc([first.album_title, ...searchAliases(first.album_title, TITLE_ALIASES)]) : ''
-      const gameDoc = first ? ftsDoc(gameSearchNames(first.game_name, [])) : ''
+      // The same names (and aliases) as the album document's game and album columns.
+      const albumDoc = first ? ftsDoc([first.album_title, ...searchAliases(first.album_title, TITLE_ALIASES), ...j<string[]>(first.album_alt, [])]) : ''
+      const gameDoc = first ? ftsDoc(gameSearchNames(first.game_name, j<string[]>(first.game_alt, []))) : ''
       for (const r of rows) {
         del.run(r.id)
         if (r.removed) continue
@@ -1146,7 +1239,7 @@ export class CatalogRepo {
     })
   }
 
-  /** Refresh track FTS rows for every album of a game (after its name changed). */
+  /** Refresh track FTS rows for every album of a game (after its names changed). */
   updateTrackFtsForGame(gameId: number): void {
     for (const r of this.all<{ id: number }>(`SELECT id FROM albums WHERE game_id = ? AND detail_at IS NOT NULL`, gameId)) this.updateTrackFts(r.id)
   }
@@ -1203,11 +1296,22 @@ export class CatalogRepo {
       this.updateAlbumFts(albums.slice(i, i + 250))
       await pause()
     }
-    const withTracks = this.all<{ id: number }>(`SELECT DISTINCT album_id AS id FROM tracks WHERE removed = 0`).map((r) => r.id)
+    // Albums with tracks: their documents, and the lengths and intensity derived from the same rows
+    // (stale in catalogs from before those followed the stored tracks), then their games.
+    const withTracks = this.all<{ id: number }>(`SELECT DISTINCT album_id AS id FROM tracks`).map((r) => r.id)
     for (let i = 0; i < withTracks.length; i++) {
       if (stop()) return false
-      this.updateTrackFts(withTracks[i])
+      this.tx(() => {
+        this.updateTrackFts(withTracks[i])
+        this.writeAlbumAggregates(withTracks[i])
+      })
       if (i % 20 === 19) await pause()
+    }
+    const games = this.all<{ id: number }>(`SELECT DISTINCT game_id AS id FROM albums WHERE detail_at IS NOT NULL AND game_id IS NOT NULL`).map((r) => r.id)
+    for (let i = 0; i < games.length; i += 400) {
+      if (stop()) return false
+      this.updateAlbumFts(this.refreshGames(games.slice(i, i + 400)))
+      await pause()
     }
     this.setMeta('fts_version', String(FTS_VERSION))
     await this.compactFts(pause, stop, { force: true })
@@ -1335,11 +1439,7 @@ export class CatalogRepo {
       if (a.durationMs > 0) this.run(`UPDATE tracks SET duration_ms = ? WHERE id = ? AND duration_ms IS NULL`, Math.round(a.durationMs), trackId)
       const t = this.get<{ album_id: number }>(`SELECT album_id FROM tracks WHERE id = ?`, trackId)
       if (t) {
-        const avg = this.get<{ v: number | null }>(
-          `SELECT AVG(an.intensity) AS v FROM tracks t JOIN analysis an ON an.track_id = t.id WHERE t.album_id = ? AND t.removed = 0 AND an.intensity IS NOT NULL`,
-          t.album_id
-        )?.v
-        this.run(`UPDATE albums SET intensity = ?, sort_intensity = ? WHERE id = ?`, avg ?? null, avg ?? UNKNOWN_INTENSITY, t.album_id)
+        this.writeAlbumAggregates(t.album_id)
         const g = this.get<{ game_id: number | null }>(`SELECT game_id FROM albums WHERE id = ?`, t.album_id)
         if (g?.game_id != null) this.refreshGames([g.game_id])
       }

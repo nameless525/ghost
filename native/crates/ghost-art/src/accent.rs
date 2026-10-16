@@ -85,15 +85,20 @@ pub fn accent_from_pixels(pixels: &[u8], channels: usize) -> Option<[u8; 3]> {
     let mut colored = 0f64;
     for k in 0..BUCKETS {
         colored += weight[k];
+        // Neighbours only rank a bucket; the colour is its own mean, so an empty bucket between
+        // two populated ones can't win (on a tie, the bucket with more weight of its own does).
+        if weight[k] <= 0.0 {
+            continue;
+        }
         let score = weight[k] + 0.5 * (weight[(k + BUCKETS - 1) % BUCKETS] + weight[(k + 1) % BUCKETS]);
-        if score > best_score {
+        if best.is_none_or(|b| score > best_score || (score == best_score && weight[k] > weight[b])) {
             best_score = score;
             best = Some(k);
         }
     }
     // Too little colour overall (greyscale art, tiny specks): no accent.
     let best = best?;
-    if colored / (total as f64) < 0.004 || weight[best] <= 0.0 {
+    if colored / (total as f64) < 0.004 {
         return None;
     }
     let r = sum_r[best] / weight[best];

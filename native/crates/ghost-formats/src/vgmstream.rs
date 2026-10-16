@@ -250,7 +250,8 @@ impl FileOpener for MemoryOpener {
     }
 }
 
-/// Files on disk; companions resolve next to the main file.
+/// Files on disk. vgmstream names companions after the main file's own name (its directory plus
+/// the companion's name), so give the main file as an absolute path; a bare name resolves in `dir`.
 pub struct FsOpener {
     pub dir: PathBuf,
 }
@@ -394,12 +395,30 @@ unsafe extern "C" fn sf_close(libsf: *mut LibStreamfile) {
 /// corrupt each other (and index arrays with the other's indices). Their decoding is serialised.
 static RELIC: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+/// An initialised libvgmstream handle, freed on drop: every early return after `libvgmstream_init`
+/// releases it, and its format can't be read after it is gone.
+struct Handle(*mut Lib);
+
+impl Handle {
+    fn format(&self) -> Option<&Format> {
+        unsafe { (*self.0).format.as_ref() }
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        unsafe { libvgmstream_free(self.0) };
+    }
+}
+
 pub struct VgmstreamSource {
-    lib: *mut Lib,
+    lib: Handle,
     /// Holds [`RELIC`] while decoding.
     relic: bool,
     rate: u32,
     channels: usize,
+    /// vgmstream's WAVE channel mask, when the format declares one.
+    mask: Option<u32>,
     sfmt: c_int,
     sample_size: usize,
     pos: u64,
@@ -413,12 +432,6 @@ pub struct VgmstreamSource {
 // libvgmstream state is only touched by the owning thread.
 unsafe impl Send for VgmstreamSource {}
 
-impl Drop for VgmstreamSource {
-    fn drop(&mut self) {
-        unsafe { libvgmstream_free(self.lib) };
-    }
-}
-
 fn c_text(buf: &[c_char]) -> Option<String> {
     let bytes: Vec<u8> = buf.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
     let s = crate::decode_text(&bytes);
@@ -430,32 +443,40 @@ impl VgmstreamSource {
     /// Open `name` through `opener` (which must also serve `name` itself for re-opens).
     pub fn open(name: &str, opener: Arc<dyn FileOpener>, opts: &OpenOptions) -> Result<Self, SourceError> {
         init_once();
+        // vgmstream subsongs are 1-based (0 = default) C ints.
+        let subsong = match opts.subsong {
+            None => 0,
+            Some(s) => s.checked_add(1).and_then(|s| c_int::try_from(s).ok()).ok_or_else(|| SourceError::new(format!("sub-song {s} out of range")))?,
+        };
         let io = opener.open(name).ok_or_else(|| SourceError::new(format!("vgmstream: cannot open {name}")))?;
-        let lib = unsafe { libvgmstream_init() };
-        if lib.is_null() {
+        let raw = unsafe { libvgmstream_init() };
+        if raw.is_null() {
             return Err(SourceError::new("vgmstream: init failed"));
         }
+        let lib = Handle(raw);
         // Native sample format (16-bit for most codecs, float for a few): converted here exactly
         // like the rest of the engine does (vgmstream's own s16→float scales by 1/32767).
         let mut cfg = Config { allow_play_forever: true, play_forever: true, loop_count: 1.0, ..Default::default() };
-        unsafe { libvgmstream_setup(lib, &mut cfg) };
+        unsafe { libvgmstream_setup(lib.0, &mut cfg) };
         let libsf = new_libsf(io, name, opener);
-        // vgmstream subsongs are 1-based (0 = default).
-        let subsong = opts.subsong.map(|s| s as c_int + 1).unwrap_or(0);
-        let r = unsafe { libvgmstream_open_stream(lib, libsf, subsong) };
+        let r = unsafe { libvgmstream_open_stream(lib.0, libsf, subsong) };
         // vgmstream re-opens what it needs; the initial streamfile is ours to close.
         unsafe { sf_close(libsf) };
-        if r < 0 || unsafe { (*lib).format }.is_null() {
-            unsafe { libvgmstream_free(lib) };
-            return Err(SourceError::new(format!("vgmstream: unsupported or corrupt file ({})", file_name_of(name))));
-        }
-        let f = unsafe { &*(*lib).format };
+        let f = match lib.format() {
+            Some(f) if r >= 0 => f,
+            _ => return Err(SourceError::new(format!("vgmstream: unsupported or corrupt file ({})", file_name_of(name)))),
+        };
         if !matches!(f.sample_format, SFMT_PCM16 | SFMT_PCM24 | SFMT_PCM32 | SFMT_FLOAT) || !(1..=MAX_SAMPLE_SIZE as c_int).contains(&f.sample_size) {
-            unsafe { libvgmstream_free(lib) };
             return Err(SourceError::new(format!("vgmstream: unsupported sample format {}", f.sample_format)));
+        }
+        // A file without sub-songs (count 0) or with one only has sub-song 0.
+        let count = f.subsong_count.max(1) as u32;
+        if let Some(s) = opts.subsong.filter(|&s| s >= count) {
+            return Err(SourceError::new(format!("sub-song {s} out of range (file has {count})")));
         }
         let rate = f.sample_rate.max(1) as u32;
         let channels = f.channels.max(1) as usize;
+        let mask = (f.channel_layout != 0).then_some(f.channel_layout);
         let stream = f.stream_samples.max(0) as u64;
         let loop_info = (f.play_forever && f.loop_flag && f.loop_end > f.loop_start && f.loop_start >= 0)
             .then_some(LoopInfo { start: f.loop_start as u64, end: f.loop_end as u64 });
@@ -470,14 +491,11 @@ impl VgmstreamSource {
             subsong: (f.subsong_count > 1).then(|| (f.subsong_index.max(1) - 1) as u32),
             ..Default::default()
         };
-        if opts.subsong.is_some_and(|s| f.subsong_count > 0 && s as c_int >= f.subsong_count.max(1)) {
-            unsafe { libvgmstream_free(lib) };
-            return Err(SourceError::new(format!("sub-song {} out of range (file has {})", opts.subsong.unwrap(), f.subsong_count.max(1))));
-        }
         let duration = Some(loop_info.map_or(stream, |l| stream.max(l.end)));
         let sample_size = f.sample_size as usize;
         let relic = c_text(&f.codec_name).is_some_and(|c| c.starts_with("Relic"));
-        Ok(Self { lib, relic, rate, channels, sfmt: f.sample_format, sample_size, pos: 0, loop_info, duration, meta, raw: Vec::new(), ended: false })
+        let sfmt = f.sample_format;
+        Ok(Self { lib, relic, rate, channels, mask, sfmt, sample_size, pos: 0, loop_info, duration, meta, raw: Vec::new(), ended: false })
     }
 }
 
@@ -487,6 +505,9 @@ impl AudioSource for VgmstreamSource {
     }
     fn channels(&self) -> usize {
         self.channels
+    }
+    fn channel_mask(&self) -> Option<u32> {
+        self.mask
     }
 
     fn read(&mut self, out: &mut [f32]) -> Result<usize, SourceError> {
@@ -505,11 +526,11 @@ impl AudioSource for VgmstreamSource {
             self.raw.resize(frames * ch * MAX_SAMPLE_SIZE, 0);
         }
         let _relic = self.relic.then(|| RELIC.lock());
-        let r = unsafe { libvgmstream_fill(self.lib, self.raw.as_mut_ptr() as *mut c_void, frames as c_int) };
+        let r = unsafe { libvgmstream_fill(self.lib.0, self.raw.as_mut_ptr() as *mut c_void, frames as c_int) };
         if r < 0 {
             return Err(SourceError::new("vgmstream: decode error"));
         }
-        let dec = unsafe { &*(*self.lib).decoder };
+        let dec = unsafe { &*(*self.lib.0).decoder };
         let got = (dec.buf_samples.max(0) as usize).min(frames);
         if dec.done {
             self.ended = true;
@@ -557,7 +578,7 @@ impl AudioSource for VgmstreamSource {
         }
         let frame = frame.min(i64::MAX as u64);
         let _relic = self.relic.then(|| RELIC.lock());
-        unsafe { libvgmstream_seek(self.lib, frame as i64) };
+        unsafe { libvgmstream_seek(self.lib.0, frame as i64) };
         self.pos = frame;
         self.ended = self.loop_info.is_none() && self.duration.is_some_and(|d| frame >= d);
         Ok(frame)

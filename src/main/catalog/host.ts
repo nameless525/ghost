@@ -13,8 +13,8 @@ import type { Settings } from '../../shared/types'
 import type { ArchiveListing, EngineSource } from '../engine/types'
 import type { Broadcast } from '../ipc'
 import { artAccent, onArtAccent, trimArtCache } from '../net/art-protocol'
-import { electronFetch } from '../net/http'
 import { serveFetch } from '../net/rpc-fetch'
+import { sharedScheduler } from '../net/shared'
 import { CatalogClient, type CallStats } from './client'
 import type { CatalogService } from './index'
 import type { ResolveStep, ToolProgress } from './progress'
@@ -64,7 +64,8 @@ export function createCatalogHost(opts: CatalogHostOptions): CatalogHost {
 
   const client = new CatalogClient({
     broadcast: opts.broadcast,
-    fetch: (req, signal) => serveFetch(electronFetch, req, signal),
+    // In the scheduler the art protocol uses too: per-host limits hold for both.
+    fetch: (req, signal) => serveFetch(sharedScheduler(), req, signal),
     inspectArchive: opts.inspectArchive,
     onResolveStep: opts.onResolveStep,
     onToolProgress: opts.onToolProgress,
@@ -92,7 +93,13 @@ export function createCatalogHost(opts: CatalogHostOptions): CatalogHost {
       client.attach(port2)
       port1.unref()
       port2.unref()
-      void import('./server').then((m) => m.serveCatalog(port1, data))
+      void import('./server')
+        .then((m) => m.serveCatalog(port1, data))
+        .catch((e) => {
+          console.error('[catalog] could not load the catalog:', e)
+          client.close(e as Error)
+          opts.onFatal?.(e as Error)
+        })
       return
     }
     let w: Worker
@@ -112,9 +119,9 @@ export function createCatalogHost(opts: CatalogHostOptions): CatalogHost {
     w.on('exit', (code) => {
       if (worker === w) worker = null
       const reason = new Error(`The catalog stopped unexpectedly (worker exit ${code}).`)
-      if (disposed) return client.close(reason)
+      // No replacement comes after a shutdown or a fatal error: calls fail instead of queueing.
+      if (disposed || fatal) return client.close(reason)
       client.detach(reason)
-      if (fatal) return
       if (restarts++ < MAX_RESTARTS) {
         console.error(`[catalog] worker exited (${code}); restarting`)
         setTimeout(spawn, 300 * restarts).unref()

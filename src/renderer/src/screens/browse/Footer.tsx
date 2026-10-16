@@ -6,7 +6,7 @@ import { sfx } from '../../sound'
 import { usePlayer } from '../../state/player'
 import { Kbd } from '../../ui/Kbd'
 import { ShearButton } from '../../ui/ShearButton'
-import { addSelectionToPlaylist, downloadSelection, playSelection, queueSelection } from './actions'
+import { addSelectionToPlaylist, downloadSelection, playResult, queueSelection } from './actions'
 import { activeCarousel } from './carousel'
 import { openSelectionMenu } from './menu'
 import { useBrowse } from './store'
@@ -111,7 +111,8 @@ export function Footer() {
           shortcut="Enter"
           soft={none}
           sound={false}
-          onClick={() => void playSelection(sel())}
+          // as Enter: the selection of the query as typed, once its results are in
+          onClick={() => void playResult(false)}
         />
       </div>
     </div>

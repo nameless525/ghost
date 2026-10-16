@@ -28,12 +28,17 @@ struct Pool {
 
 static POOL: OnceLock<Pool> = OnceLock::new();
 
+/// Worker threads in the pool: 2, or 3 on machines with 8+ cores.
+fn pool_size() -> usize {
+    match std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) {
+        0..=7 => 2,
+        _ => 3,
+    }
+}
+
 fn pool() -> &'static Pool {
     POOL.get_or_init(|| {
-        let n = match std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) {
-            0..=7 => 2,
-            _ => 3,
-        };
+        let n = pool_size();
         let (tx, rx) = crossbeam_channel::unbounded::<Job>();
         for i in 0..n {
             let rx: Receiver<Job> = rx.clone();
@@ -43,7 +48,8 @@ fn pool() -> &'static Pool {
                 unsafe {
                     let _ = libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INITIATED, 0);
                 }
-                ghost_engine::stats::register_thread("ghost-art");
+                // Held for the worker's lifetime: dropping it would unregister the thread.
+                let _cpu = ghost_engine::stats::register_thread("ghost-art");
                 while let Ok(job) = rx.recv() {
                     job();
                 }
@@ -191,4 +197,33 @@ pub fn art_accent<'env>(env: &'env Env, bytes: Buffer) -> Result<Object<'env>> {
         let r = ghost_art::accent_of(&bytes);
         r.map(|a| JsAccent(a, bytes)).map_err(|e| e.to_string())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pool_threads_stay_registered_for_cpu_stats() {
+        // Every worker blocks in a job until all of them have one: then all are inside their
+        // receive loop, past registration.
+        let n = pool_size();
+        let all_busy = std::sync::Arc::new(std::sync::Barrier::new(n + 1));
+        let (done_tx, done_rx) = crossbeam_channel::unbounded();
+        for _ in 0..n {
+            let (b, done) = (all_busy.clone(), done_tx.clone());
+            pool().tx.send(Box::new(move || {
+                b.wait();
+                let _ = done.send(());
+            }))
+            .unwrap();
+        }
+        all_busy.wait();
+        for _ in 0..n {
+            done_rx.recv().unwrap();
+        }
+        let stats = ghost_engine::stats::thread_cpu();
+        let art = stats.iter().find(|t| t.name == "ghost-art").expect("ghost-art threads registered");
+        assert_eq!(art.count as usize, n, "{stats:?}");
+    }
 }

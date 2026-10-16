@@ -10,7 +10,7 @@ import type { HttpClient } from '../net/http'
 import { createDefaultRegistry, type ProviderRegistry } from '../providers'
 import { CHIP_ID, ChipProvider } from '../providers/chip'
 import { KH_ID } from '../providers/khinsider'
-import { LocalProvider, type ScanProgress, type ScanResult } from '../providers/local'
+import { LocalProvider, type LocalLibrary, type ScanProgress, type ScanResult } from '../providers/local'
 import { SET_MAX_TRACKS } from '../providers/soundcloud'
 import { isIndexProvider, type IndexProvider, type Provider, type ProviderAlbum } from '../providers/types'
 import type { YtDlp } from '../tools/ytdlp'
@@ -18,6 +18,7 @@ import { ChipIndexer, VGMRIPS_REFRESH_MS, type ChipIndexerDeps } from './chip'
 import { Crawler } from './crawler'
 import { AccentWorker, Enricher } from './enrich'
 import type { CatalogDeps, CatalogService } from './index'
+import { syncLocalAlbums } from './local'
 import { QueryEngine, reseedRandom } from './query'
 import { baseTitle } from './normalize'
 import { CatalogRepo, writerPause } from './repo'
@@ -329,7 +330,9 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   let lastCheck: number | null = null
   let checkTick: ReturnType<typeof setInterval> | null = null
   let disabledKey = ''
+  let joshwOn = false
   const disabledNow = () => JSON.stringify([...deps.getSettings().sources.disabled].sort())
+  const joshwNow = () => deps.getSettings().sources.crawlJoshw === true
 
   /** Start whatever is due: the index crawls, or the chiptune rip index once nothing else crawls. */
   function startDue(): boolean {
@@ -341,17 +344,22 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   function checkDue(): boolean {
     lastCheck = now()
     disabledKey = disabledNow()
+    joshwOn = joshwNow()
     return startDue()
   }
-  /** Settings changed: follow sources turned on or off. */
+  /** Settings changed: follow sources turned on or off (and the joshw.info opt-in). */
   function onSourcesToggled(): void {
     if (stopped || lastCheck == null) return // the launch check reads the current list anyway
     const key = disabledNow()
-    if (key === disabledKey) return
+    const joshw = joshwNow()
+    if (key === disabledKey && joshw === joshwOn) return
+    const joshwToggled = joshw !== joshwOn
     disabledKey = key
+    joshwOn = joshw
     const off = new Set(deps.getSettings().sources.disabled)
     for (const [id, c] of crawlers) if (off.has(id)) c.stop()
     if (off.has(CHIP_ID)) chipIndexer?.stop()
+    else if (joshwToggled) chipIndexer?.sourcesChanged()
     startDue()
     notify()
   }
@@ -719,16 +727,29 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   }
 
   // --- local files ----------------------------------------------------------------------------
-  // Scan settings.sources.localFolders at startup and whenever the list changes (incremental). The
-  // list is checked when settings arrive (deps.onSettingsChanged), or polled without it.
+  // Scan settings.sources.localFolders at startup and whenever the list changes (incremental), then
+  // bring their albums in Browse up to date (./local.ts). The list is checked when settings arrive
+  // (deps.onSettingsChanged), or polled without it.
   let localKey: string | null = null
   let localPoll: ReturnType<typeof setInterval> | null = null
   let offSettings: (() => void) | null = null
+  let localSync: Promise<unknown> = Promise.resolve()
   const count = (n: number) => n.toLocaleString('en-US')
+  // The bar ends when the albums are written too (checkLocalFolders), not when the scan does.
   const scanProgress = (p: ScanProgress): void => {
-    if (p.phase === 'done') tasks.done('scan')
-    else if (p.phase === 'walk') tasks.step('scan', { label: 'Looking for music files', detail: p.found ? `${count(p.found)} found` : null, fraction: null, expectMs: null, span: [0, 0.15] })
-    else tasks.step('scan', { label: 'Reading tags', detail: `${count(p.done)} of ${count(p.total)} files`, fraction: p.total ? p.done / p.total : null, expectMs: null, span: [0.15, 1] })
+    if (p.phase === 'walk') tasks.step('scan', { label: 'Looking for music files', detail: p.found ? `${count(p.found)} found` : null, fraction: null, expectMs: null, span: [0, 0.15] })
+    else if (p.phase === 'tags') tasks.step('scan', { label: 'Reading tags', detail: `${count(p.done)} of ${count(p.total)} files`, fraction: p.total ? p.done / p.total : null, expectMs: null, span: [0.15, 0.9] })
+  }
+  /** Write the albums of the files a scan read or dropped, one sync at a time (scans can overlap). */
+  function syncAlbums(lib: LocalLibrary, changed: string[]) {
+    const run = localSync.then(() =>
+      syncLocalAlbums(repo, lib, changed, {
+        stop: () => stopped,
+        onProgress: (done, total) => tasks.step('scan', { label: 'Updating albums', detail: `${count(done)} of ${count(total)}`, fraction: done / total, expectMs: null, span: [0.9, 1] })
+      })
+    )
+    localSync = run.catch(() => {})
+    return run
   }
   /** `startup`: the launch rescan (quiet); otherwise the user changed the folder list. */
   function checkLocalFolders(startup = false): void {
@@ -746,28 +767,42 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
     const added = startup ? [] : [...new Set(folders.map((f) => resolvePath(f)))].filter((f) => !before.includes(f))
     lib
       .scan(folders, { onProgress: scanProgress })
-      .then((r) => {
-        if (!startup) scanNotice(r, added)
-        if (r.added || r.updated || r.removed || r.errors) log(`local files: ${r.files} in ${r.roots.length} folder(s), +${r.added} ~${r.updated} -${r.removed}, ${r.errors} unreadable (${r.ms} ms)`)
+      .then(async (r) => {
+        if (r.added || r.updated || r.removed || r.errors || r.incomplete.length) {
+          const partly = r.incomplete.length ? `, partly unreadable: ${r.incomplete.join(', ')}` : ''
+          log(`local files: ${r.files} in ${r.roots.length} folder(s), +${r.added} ~${r.updated} -${r.removed}, ${r.errors} unreadable${partly} (${r.ms} ms)`)
+        }
         if (r.removedPaths.length) {
           repo.tx(() => {
             for (const p of r.removedPaths) repo.run(`DELETE FROM sources WHERE provider = 'local' AND path = ?`, p)
           })
           repo.revision++
-          notify()
         }
+        // The notice comes once the albums are in Browse.
+        const albums = await syncAlbums(lib, [...r.changedPaths, ...r.removedPaths])
+        if (albums?.written || albums?.withdrawn) log(`local albums: ${albums.written} written, ${albums.withdrawn} withdrawn`)
+        if (r.removedPaths.length || albums) notify()
+        if (!startup) scanNotice(r, added)
       })
       .catch((e) => {
         log(`local files scan failed: ${(e as Error).message}`)
         if (!startup) deps.broadcast('notify', { id: 'local-scan', kind: 'error', title: 'Couldn’t scan your music folders', body: (e as Error).message })
       })
+      .finally(() => tasks.done('scan'))
   }
 
   /** What a scan the user asked for (a folder added or removed) did, in one notice. */
   function scanNotice(r: ScanResult, added: string[]): void {
     const tracks = (n: number) => `${count(n)} track${n === 1 ? '' : 's'}`
     const names = (roots: string[]) => listNames(roots.map((f) => basename(f) || f))
-    const unreadable = r.errors ? `${count(r.errors)} file${r.errors === 1 ? '' : 's'} couldn’t be read, so they’re listed by file name.` : undefined
+    const partial = added.filter((f) => r.incomplete.includes(f))
+    const unreadable =
+      [
+        r.errors ? `${count(r.errors)} file${r.errors === 1 ? '' : 's'} couldn’t be read, so they’re listed by file name.` : '',
+        partial.length ? `Some folders in ${names(partial)} couldn’t be opened, so they’re left out.` : ''
+      ]
+        .filter(Boolean)
+        .join(' ') || undefined
     const missing = added.filter((f) => r.unavailable.includes(f))
     const fresh = r.byRoot.filter((x) => added.includes(x.root))
     const found = fresh.filter((x) => x.files > 0)
@@ -920,6 +955,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
       const onSettings = () => {
         checkLocalFolders()
         onSourcesToggled()
+        // Edited IGDB / SteamGridDB keys are tried at once.
+        enricher.configure()
       }
       offSettings = deps.onSettingsChanged?.(onSettings) ?? null
       if (!offSettings) {
@@ -1020,6 +1057,10 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
 
     async groupAlbums(groupKey, q) {
       return qe.groupAlbums(groupKey, q)
+    },
+
+    async groupAlbumPage(groupKey, q, offset, limit) {
+      return qe.groupAlbumPage(groupKey, q, offset, limit)
     },
 
     async album(albumId: ID): Promise<AlbumDetail> {

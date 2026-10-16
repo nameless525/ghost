@@ -1,5 +1,6 @@
-//! symphonia-backed source: MP3, FLAC, AAC/M4A, ALAC, Vorbis/Ogg, WAV/AIFF, MKV/WebM, CAF.
-//! Gapless decoding is on, so encoder delay and padding are trimmed by the decoder.
+//! symphonia-backed source: MP3, FLAC, AAC/M4A, ALAC, Vorbis/Ogg, Opus (libopus, see [`opus`]),
+//! WAV/AIFF, MKV/WebM, CAF. Gapless decoding is on, so encoder delay and padding are trimmed by
+//! the decoder; Opus pre-skip is trimmed here, by timestamp.
 //!
 //! Two things keep streamed opens and seeks cheap:
 //! - The probe skips trailing-tag detection (ID3v1 / APE at the end of the file), which would
@@ -12,6 +13,8 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
+use symphonia::core::audio::{ChannelLabel, Channels};
+use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::probe::{Hint, Probe};
@@ -20,7 +23,7 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptio
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{TimeBase, Timestamp};
 
-use super::{frag, AudioSource, OpenCtx, SourceError, SourceMeta};
+use super::{frag, opus, AudioSource, OpenCtx, SourceError, SourceMeta};
 use crate::cache::CacheManager;
 use crate::util::extension_of;
 use crate::SourceSpec;
@@ -75,7 +78,14 @@ pub struct SymphoniaSource {
     track_id: u32,
     rate: u32,
     channels: usize,
+    /// WAVE channel mask of the decoder's channels, when it positions them.
+    mask: Option<u32>,
     time_base: Option<TimeBase>,
+    /// Frames the track's timestamps run ahead of its audio: Ogg Opus counts its pre-skip in
+    /// them (symphonia leaves it to the decoder, which can't see it).
+    ts_shift: i64,
+    /// Frames to decode before a seek target (Opus needs 80 ms to converge).
+    preroll: u64,
     /// Decoded, not yet consumed samples (interleaved).
     buf: Vec<f32>,
     buf_pos: usize,
@@ -101,6 +111,30 @@ pub struct SymphoniaSource {
 
 fn sym_err(e: SymError) -> SourceError {
     SourceError::new(format!("decode: {e}"))
+}
+
+/// Symphonia's channels as a WAVE channel mask (see [`AudioSource::channel_mask`]), when they
+/// are speaker positions in mask order.
+fn wave_mask(channels: &Channels) -> Option<u32> {
+    let mask = match channels {
+        Channels::Positioned(p) => u32::try_from(p.bits()).ok()?,
+        Channels::Custom(labels) => {
+            let mut mask = 0u32;
+            for label in labels.iter() {
+                let ChannelLabel::Positioned(p) = label else { return None };
+                let bit = u32::try_from(p.bits()).ok().filter(|b| b.is_power_of_two())?;
+                // Out of mask order (or repeated): the channels can't be described by a mask.
+                if bit <= mask {
+                    return None;
+                }
+                mask |= bit;
+            }
+            mask
+        }
+        _ => return None,
+    };
+    // Only the first 18 positions are WAVE's.
+    (mask >> 18 == 0).then_some(mask)
 }
 
 /// Shared bytes as a symphonia media source (archive entries).
@@ -198,16 +232,23 @@ impl SymphoniaSource {
         let time_base = track.time_base;
         let num_frames = track.num_frames;
         let track_duration = track.duration;
+        let opus = params.codec == CODEC_ID_OPUS;
+        // Ogg Opus timestamps (granule positions) include the pre-skip, which symphonia's Ogg
+        // mapper only records as the track's delay; Matroska's are already shifted back by it.
+        let ts_shift = if opus && format.format_info().short_name == "ogg" { track.delay.unwrap_or(0) as i64 } else { 0 };
 
         let dec_opts = AudioDecoderOptions::default().gapless(true);
-        let decoder = symphonia::default::get_codecs()
-            .make_audio_decoder(&params, &dec_opts)
-            .map_err(|e| SourceError::new(format!("unsupported codec: {e}")))?;
+        let decoder = opus::codecs().make_audio_decoder(&params, &dec_opts).map_err(|e| SourceError::new(format!("unsupported codec: {e}")))?;
 
-        let rate = params.sample_rate.or(decoder.codec_params().sample_rate).unwrap_or(44_100);
-        let channels =
-            params.channels.as_ref().or(decoder.codec_params().channels.as_ref()).map(|c| c.count()).unwrap_or(2).max(1);
+        // The decoder's parameters describe its output (Opus decodes at 48 kHz whatever the
+        // container says, and positions its channels); the container's fill the gaps.
+        let out = decoder.codec_params();
+        let rate = out.sample_rate.or(params.sample_rate).unwrap_or(44_100);
+        let layout = out.channels.as_ref().or(params.channels.as_ref());
+        let channels = layout.map(|c| c.count()).unwrap_or(2).max(1);
+        let mask = layout.and_then(wave_mask).filter(|m| m.count_ones() as usize == channels);
 
+        let num_frames = num_frames.map(|n| n.saturating_sub(ts_shift as u64));
         let duration = num_frames.or_else(|| {
             let tb = time_base?;
             let t = tb.calc_duration(track_duration?)?;
@@ -227,10 +268,14 @@ impl SymphoniaSource {
             track_id,
             rate,
             channels,
+            mask,
             time_base,
+            ts_shift,
+            preroll: if opus { ghost_formats::opus::SEEK_PREROLL } else { 0 },
             buf: Vec::with_capacity(8192),
             buf_pos: 0,
-            skip_until: None,
+            // Opus starts with its pre-skip: decoder warm-up at negative times.
+            skip_until: opus.then_some(0),
             duration,
             meta,
             accurate_seek,
@@ -326,7 +371,7 @@ impl SymphoniaSource {
             if packet.track_id != self.track_id {
                 continue;
             }
-            let first_frame = self.ts_to_frame(packet.pts.get().saturating_add(packet.trim_start.get() as i64)) + self.frame_offset;
+            let first_frame = self.ts_to_frame(packet.pts.get().saturating_add(packet.trim_start.get() as i64)) + self.frame_offset - self.ts_shift;
             match self.decoder.decode(&packet) {
                 Ok(audio) => {
                     self.consecutive_errors = 0;
@@ -385,6 +430,9 @@ impl AudioSource for SymphoniaSource {
     fn channels(&self) -> usize {
         self.channels
     }
+    fn channel_mask(&self) -> Option<u32> {
+        self.mask
+    }
 
     fn read(&mut self, out: &mut [f32]) -> Result<usize, SourceError> {
         let ch = self.channels;
@@ -417,7 +465,9 @@ impl AudioSource for SymphoniaSource {
                 self.restart_at_fragment(k)?;
             }
         }
-        let local = (frame as i64 - self.frame_offset).max(0) as u64;
+        // Land the pre-roll early, then decode up to the target.
+        let from = frame.saturating_sub(self.preroll);
+        let local = (from as i64 - self.frame_offset + self.ts_shift).max(0) as u64;
         let ts = Timestamp::new(self.frame_to_ts(local));
         let seeked = match self.format.seek(mode, SeekTo::Timestamp { ts, track_id: self.track_id }) {
             Ok(s) => s,
@@ -434,11 +484,12 @@ impl AudioSource for SymphoniaSource {
         self.buf.clear();
         self.buf_pos = 0;
         self.ended = false;
-        let required = (self.ts_to_frame(seeked.required_ts.get()) + self.frame_offset).max(0) as u64;
-        let actual = (self.ts_to_frame(seeked.actual_ts.get()) + self.frame_offset).max(0) as u64;
-        if mode == SeekMode::Accurate || actual <= required {
+        let required = (self.ts_to_frame(seeked.required_ts.get()) + self.frame_offset - self.ts_shift).max(0) as u64;
+        let actual = (self.ts_to_frame(seeked.actual_ts.get()) + self.frame_offset - self.ts_shift).max(0) as u64;
+        let target = required + (frame - from);
+        if mode == SeekMode::Accurate || actual <= target {
             // Decode forward from the packet boundary and drop frames up to the target.
-            self.skip_until = Some(required);
+            self.skip_until = Some(target);
             Ok(frame)
         } else {
             // Coarse seek landed past the target: start there and report it.

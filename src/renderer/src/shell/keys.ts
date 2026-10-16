@@ -16,8 +16,9 @@
 // 'F1'–'F12', or a literal character like '?', '/', '['.
 //
 // Typing in inputs never triggers bindings unless the combo uses Mod/Ctrl/Alt, is Escape or
-// an F-key, or the binding sets `allowInInput`. Components that consume a key themselves
-// should call e.preventDefault() (bindings skip defaultPrevented events).
+// an F-key, or the binding sets `allowInInput` (a key typed in a field counts as typing even if
+// the field's own handler blurred it). Components that consume a key themselves should call
+// e.preventDefault() (bindings skip defaultPrevented events).
 
 import { createContext, useContext, useEffect, useRef } from 'react'
 import { isMac } from '../theme'
@@ -181,6 +182,22 @@ function isEditable(el: Element | null): boolean {
   return el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || (el as HTMLElement).isContentEditable
 }
 
+const isActivatable = (el: Element | null) =>
+  !!el && (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'SUMMARY' || ['button', 'menuitem', 'option', 'switch', 'tab', 'radio', 'checkbox'].includes(el.getAttribute('role') ?? ''))
+
+/**
+ * For Enter / Space bindings: a control focused from the keyboard (button, link, menu item…) gets
+ * the key itself, so the binding should step aside (return false). A control that merely kept
+ * focus after a mouse click is blurred instead, and the key is the binding's.
+ */
+export function focusedControlTakesKey(): boolean {
+  const el = document.activeElement as HTMLElement | null
+  if (!el || !isActivatable(el)) return false
+  if (el.matches(':focus-visible')) return true
+  el.blur()
+  return false
+}
+
 function isCommandLike(e: KeyboardEvent): boolean {
   return e.ctrlKey || e.metaKey || e.altKey || e.key === 'Escape' || /^F\d{1,2}$/.test(e.key)
 }
@@ -195,8 +212,11 @@ function isTextEditing(e: KeyboardEvent): boolean {
 }
 
 function onKeyDown(e: KeyboardEvent): void {
-  if (e.defaultPrevented || e.isComposing) return
-  const editable = isEditable(document.activeElement)
+  // keyCode 229: the key went to an IME (WebKit reports a candidate's confirming Enter as that)
+  if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
+  // Where the key was typed, not where focus is after the handlers before this one (Enter in the
+  // Browse search box blurs it: that Enter is the search's, not Browse's play)
+  const editable = isEditable((e.target as Element | null) ?? document.activeElement)
   const candidates: { b: Binding; w: number; p: number; h: KeyHandler; o: KeybindingOptions }[] = []
   let heldRepeat = false
   for (const b of bindings) {

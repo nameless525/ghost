@@ -12,6 +12,9 @@ const clamp = (v: unknown, lo: number, hi: number, fallback: number): number => 
   return Math.min(hi, Math.max(lo, n))
 }
 
+/** The non-empty strings of a list setting (a hand-edited file may hold anything there). */
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [])
+
 /** Coerce out-of-range or wrongly-typed values back into something the app can use. */
 export function sanitizeSettings(s: Settings, defaults: Settings): Settings {
   const a = s.audio
@@ -27,7 +30,8 @@ export function sanitizeSettings(s: Settings, defaults: Settings): Settings {
   if (typeof a.device !== 'string' || !a.device) out.audio.device = 'default'
   if (!['lossless', 'high', 'saver'].includes(s.sources.quality)) out.sources.quality = defaults.sources.quality
   out.sources.order = Array.isArray(s.sources.order) ? withKnownSources(s.sources.order.filter((x) => typeof x === 'string'), defaults.sources.order) : [...defaults.sources.order]
-  if (!Array.isArray(s.sources.disabled)) out.sources.disabled = []
+  out.sources.disabled = strings(s.sources.disabled)
+  out.sources.localFolders = strings(s.sources.localFolders)
   if (typeof s.sources.crawlJoshw !== 'boolean') out.sources.crawlJoshw = false
   out.library.cacheMaxGb = clamp(s.library.cacheMaxGb, 0.25, 1000, defaults.library.cacheMaxGb)
   if (typeof s.library.downloadDir !== 'string' || !s.library.downloadDir.trim()) out.library.downloadDir = defaults.library.downloadDir

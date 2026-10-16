@@ -15,14 +15,16 @@
 //    by yt-dlp once (one run, ~5–12 s for a song) and played from the file; the fragmented MP4 gets
 //    its real length written into its header first (fixFragmentedMp4), otherwise the engine sees
 //    only the first 10 s segment's length and refuses clips past it. The cache is pruned
-//    least-recently-used first past `maxCacheBytes`. Without `cacheDir` only progressive HTTP
+//    least-recently-used first past `maxCacheBytes`, counting what unfinished downloads left
+//    (.part files, fragments), which goes at startup and after a failed download. A forced resolve
+//    (the file failed to play) downloads the track again. Without `cacheDir` only progressive HTTP
 //    formats play, with the expiry of their signed URL.
 //
 // Locators: '<trackId>' or '<trackId>#<startMs>-<endMs>' (a chapter of a long upload). Album refs:
 // '<trackId>' (a long upload), '<user>/sets/<slug>' (a set), '<user>/<slug>' (a pasted track URL)
 // or 'uploads:<user>:<url-encoded title>' (one uploader's tracks of a game).
 
-import { mkdir, open, readdir, readFile, stat, unlink, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rename, stat, unlink, utimes, writeFile } from 'node:fs/promises'
 import { basename, join, resolve as resolvePath } from 'node:path'
 import type { AlbumKind, AudioFormat, ExternalAlbumHit } from '../../shared/types'
 import { baseTitle } from '../catalog/normalize'
@@ -31,7 +33,7 @@ import type { YtDlp } from '../tools/ytdlp'
 import { parseDescriptionChapters } from './chapters'
 import { channelTrust, cleanTrackTitle, combineScore, durationFit, looksNumbered, penaltyHits, titleSimilarity, tokens } from './match'
 import type { CanonicalTrack, Provider, ProviderAlbum, ProviderCallOptions, ProviderTrack, SourceCandidate, StreamInfo } from './types'
-import { bestThumb, FULL_OST_MIN_SEC, scoreAlbumTitle, trackQuery } from './youtube'
+import { bestThumb, FORCE_REUSE_MS, FULL_OST_MIN_SEC, scoreAlbumTitle, trackQuery } from './youtube'
 
 export const SOUNDCLOUD_ID = 'soundcloud'
 /** Progressive HTTP first (streams directly), then the AAC HLS rendition (downloaded when a cache dir is set). */
@@ -122,12 +124,19 @@ export function parseSoundCloudUrl(s: string): { set?: string; track?: string } 
     return null
   }
   const host = u.hostname.toLowerCase()
-  const parts = u.pathname.split('/').filter(Boolean).map((p) => decodeURIComponent(p))
-  if (/^api(?:-v2)?\.soundcloud\.com$/.test(host)) {
+  const api = /^api(?:-v2)?\.soundcloud\.com$/.test(host)
+  if (!api && !/^(?:www\.|m\.)?soundcloud\.com$/.test(host)) return null
+  let parts: string[]
+  try {
+    parts = u.pathname.split('/').filter(Boolean).map((p) => decodeURIComponent(p))
+  } catch {
+    // A malformed escape ("%E0%A4%A") isn't a SoundCloud page.
+    return null
+  }
+  if (api) {
     const m = /^(?:soundcloud:tracks:)?(\d+)$/.exec(parts[1] ?? '')
     return parts[0] === 'tracks' && m ? { track: m[1] } : null
   }
-  if (!/^(?:www\.|m\.)?soundcloud\.com$/.test(host)) return null
   const ok = (p: string) => /^[A-Za-z0-9_-]+$/.test(p)
   if (parts.length < 2 || !ok(parts[0]) || NOT_USER_SLUGS.has(parts[0])) return null
   if (parts[1] === 'sets' && parts[2] && ok(parts[2])) return { set: `${parts[0]}/sets/${parts[2]}` }
@@ -715,6 +724,19 @@ export function uploadsToAlbum(ref: string, user: string, name: string, listing:
   return { ...albumShell(ref, name, uploader, bestThumb(art), null, 'SoundCloud uploads'), tracks }
 }
 
+/**
+ * A file of the download cache: a finished track ('sc-<id>.<ext>'), its sidecar ('sc-<id>.json'), or
+ * anything else of that track's (yt-dlp's .part / .part-FragN / .ytdl / .temp.<ext> files while it
+ * works, a replaced file set aside). Null for files that aren't the cache's.
+ */
+function cacheFileOf(name: string): { id: string; kind: 'media' | 'meta' | 'partial' } | null {
+  const m = /^sc-(\d+)\.(.+)$/.exec(name)
+  if (!m) return null
+  const rest = m[2].toLowerCase()
+  const kind = rest === 'json' ? 'meta' : /^[a-z0-9]{2,5}$/.test(rest) && !/^(?:part|ytdl|tmp|temp)$/.test(rest) ? 'media' : 'partial'
+  return { id: m[1], kind }
+}
+
 // ---------------------------------------------------------------------------
 // Provider
 
@@ -752,6 +774,10 @@ export class SoundCloudProvider implements Provider {
   private tracks = new Map<string, Memo<ScTrack>>()
   /** Downloads in flight, and the callers following their progress. */
   private downloads = new Map<string, { run: Promise<CachedFile>; followers: Set<(bytes: number, totalBytes: number | null) => void> }>()
+  /** When this process last downloaded each track: a forced resolve right after reuses that file. */
+  private fetched = new Map<string, number>()
+  /** Clearing out what earlier runs left unfinished, at startup (downloads wait for it). */
+  private readonly startup: Promise<void>
 
   constructor(
     private readonly ytdlp: () => Promise<YtDlp>,
@@ -759,6 +785,7 @@ export class SoundCloudProvider implements Provider {
   ) {
     this.now = opts.now ?? Date.now
     this.log = opts.log ?? (() => {})
+    this.startup = opts.cacheDir ? this.sweep().catch((e) => this.log(`soundcloud: cache sweep failed: ${(e as Error).message}`)) : Promise.resolve()
   }
 
   private async flat(target: string, extra: string[], opts: ProviderCallOptions = {}): Promise<ScPlaylist> {
@@ -899,7 +926,9 @@ export class SoundCloudProvider implements Provider {
 
   /**
    * The cached file for a track, downloading it once (concurrent callers share the run; each one's
-   * `onBytes` follows its progress).
+   * `onBytes` follows its progress). `force`: the cached file failed to play, so it is replaced by
+   * a new download, unless this process downloaded it under FORCE_REUSE_MS ago (the chapters of one
+   * upload failing together cost one download).
    */
   download(id: string, opts: ProviderCallOptions = {}): Promise<CachedFile> {
     let d = this.downloads.get(id)
@@ -908,9 +937,16 @@ export class SoundCloudProvider implements Provider {
       const onBytes = (b: number, t: number | null) => {
         for (const fn of followers) fn(b, t)
       }
-      const run = this.cached(id)
+      const replace = !!opts.force && !(this.now() - (this.fetched.get(id) ?? -Infinity) < FORCE_REUSE_MS)
+      const run = this.startup
+        .then(() => (replace ? this.discard(id).then(() => null) : this.cached(id)))
         .then((hit) => hit ?? this.fetchFile(id, opts, onBytes))
         .finally(() => this.downloads.delete(id))
+        // What the failed run left (.part files, fragments) is no use to a later one: yt-dlp starts over.
+        .catch(async (e: unknown) => {
+          await this.sweep().catch(() => {})
+          throw e
+        })
       d = { run, followers }
       this.downloads.set(id, d)
     }
@@ -929,8 +965,10 @@ export class SoundCloudProvider implements Provider {
     } catch {
       return null
     }
-    const prefix = `${this.fileName(id)}.`
-    const name = names.find((n) => n.startsWith(prefix) && !/\.(?:part|ytdl|json|tmp)$/i.test(n) && !/\.part-Frag/i.test(n))
+    const name = names.find((n) => {
+      const f = cacheFileOf(n)
+      return f?.id === id && f.kind === 'media'
+    })
     if (!name) return null
     const path = join(dir, name)
     try {
@@ -967,6 +1005,8 @@ export class SoundCloudProvider implements Provider {
         '4',
         '--no-playlist',
         '--no-simulate',
+        // Never take a file already there (one being replaced, a leftover) for the download.
+        '--force-overwrites',
         '--max-filesize',
         '400M',
         '-o',
@@ -998,29 +1038,73 @@ export class SoundCloudProvider implements Provider {
     }
     await writeFile(join(dir, `${this.fileName(id)}.json`), JSON.stringify({ format, abr, fixed: true })).catch(() => {})
     this.log(`soundcloud: cached ${id} (${(st.size / 1048576).toFixed(1)} MB ${format})`)
+    this.fetched.set(id, this.now())
+    if (this.fetched.size > 300) this.fetched.delete(this.fetched.keys().next().value!)
     await this.prune(out.path).catch((e) => this.log(`soundcloud: cache prune failed: ${(e as Error).message}`))
     return { path: out.path, format, bitrateKbps: abr, sizeBytes: st.size }
   }
 
-  /** Delete least recently used files past maxCacheBytes (never `keep`). */
+  /**
+   * Delete least recently used files past maxCacheBytes (never `keep`). Everything of the cache
+   * counts; what unfinished downloads left goes first.
+   */
   private async prune(keep: string): Promise<void> {
     const dir = resolvePath(this.opts.cacheDir!)
     const max = this.opts.maxCacheBytes ?? DEFAULT_CACHE_BYTES
-    const files: { path: string; size: number; at: number; id: string }[] = []
+    const files: { path: string; size: number; at: number; id: string; kind: 'media' | 'meta' | 'partial' }[] = []
     for (const name of await readdir(dir)) {
-      const m = /^sc-(\d+)\.(?!json$)[a-z0-9]{2,5}$/i.exec(name)
-      if (!m) continue
+      const f = cacheFileOf(name)
+      if (!f) continue
       const path = join(dir, name)
       const st = await stat(path).catch(() => null)
-      if (st?.isFile()) files.push({ path, size: st.size, at: st.mtimeMs, id: m[1] })
+      if (st?.isFile()) files.push({ path, size: st.size, at: st.mtimeMs, ...f })
     }
     let total = files.reduce((s, f) => s + f.size, 0)
-    for (const f of files.sort((a, b) => a.at - b.at)) {
+    const rank = (f: (typeof files)[number]) => (f.kind === 'partial' ? 0 : 1)
+    for (const f of files.filter((x) => x.kind !== 'meta').sort((a, b) => rank(a) - rank(b) || a.at - b.at)) {
       if (total <= max) break
       if (f.path === keep || this.downloads.has(f.id)) continue
       await unlink(f.path).catch(() => {})
-      await unlink(join(dir, `sc-${f.id}.json`)).catch(() => {})
       total -= f.size
+      if (f.kind !== 'media') continue
+      for (const m of files.filter((x) => x.id === f.id && x.kind === 'meta')) {
+        await unlink(m.path).catch(() => {})
+        total -= m.size
+      }
+    }
+  }
+
+  /** Delete what downloads no longer running left behind: .part files, fragments, set-aside files. */
+  private async sweep(): Promise<void> {
+    const dir = this.opts.cacheDir!
+    let names: string[]
+    try {
+      names = await readdir(dir)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      const f = cacheFileOf(name)
+      if (f?.kind === 'partial' && !this.downloads.has(f.id)) await unlink(join(dir, name)).catch(() => {})
+    }
+  }
+
+  /**
+   * A track's file and sidecar, gone before it is downloaded again. Each is moved aside first, so the
+   * new download can take its name even while the old file is still open somewhere (Windows); the
+   * next sweep gets one that couldn't be deleted yet.
+   */
+  private async discard(id: string): Promise<void> {
+    const dir = this.opts.cacheDir!
+    for (const name of await readdir(dir).catch(() => [] as string[])) {
+      if (cacheFileOf(name)?.id !== id) continue
+      const path = join(dir, name)
+      const aside = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.stale`
+      const moved = await rename(path, aside).then(
+        () => true,
+        () => false
+      )
+      await unlink(moved ? aside : path).catch(() => {})
     }
   }
 }

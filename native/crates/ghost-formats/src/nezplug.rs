@@ -8,13 +8,21 @@
 //! 0-based. Only enough is parsed here to find the line for a given file and sub-song; libgme
 //! itself parses the timing fields.
 //!
+//! Lines name files relative to their playlist's folder. For an archive, [`resolve_playlists`]
+//! rewrites each line to name the entry it means (the same lookup the catalog uses to build the
+//! album: the playlist's folder, then the archive root, then a file name only one entry has, then
+//! the only file of that type), so a line only ever describes that file; [`playlist_for`] then
+//! compares whole paths, never just file names ("JP/game.nsf" and "US/game.nsf" are two files).
+//!
 //! The line handed to libgme is rewritten to address the track we matched, unambiguously: its
 //! track in hex (which libgme never adjusts), its file name without the characters libgme's
 //! parser treats specially. Left alone, libgme can read a different track than we did (it ends
 //! the file name at a `,` followed by a digit), including a decimal 0 in a 1-based set, which
 //! becomes track -1 and passes libgme's signed range check on its way to the emulator.
 
-use crate::file_name_of;
+/// Formats that hold several songs in one file (a line naming a renamed one of these falls back
+/// to the only file of its type).
+const MULTI_SONG: &[&str] = &["nsf", "nsfe", "gbs", "hes", "kss", "ay", "sap"];
 
 /// A parsed playlist line (just the addressing part).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,9 +63,97 @@ pub fn parse_line(line: &str) -> Option<Entry> {
     Some(Entry { file: file.trim().replace('\\', "/"), kind: kind.trim().to_string(), track, decimal })
 }
 
+/// `a/./b/../c` → `a/c` (`/` separators); `None` when `..` climbs out of the archive.
+fn norm_path(path: &str) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    for seg in path.split(['/', '\\']) {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop()?;
+            }
+            s => out.push(s),
+        }
+    }
+    Some(out.join("/"))
+}
+
+/// Whether a line's file names `file` (both relative to the same folder).
+fn same_file(line_file: &str, file: &str) -> bool {
+    let norm = |p: &str| norm_path(p).unwrap_or_else(|| p.replace('\\', "/")).to_lowercase();
+    norm(line_file) == norm(file)
+}
+
+/// File name of an archive path (a `#` or `?` in it is part of the name).
+fn base_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+fn ext_of(path: &str) -> Option<String> {
+    base_of(path).rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase())
+}
+
+/// The one item of `v`, if it has exactly one.
+fn only<T>(v: Vec<T>) -> Option<T> {
+    if v.len() == 1 {
+        v.into_iter().next()
+    } else {
+        None
+    }
+}
+
+/// The archive entry a playlist line names (see the module docs); `None` when none, or when the
+/// file name it falls back to is shared by several entries.
+pub fn entry_for<'a>(file: &str, playlist_path: &str, entries: &[&'a str]) -> Option<&'a str> {
+    let dir = &playlist_path[..playlist_path.rfind('/').map_or(0, |i| i + 1)];
+    let file = file.replace('\\', "/");
+    let tries = if file.starts_with('/') { vec![file.clone()] } else { vec![format!("{dir}{file}"), file.clone()] };
+    for want in tries.iter().filter_map(|t| norm_path(t)) {
+        if let Some(e) = entries.iter().find(|e| norm_path(e).as_deref() == Some(want.as_str())) {
+            return Some(e);
+        }
+        let lower = want.to_lowercase();
+        if let Some(e) = only(entries.iter().copied().filter(|e| norm_path(e).is_some_and(|n| n.to_lowercase() == lower)).collect()) {
+            return Some(e);
+        }
+    }
+    let base = base_of(&file).to_lowercase();
+    let named: Vec<&'a str> = entries.iter().copied().filter(|e| base_of(e).to_lowercase() == base).collect();
+    if !named.is_empty() {
+        return only(named);
+    }
+    let ext = ext_of(&file).filter(|x| MULTI_SONG.contains(&x.as_str()))?;
+    only(entries.iter().copied().filter(|e| ext_of(e).as_deref() == Some(ext.as_str())).collect())
+}
+
+/// An archive's playlists (`(path, text)`), each line rewritten to name the entry it means
+/// (`entries`: the archive's file paths). Lines that name no entry are left as written.
+pub fn resolve_playlists(playlists: &[(String, String)], entries: &[&str]) -> Vec<String> {
+    playlists
+        .iter()
+        .map(|(path, text)| {
+            let mut out = String::with_capacity(text.len());
+            for line in text.lines() {
+                let t = line.trim();
+                let entry = parse_line(t).and_then(|e| entry_for(&e.file, path, entries));
+                match (entry, t.split_once("::")) {
+                    (Some(entry), Some((_, rest))) if !entry.contains("::") => {
+                        out.push_str(entry);
+                        out.push_str("::");
+                        out.push_str(rest);
+                    }
+                    _ => out.push_str(line),
+                }
+                out.push('\n');
+            }
+            out
+        })
+        .collect()
+}
+
 /// Whether some playlist numbers `file`'s decimal tracks from 0 (a decimal track 0 for it).
 fn numbers_from_zero(playlists: &[String], want: &str) -> bool {
-    playlists.iter().flat_map(|t| t.lines()).filter_map(parse_line).any(|e| e.decimal && e.track == 0 && file_name_of(&e.file).eq_ignore_ascii_case(want))
+    playlists.iter().flat_map(|t| t.lines()).filter_map(parse_line).any(|e| e.decimal && e.track == 0 && same_file(&e.file, want))
 }
 
 /// `line` for libgme, addressing raw track `track`: the file name stripped of the characters
@@ -72,9 +168,11 @@ fn libgme_line(line: &str, track: u32) -> Option<String> {
 }
 
 /// Find the playlist line for `file` / `subsong` and return a one-entry playlist (keeping the
-/// `#` header comments, which carry the album title and artist) for libgme.
+/// `#` header comments, which carry the album title and artist) for libgme. `file` is the path the
+/// lines are written against: the archive entry (lines from [`resolve_playlists`]), or for a file
+/// on disk with playlists beside it, its name.
 pub fn playlist_for(playlists: &[String], file: &str, subsong: u32, zero_based_decimal: bool) -> Option<String> {
-    let want = file_name_of(file);
+    let want = file;
     // libgme would read this set's decimal tracks as 1-based: detect 0-based numbering ourselves.
     let zero_based_decimal = zero_based_decimal || numbers_from_zero(playlists, want);
     for text in playlists {
@@ -87,7 +185,7 @@ pub fn playlist_for(playlists: &[String], file: &str, subsong: u32, zero_based_d
                 continue;
             }
             let Some(e) = parse_line(t) else { continue };
-            if file_name_of(&e.file).eq_ignore_ascii_case(want) && e.raw_track(zero_based_decimal) == Some(subsong) {
+            if same_file(&e.file, want) && e.raw_track(zero_based_decimal) == Some(subsong) {
                 return Some(format!("{header}{}\n", libgme_line(t, subsong)?));
             }
         }
@@ -137,6 +235,32 @@ mod tests {
         assert_eq!(playlist_for(&pl, "game.NSF", 1, false).as_deref(), Some("#TITLE Game\nGame.nsf::NSF,$01,Two,2:00,,5\n"));
         assert_eq!(playlist_for(&pl, "Game.nsf", 5, false), None);
         assert_eq!(playlist_for(&pl, "Other.nsf", 0, false), None);
+    }
+
+    #[test]
+    fn lines_name_the_file_relative_to_their_playlist() {
+        let entries = ["JP/game.nsf", "US/game.nsf", "US/extra/x.nsf"];
+        let pl = vec![
+            ("JP/set.m3u".to_string(), "#TITLE Game (J)\ngame.nsf::NSF,1,JP Opening,1:00\n../US/extra/x.nsf::NSF,1,Extra".to_string()),
+            ("US/set.m3u".to_string(), "game.nsf::NSF,1,US Opening,2:00\nUS/game.nsf::NSF,2,US Ending,3:00".to_string()),
+            ("set.m3u".to_string(), "game.nsf::NSF,1,Either,4:00\n../game.nsf::NSF,1,Out".to_string()),
+        ];
+        let r = resolve_playlists(&pl, &entries);
+        assert_eq!(r[0], "#TITLE Game (J)\nJP/game.nsf::NSF,1,JP Opening,1:00\nUS/extra/x.nsf::NSF,1,Extra\n");
+        assert_eq!(r[1], "US/game.nsf::NSF,1,US Opening,2:00\nUS/game.nsf::NSF,2,US Ending,3:00\n");
+        // At the root "game.nsf" could be either file (and "../" leaves the archive): left as
+        // written, these lines describe neither.
+        assert_eq!(r[2], "game.nsf::NSF,1,Either,4:00\n../game.nsf::NSF,1,Out\n");
+        assert_eq!(playlist_for(&r, "US/game.nsf", 0, false).as_deref(), Some("US/game.nsf::NSF,$00,US Opening,2:00\n"));
+        assert_eq!(playlist_for(&r, "us/GAME.nsf", 1, false).as_deref(), Some("US/game.nsf::NSF,$01,US Ending,3:00\n"));
+        assert_eq!(playlist_for(&r, "JP/game.nsf", 0, false).as_deref(), Some("#TITLE Game (J)\nJP/game.nsf::NSF,$00,JP Opening,1:00\n"));
+        // The US playlist's second song is not the JP file's.
+        assert_eq!(playlist_for(&r, "JP/game.nsf", 1, false), None);
+        // One entry of that name: found by name; the only file of a multi-song type: a renamed one.
+        assert_eq!(entry_for("game.nsf", "set.m3u", &["rip/game.nsf"]), Some("rip/game.nsf"));
+        assert_eq!(entry_for("Old Name.nsf", "set.m3u", &["rip/game.nsf", "rip/x.spc"]), Some("rip/game.nsf"));
+        assert_eq!(entry_for("Old Name.spc", "set.m3u", &["rip/game.nsf", "rip/x.spc"]), None);
+        assert_eq!(entry_for("the hustler #05.nsf", "", &["NSF/The Hustler #05.nsf", "NSF/other #05.nsf"]), Some("NSF/The Hustler #05.nsf"));
     }
 
     #[test]

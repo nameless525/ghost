@@ -1635,7 +1635,8 @@
   height: 46px;
   border-radius: 14px;
   transform: skewX(var(--shear));
-  background: linear-gradient(135deg, var(--accent), var(--accent-lo));
+  /* the accent's lighter half: the ink keeps its contrast across the whole glyph */
+  background: linear-gradient(135deg, var(--accent-hi), var(--accent));
   color: var(--accent-ink);
   box-shadow: 0 6px 22px rgb(var(--accent-rgb) / 0.4);
 }

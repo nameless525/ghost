@@ -20,6 +20,8 @@ export const CHIP_REFRESH_MS = 30 * 24 * 3600_000
 export const VGMRIPS_REFRESH_MS = 7 * 24 * 3600_000
 const BLOCK_PAUSE_MS = 15 * 60_000
 const VGMRIPS = 'vgmrips'
+/** When the last complete pass ended; `${FINISHED}:<source>` for each source it covered. */
+const FINISHED = 'chip:finished_at'
 /** Page-count guesses for the progress bar before a source has been listed once. */
 const GUESS_PAGES = { joshw: 31, vgmrips: 230 }
 
@@ -88,6 +90,8 @@ export class ChipIndexer {
   progress: number | null = null
   message: string | null = null
   private abort: AbortController | null = null
+  /** Start over once the stopped pass has wound down (the source list changed). */
+  private restart = false
   private readonly now: () => number
 
   constructor(private readonly deps: ChipIndexerDeps) {
@@ -111,15 +115,16 @@ export class ChipIndexer {
 
   /** When the index was last completed (all sources), or null. */
   lastFinished(): number | null {
-    const v = this.deps.repo.meta('chip:finished_at')
+    const v = this.deps.repo.meta(FINISHED)
     return v ? Number(v) : null
   }
 
   /** True when some source was never listed or its last full pass is older than its refresh period. */
   isStale(): boolean {
     const last = this.lastFinished()
-    if (last == null) return true
-    return this.now() - last > VGMRIPS_REFRESH_MS
+    if (last == null || this.now() - last > VGMRIPS_REFRESH_MS) return true
+    // A source turned on since (the joshw.info opt-in) is listed now, not at the next refresh.
+    return this.sourceKeys().some((s) => this.deps.repo.meta(`${FINISHED}:${s}`) == null)
   }
 
   /** Start (or resume) indexing. False if running or nothing is due. */
@@ -129,6 +134,8 @@ export class ChipIndexer {
     if (opts.force) {
       this.deps.repo.run(`UPDATE chip_pages SET fetched_at = NULL`)
       this.deps.repo.setMeta('chip:vgmrips:full_at', null)
+      // Due until this pass completes (also when it is interrupted).
+      this.deps.repo.run(`DELETE FROM catalog_meta WHERE key LIKE ?`, `${FINISHED}:%`)
     }
     this.running = true
     this.abort = new AbortController()
@@ -147,11 +154,26 @@ export class ChipIndexer {
         this.abort = null
         if (!signal.aborted) this.message = null
         this.deps.onProgress()
+        if (this.restart) {
+          this.restart = false
+          this.start()
+        }
       })
     return true
   }
 
   stop(): void {
+    this.restart = false
+    this.abort?.abort()
+  }
+
+  /**
+   * The joshw.info opt-in changed: a pass under way stops (no request to a host turned off) and
+   * starts over with the current sources, skipping the pages it already read.
+   */
+  sourcesChanged(): void {
+    if (!this.running) return
+    this.restart = true
     this.abort?.abort()
   }
 
@@ -205,6 +227,8 @@ export class ChipIndexer {
   private async run(signal: AbortSignal): Promise<void> {
     const max = this.deps.maxPages ?? Infinity
     const delay = this.deps.pageDelayMs ?? 1500
+    const joshw = this.joshwSources()
+    const sources = this.sourceKeys()
     const total = this.estimateTotal()
     let done = 0
     let added = 0
@@ -261,7 +285,7 @@ export class ChipIndexer {
       }
     }
 
-    for (const src of this.joshwSources()) {
+    for (const src of joshw) {
       if (signal.aborted) return
       let pages: { path: string; group: string | null }[]
       try {
@@ -307,7 +331,9 @@ export class ChipIndexer {
       if (complete && !incremental) repo.setMeta('chip:vgmrips:full_at', String(this.now()))
     }
     if (signal.aborted) return
-    this.deps.repo.setMeta('chip:finished_at', String(this.now()))
+    const at = String(this.now())
+    for (const s of sources) this.deps.repo.setMeta(`${FINISHED}:${s}`, at)
+    this.deps.repo.setMeta(FINISHED, at)
     this.log(`chip index pass done: ${added} sets attached`)
   }
 

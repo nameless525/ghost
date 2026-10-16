@@ -135,6 +135,9 @@ fn subsong_and_nezplug_timing_from_an_archive_entry_over_http() {
     let paths: Vec<_> = listing.entries.iter().map(|e| (e.path.as_str(), e.size)).collect();
     assert_eq!(paths, vec![("Two Songs/Two.nsf", nsf.len() as u64), ("Two Songs/Two.m3u", m3u.len() as u64), ("Two Songs/song.vgm", looped_vgm().len() as u64)]);
     assert_eq!(listing.playlists, vec![("Two Songs/Two.m3u".to_string(), String::from_utf8(m3u.to_vec()).unwrap())]);
+    // A multi-song file comes with the header that says how many songs it holds.
+    assert_eq!(listing.entries[0].head.as_deref(), Some(&nsf[..128]));
+    assert_eq!(listing.entries[2].head, None);
 
     // Sub-song 1 = "High": 2 s + 1 s fade from the playlist, 880 Hz.
     let extras = |sub: u32| SourceExtras { subsong: Some(sub), archive_entry: Some("Two Songs/Two.nsf".into()), ..Default::default() };

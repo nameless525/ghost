@@ -763,3 +763,297 @@ fn load_progress_cost() {
     let cache = t0.elapsed() / n;
     println!("load_progress: {load:?}/call, cache_progress: {cache:?}/call (fetcher and decoder running)");
 }
+
+/// Events (bounded wait) up to and including the first one `done` accepts; rendered audio is
+/// drained meanwhile.
+fn await_event(events: &crossbeam_channel::Receiver<EngineEvent>, sink: &ghost_engine::OfflineSink, done: impl Fn(&EngineEvent) -> bool) -> Vec<EngineEvent> {
+    let t0 = Instant::now();
+    let mut seen = Vec::new();
+    loop {
+        while sink.blocks.try_recv().is_ok() {}
+        if let Ok(e) = events.recv_timeout(Duration::from_millis(10)) {
+            let stop = done(&e);
+            seen.push(e);
+            if stop {
+                return seen;
+            }
+        }
+        assert!(t0.elapsed() < Duration::from_secs(20), "event never came: {seen:?}");
+    }
+}
+
+fn is_state(e: &EngineEvent, want: PlaybackState) -> bool {
+    matches!(e, EngineEvent::State { state, .. } if *state == want)
+}
+
+fn is_info(e: &EngineEvent, id: &str, duration_ms: Option<u64>) -> bool {
+    matches!(e, EngineEvent::TrackInfo(i) if i.id == id && i.duration_ms == duration_ms)
+}
+
+/// `frames` of rendered audio, and the events meanwhile.
+fn render_frames(events: &crossbeam_channel::Receiver<EngineEvent>, sink: &ghost_engine::OfflineSink, frames: usize) -> (Vec<f32>, Vec<EngineEvent>) {
+    let t0 = Instant::now();
+    let (mut out, mut seen) = (Vec::new(), Vec::new());
+    while out.len() < frames * 2 {
+        seen.extend(events.try_iter());
+        if let Ok(b) = sink.blocks.recv_timeout(Duration::from_millis(20)) {
+            out.extend_from_slice(&b);
+        }
+        assert!(t0.elapsed() < Duration::from_secs(30), "render timed out; events: {seen:?}");
+    }
+    seen.extend(events.try_iter());
+    out.truncate(frames * 2);
+    (out, seen)
+}
+
+/// Seeking a paused track: its new voice fills up and waits for playback to be requested, which
+/// is not buffering. Resumed, it plays at once.
+#[test]
+fn seeking_while_paused_is_not_buffering() {
+    let dir = tmp_dir("paused-seek");
+    let rate = 48_000;
+    let a = dir.join("a.wav");
+    wav::write_f32(&a, rate, 2, &tone(rate, rate as usize * 10, 440.0, 0.3)).unwrap();
+    let (engine, sink) = offline(&dir, rate);
+    let events = engine.events();
+    engine.set_current(track("p", file(&a)), 0, true);
+    await_event(&events, &sink, |e| is_state(e, PlaybackState::Playing));
+    engine.pause();
+    await_event(&events, &sink, |e| is_state(e, PlaybackState::Paused));
+    engine.seek(2_000);
+    poll_load(&engine, Duration::from_secs(10), |p| !p.started && p.buffered_ms >= 1_000);
+    // Long past the 250 ms after which a seek that plays nothing counts as buffering.
+    let t0 = Instant::now();
+    let mut seen = Vec::new();
+    while t0.elapsed() < Duration::from_millis(750) {
+        seen.extend(events.recv_timeout(Duration::from_millis(20)));
+    }
+    assert!(!seen.iter().any(|e| matches!(e, EngineEvent::Buffering { .. } | EngineEvent::State { .. })), "{seen:?}");
+    engine.play();
+    let seen = await_event(&events, &sink, |e| is_state(e, PlaybackState::Playing));
+    assert!(!seen.iter().any(|e| matches!(e, EngineEvent::Buffering { .. })), "{seen:?}");
+}
+
+/// The paused current track stays known (id, length) however many previews come and go.
+#[test]
+fn current_track_outlives_many_previews() {
+    let dir = tmp_dir("many-previews");
+    let rate = 48_000;
+    let (a, p) = (dir.join("a.wav"), dir.join("p.wav"));
+    wav::write_f32(&a, rate, 2, &tone(rate, rate as usize * 30, 440.0, 0.3)).unwrap();
+    wav::write_f32(&p, rate, 2, &tone(rate, rate as usize / 2, 660.0, 0.3)).unwrap();
+    let (engine, sink) = offline(&dir, rate);
+    let events = engine.events();
+    engine.set_current(track("cur", file(&a)), 0, true);
+    await_event(&events, &sink, |e| is_state(e, PlaybackState::Playing));
+    engine.pause();
+    await_event(&events, &sink, |e| is_state(e, PlaybackState::Paused));
+    let before = engine.position();
+    assert_eq!(before.id.as_deref(), Some("cur"), "{before:?}");
+    for i in 0..70 {
+        engine.preview(track(&format!("p{i}"), file(&p)), 0);
+    }
+    engine.stop_preview();
+    await_event(&events, &sink, |e| matches!(e, EngineEvent::PreviewEnded { id } if id == "p69"));
+    let after = engine.position();
+    assert_eq!((after.id.as_deref(), after.duration_ms, after.playing), (Some("cur"), Some(30_000), false), "{after:?}");
+    assert!(after.position_ms >= before.position_ms, "{before:?} {after:?}");
+    engine.play();
+    await_event(&events, &sink, |e| is_state(e, PlaybackState::Playing));
+    assert_eq!(engine.position().id.as_deref(), Some("cur"));
+}
+
+/// Poll the live analysis (bounded) until a frame satisfies `want`.
+fn analysis_where(engine: &ghost_engine::Engine, want: impl Fn(&ghost_engine::AnalysisFrame) -> bool) -> ghost_engine::AnalysisFrame {
+    let t0 = Instant::now();
+    let mut f = ghost_engine::AnalysisFrame::default();
+    loop {
+        if engine.analysis_frame(&mut f) && want(&f) {
+            return f;
+        }
+        assert!(t0.elapsed() < Duration::from_secs(10), "no such analysis frame; last: rms {} seq {}", f.rms, f.track_seq);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A preview heard on its own, with nothing else loaded or with the queue paused under it,
+/// drives the live analysis under its own identity; the queue's position stays where it was.
+#[test]
+fn preview_alone_drives_the_live_analysis() {
+    let dir = tmp_dir("preview-frames");
+    let rate = 48_000;
+    let (a, p1, p2) = (dir.join("a.wav"), dir.join("p1.wav"), dir.join("p2.wav"));
+    wav::write_f32(&a, rate, 2, &tone(rate, rate as usize * 30, 440.0, 0.3)).unwrap();
+    wav::write_f32(&p1, rate, 2, &tone(rate, rate as usize * 3, 660.0, 0.3)).unwrap();
+    wav::write_f32(&p2, rate, 2, &tone(rate, rate as usize * 3, 880.0, 0.3)).unwrap();
+
+    let (engine, _sink) = offline(&dir, rate);
+    engine.preview(track("p1", file(&p1)), 0);
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    assert!(engine.wait_analysis(Duration::from_secs(10), &cancel), "no live analysis for a preview alone");
+    analysis_where(&engine, |f| f.rms > 0.01 && f.track_seq != 0);
+    drop(engine);
+
+    let (engine, sink) = offline(&dir, rate);
+    let events = engine.events();
+    engine.set_current(track("cur", file(&a)), 0, true);
+    await_event(&events, &sink, |e| is_state(e, PlaybackState::Playing));
+    let queue = analysis_where(&engine, |f| f.rms > 0.01 && f.track_seq != 0).track_seq;
+    engine.pause();
+    await_event(&events, &sink, |e| is_state(e, PlaybackState::Paused));
+    engine.preview(track("p1", file(&p1)), 0);
+    let first = analysis_where(&engine, |f| f.rms > 0.01 && ![0, queue].contains(&f.track_seq)).track_seq;
+    let held = engine.position();
+    assert_eq!((held.id.as_deref(), held.playing), (Some("cur"), false), "{held:?}");
+    engine.preview(track("p2", file(&p2)), 0);
+    analysis_where(&engine, |f| f.rms > 0.01 && ![0, queue, first].contains(&f.track_seq));
+    let still = engine.position();
+    assert_eq!((still.id, still.position_ms), (held.id, held.position_ms), "the queue's position moved");
+}
+
+/// Offline gapless where the first track is shorter than one output block: the render waits for
+/// the next track (still arriving here) instead of padding that block with silence, at any block size.
+#[test]
+fn offline_gapless_with_a_first_track_shorter_than_a_block() {
+    let dir = tmp_dir("short-first");
+    let rate = 48_000;
+    let sig = sweep(rate, 100 + rate as usize, 100.0, 4000.0, 0.5);
+    let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
+    wav::write_f32(&a, rate, 2, &sig[..100 * 2]).unwrap();
+    wav::write_f32(&b, rate, 2, &sig[100 * 2..]).unwrap();
+    // ~3 MB/s: the next track takes a while to reach its prefill.
+    let srv = serve(std::fs::read(&b).unwrap(), "b.wav", Duration::from_millis(5), false);
+    for block in [64, 512, 4096, 8192] {
+        let (engine, sink) = ghost_engine::Engine::new_offline(config(&dir), ghost_engine::OfflineConfig { sample_rate: rate, block_frames: block }).unwrap();
+        engine.set_normalization(false, -16.0, NormalizationMode::Auto);
+        engine.set_current(track("a", file(&a)), 0, false);
+        engine.set_next(Some(track("b", SourceSpec::http(srv.url.clone(), format!("short-first-{block}")))));
+        engine.play();
+        let (out, _) = collect_until_ended(&engine, &sink, Duration::from_secs(30));
+        assert_eq!(out.len(), sig.len(), "block {block}");
+        assert_eq!(max_abs_diff(&out, &sig), 0.0, "block {block}");
+    }
+}
+
+/// The synthetic looping VGM of the format tests: an intro, then a two-tone loop body.
+fn looped_vgm(path: &std::path::Path, intro: u32, half_body: u32) {
+    std::fs::write(path, ghost_formats::testdata::vgm_psg(&[(254, intro)], &[(127, half_body), (508, half_body)])).unwrap();
+}
+
+/// Album → Endless while the track is loaded: its length is reported gone, and it plays on past
+/// the old end without crossfading into the queued track.
+#[test]
+fn switching_to_endless_drops_the_old_end() {
+    let dir = tmp_dir("loop-endless");
+    let rate = 44_100;
+    let (vgm, next) = (dir.join("song.vgm"), dir.join("next.wav"));
+    looped_vgm(&vgm, 44_100, 22_050);
+    wav::write_f32(&next, rate, 2, &tone(rate, rate as usize * 3, 300.0, 0.3)).unwrap();
+    let (engine, sink) = offline(&dir, rate);
+    let events = engine.events();
+    engine.set_crossfade(1.0);
+    engine.set_current(track("v", file(&vgm)), 0, false);
+    engine.set_next(Some(track("n", file(&next))));
+    // Album: 1 s intro + 2 loops + 10 s fade.
+    await_event(&events, &sink, |e| is_info(e, "v", Some(13_000)));
+    engine.set_loop(ghost_engine::LoopMode::Endless, 2, 10.0);
+    await_event(&events, &sink, |e| is_info(e, "v", None));
+    engine.play();
+    let (out, evs) = render_frames(&events, &sink, rate as usize * 16);
+    assert!(!evs.iter().any(|e| matches!(e, EngineEvent::Advanced { .. } | EngineEvent::Ended { .. })), "{evs:?}");
+    assert!(ghost_formats::testdata::rms(&out[out.len() - rate as usize * 2..]) > 0.05, "faded out");
+    assert_eq!(engine.position().id.as_deref(), Some("v"));
+}
+
+/// Endless → Custom before playing: the reported length and where the crossfade into the next
+/// track starts both follow the new plan.
+#[test]
+fn loop_changes_set_the_length_and_the_crossfade_point() {
+    let dir = tmp_dir("loop-custom");
+    let rate = 44_100;
+    let (vgm, next) = (dir.join("song.vgm"), dir.join("next.wav"));
+    looped_vgm(&vgm, 44_100, 22_050);
+    wav::write_f32(&next, rate, 2, &tone(rate, rate as usize * 3, 300.0, 0.3)).unwrap();
+    let (engine, sink) = offline(&dir, rate);
+    let events = engine.events();
+    engine.set_loop(ghost_engine::LoopMode::Endless, 2, 10.0);
+    engine.set_crossfade(1.0);
+    engine.set_current(track("v", file(&vgm)), 0, false);
+    engine.set_next(Some(track("n", file(&next))));
+    await_event(&events, &sink, |e| is_info(e, "v", None));
+    engine.set_loop(ghost_engine::LoopMode::Custom, 3, 1.5);
+    await_event(&events, &sink, |e| is_info(e, "v", Some(5_500)));
+    engine.play();
+    let (out, evs) = collect_until_ended(&engine, &sink, Duration::from_secs(30));
+    assert!(evs.iter().any(|e| matches!(e, EngineEvent::Advanced { id } if id == "n")), "{evs:?}");
+    // 1 s intro + 3 loops + 1.5 s fade, then the 3 s track, overlapping by 1 s.
+    assert_eq!(out.len() / 2, 330_750);
+}
+
+/// A short plan was decoded to its end (it is all in the ring) when Endless is chosen: the track
+/// is taken up again where it is, and plays on.
+#[test]
+fn switching_to_endless_after_the_end_was_decoded_plays_on() {
+    let dir = tmp_dir("loop-decoded");
+    let rate = 44_100;
+    let vgm = dir.join("short.vgm");
+    // 0.5 s intro + one 0.5 s loop, no fade: 1 s, well inside the 2 s ring.
+    looped_vgm(&vgm, 22_050, 11_025);
+    let (engine, sink) = offline(&dir, rate);
+    let events = engine.events();
+    engine.set_loop(ghost_engine::LoopMode::Album, 1, 0.0);
+    engine.set_current(track("v", file(&vgm)), 0, false);
+    await_event(&events, &sink, |e| is_info(e, "v", Some(1_000)));
+    poll_load(&engine, Duration::from_secs(10), |p| p.buffered_ms >= 1_000);
+    engine.set_loop(ghost_engine::LoopMode::Endless, 1, 0.0);
+    await_event(&events, &sink, |e| is_info(e, "v", None));
+    engine.play();
+    let (out, evs) = render_frames(&events, &sink, rate as usize * 4);
+    assert!(!evs.iter().any(|e| matches!(e, EngineEvent::Ended { .. })), "{evs:?}");
+    assert!(ghost_formats::testdata::rms(&out[out.len() - rate as usize..]) > 0.05, "silent after the old end");
+}
+
+/// Renders that end at the same file name: concurrent jobs (different source extensions, the same
+/// FLAC name), a FLAC already there, and a destination that is already `.flac`. Each job gets a
+/// file of its own, reported in its `Done`, and the existing file is left alone.
+#[test]
+fn concurrent_renders_never_share_or_replace_a_file() {
+    use lofty::prelude::*;
+    let dir = tmp_dir("dl-collide");
+    let rate = 44_100;
+    let src = dir.join("src.wav");
+    wav::write_f32(&src, rate, 2, &tone(rate, rate as usize * 3, 440.0, 0.3)).unwrap();
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let existing = out.join("Song.flac");
+    std::fs::write(&existing, b"someone else's").unwrap();
+    let (engine, _sink) = offline(&dir, 48_000);
+    let events = engine.events();
+    let jobs = [("a", "Song.wav", 0, 900), ("b", "Song.mp3", 1_000, 1_500), ("c", "Song.flac", 2_000, 2_300)];
+    for (id, name, from, to) in jobs {
+        let clip = SourceExtras { clip_start_ms: Some(from), clip_end_ms: Some(to), ..Default::default() };
+        engine.download(id.into(), file(&src).with_extras(clip), out.join(name), TagInfo::default());
+    }
+    let mut done = std::collections::HashMap::new();
+    let t0 = Instant::now();
+    while done.len() < jobs.len() {
+        assert!(t0.elapsed() < Duration::from_secs(30), "downloads unfinished: {done:?}");
+        if let Ok(EngineEvent::Download { download_id, status, path, error, .. }) = events.recv_timeout(Duration::from_millis(50)) {
+            if status != DownloadStatus::Progress {
+                assert_eq!(status, DownloadStatus::Done, "{download_id}: {error:?}");
+                done.insert(download_id, path.expect("Done without a path"));
+            }
+        }
+    }
+    assert_eq!(std::fs::read(&existing).unwrap(), b"someone else's", "an existing file was replaced");
+    let mut paths: Vec<_> = done.values().cloned().collect();
+    paths.sort();
+    paths.dedup();
+    assert_eq!(paths.len(), jobs.len(), "two jobs reported the same file: {done:?}");
+    for (id, _, from, to) in jobs {
+        let p = &done[id];
+        assert!(p != &existing && p.parent() == Some(out.as_path()) && p.extension().is_some_and(|e| e == "flac"), "{id}: {p:?}");
+        let ms = lofty::read_from_path(p).unwrap().properties().duration().as_millis() as u64;
+        assert_eq!(ms, to - from, "{id}: {p:?} holds another render");
+    }
+}

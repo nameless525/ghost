@@ -46,7 +46,7 @@ import { Toggle } from '../../ui/Toggle'
 import { confirmDialog } from '../../ui/Dialog'
 import { cx } from '../../ui/util'
 import { leavingStyle, relativeTime, useAnimatedList, useNow } from '../library/common'
-import { Highlight, patchSettings, Row, SecretField, SettingSlider } from './controls'
+import { draftInputProps, Highlight, patchSettings, Row, SecretField, SettingSlider, useDraftField } from './controls'
 import { ActivityNote, SourceActivityList } from '../../screens/browse/CatalogActivity'
 import { useRestartKey, useRunKey } from '../../screens/browse/waits'
 import { ProviderList } from './ProviderList'
@@ -234,7 +234,7 @@ function FoldersRow(m: RowMeta) {
           </li>
         ))}
       </ul>
-      {!folders.length && <div className="set-hint">No folders yet. Add the folders where you keep soundtrack rips and GHOST matches them to the catalog.</div>}
+      {!folders.length && <div className="set-hint">No folders yet. Add the folders where you keep soundtrack rips: their albums show up in Browse under their games.</div>}
       {scan && <ProgressBar className="set-scan" caption progress={scan} waitKey={scanRun} done={scan.done} fadeWhenDone />}
       <div className="set-actions">
         <Button size="sm" variant="soft" icon={<FolderPlus />} onClick={() => void add()}>
@@ -320,28 +320,16 @@ function renderTemplate(tpl: string): { parts: { text: string; token: boolean; k
 function NamingRow(m: RowMeta) {
   const saved = useSettings((s) => s.library.namingTemplate)
   const dir = useSettings((s) => s.library.downloadDir)
-  const [draft, setDraft] = useState(saved)
   const input = useRef<HTMLInputElement>(null)
-  const focused = useRef(false)
-  const timer = useRef(0)
   const def = useMemo(() => defaultSettings('').library.namingTemplate, [])
+  const [field, draft] = useDraftField(saved, {
+    delay: 700,
+    clean: (v) => v.trim() || def,
+    save: (clean) => void patchSettings({ library: { namingTemplate: clean } }),
+    // an emptied field would turn into the default under the cursor
+    holdEmpty: true
+  })
 
-  useEffect(() => {
-    if (!focused.current) setDraft(saved)
-  }, [saved])
-  useEffect(() => () => window.clearTimeout(timer.current), [])
-
-  const commit = (v: string) => {
-    window.clearTimeout(timer.current)
-    const clean = v.trim() || def
-    if (clean !== v) setDraft(clean)
-    if (clean !== saved) void patchSettings({ library: { namingTemplate: clean } })
-  }
-  const update = (v: string) => {
-    setDraft(v)
-    window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => v.trim() && commit(v), 700)
-  }
   const insert = (token: string) => {
     const el = input.current
     const t = `{${token}}`
@@ -349,7 +337,7 @@ function NamingRow(m: RowMeta) {
     const end = el?.selectionEnd ?? draft.length
     const next = draft.slice(0, start) + t + draft.slice(end)
     sfx.play('select', { volume: 0.5 })
-    update(next)
+    field.change(next)
     requestAnimationFrame(() => {
       el?.focus()
       el?.setSelectionRange(start + t.length, start + t.length)
@@ -370,32 +358,9 @@ function NamingRow(m: RowMeta) {
             value={draft}
             spellCheck={false}
             aria-label="Naming template"
-            onFocus={() => (focused.current = true)}
-            onBlur={() => {
-              focused.current = false
-              commit(draft)
-            }}
-            onChange={(e) => update(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commit(draft)
-              else if (e.key === 'Escape' && draft !== saved) {
-                e.preventDefault()
-                e.stopPropagation()
-                setDraft(saved)
-              }
-            }}
+            {...draftInputProps(field)}
           />
-          {draft !== def && (
-            <IconButton
-              size="sm"
-              icon={<RotateCcw />}
-              label="Reset to default"
-              onClick={() => {
-                setDraft(def)
-                commit(def)
-              }}
-            />
-          )}
+          {draft !== def && <IconButton size="sm" icon={<RotateCcw />} label="Reset to default" onClick={() => field.commit(def)} />}
         </div>
         <div className="set-tpl__tokens">
           {TEMPLATE_TOKENS.map((t) => (
@@ -1034,7 +999,7 @@ export const SECTIONS: SectionDef[] = [
           )
         ]
       },
-      { title: 'Local music', rows: [row('folders', 'Local music folders', FoldersRow, 'Soundtracks you already have. GHOST matches them to games in the catalog and plays them first.', 'local files folder directory rips scan')] },
+      { title: 'Local music', rows: [row('folders', 'Local music folders', FoldersRow, 'Soundtracks you already have. Their albums show up in Browse under their games, and GHOST plays them first.', 'local files folder directory rips scan')] },
       {
         title: 'Chiptune rips',
         rows: [

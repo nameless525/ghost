@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AlbumDetail } from '@shared/types'
 import { ghost } from '../../ghost'
 import { tween } from '../../motion/tween'
-import { isModalScopeActive, useKeybinding } from '../../shell/keys'
+import { focusedControlTakesKey, isModalScopeActive, useKeybinding } from '../../shell/keys'
 import { useScreenTransitions } from '../../shell/ScreenStack'
 import type { ScreenProps } from '../../shell/types'
 import { sfx } from '../../sound'
@@ -18,13 +18,16 @@ import type { SearchInputHandle } from '../../ui/SearchInput'
 import {
   addSelectionToPlaylist,
   canAutoPreview,
+  cancelPendingPreview,
+  cancelPlay,
   downloadSelection,
   likeSelection,
+  playResult,
   playSelection,
-  previewAlbumId,
   previewEnded,
-  previewState,
+  previewFollowSelection,
   queueSelection,
+  restingAlbum,
   startPreview,
   stopPreview,
   togglePreview,
@@ -268,18 +271,6 @@ export default function BrowseScreen(props: BrowseScreenProps) {
     }
   }, [])
 
-  // ---- likes / downloads changed elsewhere: refresh the visible album
-  useEffect(
-    () =>
-      ghost().on('library:changed', (e) => {
-        if (e.kind !== 'likes' && e.kind !== 'downloaded') return
-        const sel = useBrowse.getState().sel
-        const id = sel?.detail?.album.id ?? sel?.album?.id
-        if (id) browseModel.refreshDetail(id)
-      }),
-    []
-  )
-
   // ---- background + accent follow the selection (debounced so fast scrolling doesn't thrash)
   useEffect(() => {
     let t = 0
@@ -328,16 +319,15 @@ export default function BrowseScreen(props: BrowseScreenProps) {
   }, [])
 
   // ---- album details for the wedge once the selection rests (an album row, or an album group:
-  // holding an arrow key through album groups no longer opens every one passed)
+  // holding an arrow key through album groups no longer opens every one passed); a cached one a
+  // catalog change made stale shows meanwhile
   useEffect(() => {
     let t = 0
     const off = useBrowse.subscribe((s, p) => {
       if (s.sel?.id === p.sel?.id) return
       window.clearTimeout(t)
-      const sel = s.sel
-      const g = sel?.group
-      const albumId = sel?.album?.id ?? (g?.kind === 'album' ? g.key.slice(g.key.indexOf(':') + 1) : null)
-      if (albumId && !sel?.detail) t = window.setTimeout(() => void browseModel.loadDetail(albumId), 150)
+      const albumId = restingAlbum(s.sel)
+      if (albumId) t = window.setTimeout(() => void browseModel.loadDetail(albumId), 150)
     })
     return () => {
       off()
@@ -397,25 +387,33 @@ export default function BrowseScreen(props: BrowseScreenProps) {
     const offSel = useBrowse.subscribe((s, p) => {
       if (s.sel?.id === p.sel?.id) return
       window.clearTimeout(t)
-      const cur = previewState()
-      const albumId = previewAlbumId(s.sel)
-      if (cur && (!s.sel || cur.albumId !== albumId)) stopPreview()
+      previewFollowSelection(s.sel)
       if (!s.sel) return
       const id = s.sel.id
       t = window.setTimeout(() => {
         const sel = useBrowse.getState().sel
         if (sel?.id !== id || lifecycle.current === 'exiting' || !canAutoPreview()) return
-        void startPreview(sel)
+        void startPreview(sel, true)
       }, 400)
     })
+    // A new query: the selection on screen is going, so is a preview still on its way for it (an
+    // audible one plays on while its album stays selected).
+    const offQuery = browseModel.subscribe((e) => {
+      if (e.type !== 'reset') return
+      window.clearTimeout(t)
+      cancelPendingPreview()
+    })
     // The player itself ends a preview when the queue starts playing (from anywhere: the now-playing
-    // bar, media keys…) or at its time limit; keep our bookkeeping in step.
+    // bar, media keys…) or at its time limit; keep our bookkeeping in step. An automatic preview
+    // still on its way then doesn't start.
     const offPlayer = usePlayer.subscribe((s, p) => {
       if (p.preview && !s.preview) previewEnded(p.preview.track.id)
+      if (s.status !== p.status && !canAutoPreview()) cancelPendingPreview(true)
     })
     return () => {
       window.clearTimeout(t)
       offSel()
+      offQuery()
       offPlayer()
       stopPreview()
     }
@@ -491,7 +489,9 @@ export default function BrowseScreen(props: BrowseScreenProps) {
   useKeybinding('PageUp', () => void (scrollEmptyResults(-1, true) || c()?.page(-1)), { allowInInput: true })
   useKeybinding('Home', () => void c()?.edge(false))
   useKeybinding('End', () => void c()?.edge(true))
-  useKeybinding('Enter', () => void playSelection(sel()), { repeat: false })
+  // the selection of the query as typed (it may still be on its way)
+  // (a button focused from the keyboard, like the footer's, gets its own Enter)
+  useKeybinding('Enter', () => (focusedControlTakesKey() ? false : void playResult(false)), { repeat: false })
   useKeybinding('Escape', () => {
     if (!useBrowse.getState().text) return false
     sfx.play('back', { volume: 0.6 })
@@ -526,6 +526,7 @@ export default function BrowseScreen(props: BrowseScreenProps) {
     },
     exit: ({ other }) => {
       stopPreview()
+      cancelPlay()
       const toPlay = other === 'play'
       if (toPlay) {
         tween(wedgeWrap.current).clear().fadeOut(220, 'inQuad').moveToX(-260, 300, 'inQuad')
@@ -552,10 +553,9 @@ export default function BrowseScreen(props: BrowseScreenProps) {
           inputRef={input}
           onSubmit={() => {
             blurSearch()
-            // Nothing in the catalog: Enter searches online instead.
-            const text = browseModel.query.text
-            if (useBrowse.getState().total === 0 && text) useBrowse.setState({ externalAuto: text })
-            else activeCarousel?.recenter()
+            activeCarousel?.recenter()
+            // Plays what the query finds, once it has (nothing in the catalog: searches online instead).
+            void playResult(true)
           }}
         />
       </div>

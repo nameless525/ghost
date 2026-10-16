@@ -11,14 +11,16 @@
 //    only, outside the run queue (a slow update never holds a slot a search or a play waits for).
 //  - The first download (~35 MB) reports its progress (`onInstall`): the app shows it, since
 //    YouTube and SoundCloud wait on it.
-//  - Invocations: execFile with an args array (never a shell), ≤2 concurrent, with timeouts. Runs that
+//  - Invocations: spawn with an args array (never a shell), ≤2 concurrent, with timeouts. Runs that
 //    download (SoundCloud tracks) can ask for yt-dlp's progress lines (`RunOptions.onProgress`).
+//    A timed-out or aborted run is ended as a process tree (./children): the standalone build is a
+//    launcher whose child does the work. Its queue slot stays taken until nothing of it runs.
 //    `--ignore-config` keeps a user's yt-dlp config (cookies-from-browser, proxies…) out of it.
 //  - JS challenges: YouTube needs a JS runtime for its player challenges. We pass one we can find
 //    (deno/node on disk, else Electron's own binary in ELECTRON_RUN_AS_NODE mode). No PO tokens, no
 //    cookies: a video that needs sign-in is reported as `blocked` and skipped.
 
-import { execFile } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants as FS, existsSync } from 'node:fs'
 import { access, chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -27,12 +29,14 @@ import { join } from 'node:path'
 import { NetError } from '../net/errors'
 import { GHOST_USER_AGENT } from '../net/http'
 import { HostLimiter, type Priority } from '../net/limiter'
-import { trackChild, untrackChild } from './children'
+import { endTree, trackChild, treeAlive, untrackChild } from './children'
 
 export const YTDLP_RELEASE_BASE = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download'
 export const UPDATE_INTERVAL_MS = 7 * 24 * 3600_000
 export const STALE_SYSTEM_DAYS = 150
 const DEFAULT_TIMEOUT_MS = 60_000
+/** More output than this (characters) ends the run. */
+const MAX_OUTPUT = 256 * 1024 * 1024
 /** Prefix of the progress lines a downloading run prints (see RunOptions.onProgress). */
 const PROGRESS_MARK = 'ghost-progress'
 /** Progress lines, at most four a second: "<mark> <downloaded> <total> <estimated total>" ("NA" when unknown). */
@@ -428,50 +432,90 @@ export class YtDlp {
   private exec(file: string, args: string[], opts: RunOptions, extraEnv: Record<string, string>): Promise<RunResult> {
     const dirs = searchDirs(process.env, this.platform)
     const env = { ...process.env, PATH: dirs.join(this.platform === 'win32' ? ';' : ':'), PYTHONIOENCODING: 'utf-8', ...extraEnv }
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
     return new Promise((resolve, reject) => {
-      const child = execFile(
-        file,
-        args,
-        {
-          timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          killSignal: 'SIGKILL',
-          maxBuffer: 256 * 1024 * 1024,
-          env,
-          signal: opts.signal,
-          windowsHide: true,
-          encoding: 'utf8'
-        },
-        (err, rawStdout, stderr) => {
-          // Progress lines (a downloading run) aren't output.
-          const stdout = opts.onProgress && typeof rawStdout === 'string' ? rawStdout.split('\n').filter((l) => !l.startsWith(PROGRESS_MARK)).join('\n') : rawStdout
-          if (!err) return resolve({ stdout, stderr, code: 0 })
-          const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string; code?: unknown }
-          if (opts.signal?.aborted || e.name === 'AbortError') return reject(new NetError('aborted', 'yt-dlp aborted'))
-          if (e.killed || e.signal === 'SIGKILL') return reject(new NetError('timeout', `yt-dlp timed out after ${Math.round((opts.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)} s`))
-          if (e.code === 'ENOENT' || e.code === 'EACCES') return reject(new Error(`cannot run yt-dlp at ${file}: ${e.message}`))
-          if (opts.allowFailure && typeof e.code === 'number') return resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code: e.code })
-          reject(classifyYtDlpError(String(stderr ?? ''), e.message))
-        }
-      )
-      const { onProgress, onLine } = opts
-      if ((onProgress || onLine) && child.stdout) {
-        let partial = ''
-        child.stdout.on('data', (chunk: string | Buffer) => {
-          const lines = (partial + String(chunk)).split('\n')
-          partial = lines.pop() ?? ''
-          for (const line of lines) {
-            const p = onProgress && parseProgressLine(line)
-            if (p) onProgress(p.bytes, p.totalBytes)
-            else if (onLine && !line.startsWith(PROGRESS_MARK)) onLine(line)
-          }
-        })
+      if (opts.signal?.aborted) return reject(new NetError('aborted', 'yt-dlp aborted'))
+      // Unix: the leader of a process group of its own, so ending it reaches what it started.
+      const group = process.platform !== 'win32'
+      let child: ChildProcess
+      try {
+        child = spawn(file, args, { env, detached: group, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      } catch (e) {
+        return reject(new Error(`cannot run yt-dlp at ${file}: ${(e as Error).message}`))
       }
       // Ended by the main thread when the app quits (see ./children.ts), whichever thread runs this.
       const pid = child.pid
-      trackChild(pid)
-      child.once('exit', () => untrackChild(pid))
+      trackChild(pid, group)
+      let stdout = ''
+      let stderr = ''
+      let size = 0
+      /** Why we ended the run, and that ending (the whole tree) in progress. */
+      let stopped: Error | null = null
+      let ending: Promise<void> | null = null
+      const stop = (why: Error) => {
+        if (stopped) return
+        stopped = why
+        if (pid != null) ending = endTree(pid, group)
+      }
+      const timer = setTimeout(() => stop(new NetError('timeout', `yt-dlp timed out after ${Math.round(timeoutMs / 1000)} s`)), timeoutMs)
+      const onAbort = () => stop(new NetError('aborted', 'yt-dlp aborted'))
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+      let settled = false
+      const settle = (fn: () => void) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
+        fn()
+      }
+      const take = (chunk: string) => {
+        size += chunk.length
+        if (size > MAX_OUTPUT) stop(new NetError('parse', `yt-dlp printed more than ${MAX_OUTPUT / 1048576} MB`))
+      }
+      child.stdout!.setEncoding('utf8')
+      child.stderr!.setEncoding('utf8')
+      const { onProgress, onLine } = opts
+      let partial = ''
+      child.stdout!.on('data', (chunk: string) => {
+        take(chunk)
+        stdout += chunk
+        if (!onProgress && !onLine) return
+        const lines = (partial + chunk).split('\n')
+        partial = lines.pop() ?? ''
+        for (const line of lines) {
+          const p = onProgress && parseProgressLine(line)
+          if (p) onProgress(p.bytes, p.totalBytes)
+          else if (onLine && !line.startsWith(PROGRESS_MARK)) onLine(line)
+        }
+      })
+      child.stderr!.on('data', (chunk: string) => {
+        take(chunk)
+        stderr += chunk
+      })
+      // Whatever it started that still runs once it has exited goes too; until then it stays registered.
+      let cleared: Promise<void> = Promise.resolve()
+      child.once('exit', () => {
+        clearTimeout(timer)
+        cleared = (ending ?? (pid != null && group && treeAlive(pid, true) ? endTree(pid, true) : Promise.resolve())).then(() => untrackChild(pid))
+      })
       // A spawn failure (ENOENT…) never gets an 'exit'.
-      child.once('error', () => untrackChild(pid))
+      child.once('error', (e) => {
+        if (pid != null) return
+        settle(() => reject(new Error(`cannot run yt-dlp at ${file}: ${e.message}`)))
+      })
+      child.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        void cleared.then(() =>
+          settle(() => {
+            // Progress lines (a downloading run) aren't output.
+            const out = onProgress ? stdout.split('\n').filter((l) => !l.startsWith(PROGRESS_MARK)).join('\n') : stdout
+            if (stopped) return reject(stopped)
+            if (code === 0) return resolve({ stdout: out, stderr, code: 0 })
+            if (code == null) return reject(classifyYtDlpError(stderr, `yt-dlp was ended (${signal ?? 'killed'})`))
+            if (opts.allowFailure) return resolve({ stdout: out, stderr, code })
+            reject(classifyYtDlpError(stderr, `yt-dlp exited with code ${code}`))
+          })
+        )
+      })
     })
   }
 

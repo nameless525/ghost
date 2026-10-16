@@ -1,13 +1,13 @@
 // Building blocks for the Settings overlay: live patching, setting rows, sliders with a value
 // readout, secret fields, and search highlighting.
 import { Check, Eye, EyeOff } from 'lucide-react'
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent as RKeyboardEvent, type ReactNode } from 'react'
 import type { DeepPartial, Settings } from '@shared/types'
 import { mergeSettings } from '@shared/defaults'
 import { sfx } from '../../sound'
 import { updateSettings, useSettings } from '../../state/settings'
 import { Slider } from '../../ui/Slider'
-import { cx } from '../../ui/util'
+import { cx, useIsoLayoutEffect } from '../../ui/util'
 
 /** Apply a settings patch now (optimistically, so controls feel instant) and persist it. */
 export function patchSettings(patch: DeepPartial<Settings>): Promise<Settings> {
@@ -120,6 +120,119 @@ export function SettingSlider({ value, min, max, step, onCommit, onPreview, form
   )
 }
 
+export interface DraftFieldOptions {
+  /** Pause after the last keystroke before the draft saves itself (ms). */
+  delay: number
+  /** The value a draft saves as (trimmed, the default for an empty field…). */
+  clean: (text: string) => string
+  /** Persist a cleaned value that differs from the saved one. */
+  save: (value: string) => void
+  /** An emptied field waits for blur / Enter instead of saving after the pause. */
+  holdEmpty?: boolean
+}
+
+/**
+ * A text setting edited in place: the draft saves after a pause, on blur and on Enter. Escape puts
+ * the saved value back and drops the pending save with it, so a thrown-away edit never lands
+ * later. Plain state rather than a hook so the rules are testable; useDraftField binds it.
+ */
+export class DraftField {
+  text: string
+  options: DraftFieldOptions
+  private saved: string
+  private focused = false
+  private timer: ReturnType<typeof setTimeout> | undefined
+
+  constructor(saved: string, options: DraftFieldOptions, private onText: (text: string) => void = () => {}) {
+    this.text = this.saved = saved
+    this.options = options
+  }
+
+  /** The setting changed (saved here, or elsewhere): shown unless the user is typing. */
+  setSaved(value: string): void {
+    this.saved = value
+    if (!this.focused) this.show(value)
+  }
+
+  focus(): void {
+    this.focused = true
+  }
+
+  blur(): void {
+    this.focused = false
+    this.commit()
+  }
+
+  change(text: string): void {
+    this.show(text)
+    this.cancel()
+    if (this.options.holdEmpty && !text.trim()) return
+    this.timer = setTimeout(() => this.commit(text), this.options.delay)
+  }
+
+  /** Save now: blur, Enter, or a value set by a button (reset). */
+  commit(text = this.text): void {
+    this.cancel()
+    const clean = this.options.clean(text)
+    this.show(clean)
+    if (clean !== this.saved) this.options.save(clean)
+  }
+
+  /** Escape. True when there was an edit to throw away (the key is then the field's). */
+  revert(): boolean {
+    this.cancel()
+    if (this.text === this.saved) return false
+    this.show(this.saved)
+    return true
+  }
+
+  dispose(): void {
+    this.cancel()
+  }
+
+  private cancel(): void {
+    clearTimeout(this.timer)
+    this.timer = undefined
+  }
+
+  private show(text: string): void {
+    if (text === this.text) return
+    this.text = text
+    this.onText(text)
+  }
+}
+
+/** A DraftField for `value`, re-rendering with its text. Bind the input with draftInputProps. */
+export function useDraftField(value: string, options: DraftFieldOptions): [DraftField, string] {
+  const [text, setText] = useState(value)
+  const [field] = useState(() => new DraftField(value, options, setText))
+  // the latest closures, for a save that fires after the pause
+  useIsoLayoutEffect(() => {
+    field.options = options
+  })
+  useEffect(() => field.setSaved(value), [field, value])
+  useEffect(() => () => field.dispose(), [field])
+  return [field, text]
+}
+
+/** The <input> handlers of a DraftField. */
+export function draftInputProps(field: DraftField) {
+  return {
+    onFocus: () => field.focus(),
+    onBlur: () => field.blur(),
+    onChange: (e: ChangeEvent<HTMLInputElement>) => field.change(e.target.value),
+    onKeyDown: (e: RKeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        field.commit()
+      } else if (e.key === 'Escape' && field.revert()) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+  }
+}
+
 export interface SecretFieldProps {
   value: string
   onSave: (v: string) => void | Promise<unknown>
@@ -131,41 +244,29 @@ export interface SecretFieldProps {
 
 /** Text field for API keys: masked with a reveal toggle, saved on blur / Enter / after a pause. */
 export function SecretField({ value, onSave, placeholder, secret = true, 'aria-label': ariaLabel }: SecretFieldProps) {
-  const [draft, setDraft] = useState(value)
   const [shown, setShown] = useState(!secret)
   const [saved, setSaved] = useState(false)
-  const timer = useRef(0)
   const savedTimer = useRef(0)
-  const focused = useRef(false)
 
-  useEffect(() => {
-    if (!focused.current) setDraft(value)
-  }, [value])
-  useEffect(
-    () => () => {
-      window.clearTimeout(timer.current)
-      window.clearTimeout(savedTimer.current)
-    },
-    []
-  )
+  useEffect(() => () => window.clearTimeout(savedTimer.current), [])
 
-  const commit = (v: string) => {
-    window.clearTimeout(timer.current)
-    const clean = v.trim()
-    if (clean === value) return
-    void Promise.resolve(onSave(clean)).then(
-      () => {
-        setSaved(true)
-        sfx.play('confirm', { volume: 0.5 })
-        window.clearTimeout(savedTimer.current)
-        savedTimer.current = window.setTimeout(() => setSaved(false), 1800)
-      },
-      (err: unknown) => {
-        sfx.play('error', { volume: 0.5 })
-        console.warn('[settings] save failed', err)
-      }
-    )
-  }
+  const [field, draft] = useDraftField(value, {
+    delay: 900,
+    clean: (v) => v.trim(),
+    save: (clean) =>
+      void Promise.resolve(onSave(clean)).then(
+        () => {
+          setSaved(true)
+          sfx.play('confirm', { volume: 0.5 })
+          window.clearTimeout(savedTimer.current)
+          savedTimer.current = window.setTimeout(() => setSaved(false), 1800)
+        },
+        (err: unknown) => {
+          sfx.play('error', { volume: 0.5 })
+          console.warn('[settings] save failed', err)
+        }
+      )
+  })
 
   return (
     <div className={cx('set-secret', saved && 'set-secret--saved')}>
@@ -177,29 +278,7 @@ export function SecretField({ value, onSave, placeholder, secret = true, 'aria-l
         aria-label={ariaLabel}
         spellCheck={false}
         autoComplete="off"
-        onFocus={() => (focused.current = true)}
-        onChange={(e) => {
-          setDraft(e.target.value)
-          window.clearTimeout(timer.current)
-          const v = e.target.value
-          timer.current = window.setTimeout(() => commit(v), 900)
-        }}
-        onBlur={() => {
-          focused.current = false
-          commit(draft)
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            commit(draft)
-          } else if (e.key === 'Escape' && draft !== value) {
-            e.preventDefault()
-            e.stopPropagation()
-            // revert, and cancel the pending debounced save of the text being reverted
-            window.clearTimeout(timer.current)
-            setDraft(value)
-          }
-        }}
+        {...draftInputProps(field)}
       />
       <span className="set-secret__saved" aria-live="polite">
         <Check /> Saved
