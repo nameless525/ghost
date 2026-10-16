@@ -86,6 +86,13 @@ describe('tween', async () => {
     expect(tween.get(el).x).toBe(-5)
   })
 
+  it('a finished transform lands exactly on its target, wherever it started', async () => {
+    const el = fakeEl()
+    await tween(el).moveToX(15.37, 0) // 15.37 + (-5 - 15.37) is -4.999999999999998
+    await tween(el).moveToX(-5, 20)
+    expect(tween.get(el).x).toBe(-5)
+  })
+
   it('clear() stops and resolves pending awaits', async () => {
     const el = fakeEl()
     const p = tween(el).fadeTo(0, 10_000).finished

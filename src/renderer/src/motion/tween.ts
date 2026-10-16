@@ -123,7 +123,8 @@ class ElState {
         const until = i < k ? list[i + 1].start : now
         const d = tr.end - tr.start
         const p = d <= 0 ? 1 : clamp01((until - tr.start) / d)
-        v[prop] = tr.from + (tr.to - tr.from) * tr.ease(p)
+        // (done lands on the target itself: from + (to - from) can miss it by a rounding error)
+        v[prop] = p >= 1 ? tr.to : tr.from + (tr.to - tr.from) * tr.ease(p)
       }
       if (k > 0) list.splice(0, k)
       if (now >= list[0].end) list.shift()
@@ -356,7 +357,7 @@ export function animateValue(o: {
     if (done) return
     if (now < start) return
     const p = dur <= 0 ? 1 : clamp01((now - start) / dur)
-    o.onUpdate(o.from + (o.to - o.from) * ease(p))
+    o.onUpdate(p >= 1 ? o.to : o.from + (o.to - o.from) * ease(p))
     if (p >= 1) {
       done = true
       off()
