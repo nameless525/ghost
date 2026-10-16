@@ -78,7 +78,8 @@ pub fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f32::max)
 }
 
-/// Tiny HTTP file server with Range support; `delay_per_16k` throttles, `hang` never answers.
+/// Tiny HTTP file server with Range support; `delay_per_16k` throttles (an average rate per
+/// response), `hang` never answers.
 pub struct Server {
     pub url: String,
     stop: Arc<AtomicBool>,
@@ -96,6 +97,8 @@ struct Body {
     end: usize,
     delay: Duration,
     stop: Arc<AtomicBool>,
+    started: Instant,
+    sent: usize,
 }
 
 impl Read for Body {
@@ -105,10 +108,17 @@ impl Read for Body {
         }
         let n = buf.len().min(16 * 1024).min(self.end - self.pos);
         if n > 0 && !self.delay.is_zero() {
-            std::thread::sleep(self.delay);
+            // An average of 16 KB per `delay`: a coarse timer's overshoot (CI machines sleep well
+            // past short requests) is made up by the next reads instead of adding up.
+            let due = self.started + self.delay.mul_f64((self.sent + n) as f64 / 16384.0);
+            let now = Instant::now();
+            if due > now {
+                std::thread::sleep(due - now);
+            }
         }
         buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
         self.pos += n;
+        self.sent += n;
         Ok(n)
     }
 }
@@ -159,7 +169,7 @@ pub fn serve_with(data: Vec<u8>, name: &str, delay_per_16k: Duration, hang: bool
                 };
                 let mut headers = vec![tiny_http::Header::from_bytes("Content-Type", "audio/wav").unwrap()];
                 headers.extend(extra);
-                let body = Body { data, pos: start, end, delay: delay_per_16k, stop: st };
+                let body = Body { data, pos: start, end, delay: delay_per_16k, stop: st, started: Instant::now(), sent: 0 };
                 let _ = req.respond(tiny_http::Response::new(tiny_http::StatusCode(status), headers, body, Some(end - start), None));
             });
         }

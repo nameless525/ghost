@@ -353,15 +353,16 @@ fn clip_is_measured_without_waiting_for_the_whole_stream() {
 #[test]
 fn loud_stream_is_turned_down_before_it_finishes_downloading() {
     // A very loud track (a 0.9 sine, about −1.6 LUFS) streaming at ~2× real time: the whole
-    // file takes ~16 s. It starts at the provisional −4 dB; the measurement running along the
-    // download reports it loud after ~1.5 s, long before the last byte arrives (the window
-    // checked below plays ~10–14 s in, leaving a loaded machine plenty of slack).
+    // file takes ~14 s. It starts at the provisional −4 dB; the measurement running along the
+    // download reports it loud after ~1.5 s. The window checked below is rendered ~9–12 s in:
+    // before the file's last 4 s arrive (playback can't get ahead of the download), so before
+    // the full measurement could exist, and with plenty of slack for a loaded machine.
     let dir = tmp_dir("interim");
     let rate = 48_000;
     let secs = 30;
     let a = dir.join("loud.wav");
     wav::write_f32(&a, rate, 2, &tone(rate, rate as usize * secs, 440.0, 0.9)).unwrap();
-    let srv = serve(std::fs::read(&a).unwrap(), "loud.wav", Duration::from_millis(11), false);
+    let srv = serve(std::fs::read(&a).unwrap(), "loud.wav", Duration::from_millis(20), false);
     let (engine, sink) = offline(&dir, rate);
     engine.set_normalization(true, -16.0, NormalizationMode::Track);
     let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "loud".into(), format_hint: None, extras: Default::default() };

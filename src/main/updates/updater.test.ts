@@ -194,14 +194,21 @@ describe('Updater', () => {
     const t = setup({ now: () => Date.now(), latest: () => release('0.4.0') })
     await t.u.start(true)
     const checks = () => t.fetched.filter((u) => u.includes('/releases/latest')).length
+    // A check finishes with real I/O (it saves its time to disk): the fake clock waits for it,
+    // or the check would record a time hours later than it ran.
+    const finished = async (n: number) => {
+      while (t.states.filter((s) => s.status === 'idle' && s.lastCheckedAt != null).length < n) await new Promise((r) => setImmediate(r))
+    }
     await vi.advanceTimersByTimeAsync(STARTUP_DELAY_MS - 1000)
     expect(checks()).toBe(0)
     await vi.advanceTimersByTimeAsync(2000)
     expect(checks()).toBe(1)
+    await finished(1)
     await vi.advanceTimersByTimeAsync(CHECK_EVERY_MS - 3600_000)
     expect(checks()).toBe(1)
     await vi.advanceTimersByTimeAsync(3600_000 + 31 * 60_000)
     expect(checks()).toBe(2)
+    await finished(2)
     t.u.stop()
   })
 
