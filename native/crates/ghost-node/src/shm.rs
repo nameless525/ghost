@@ -453,7 +453,9 @@ mod tests {
         let mut s = Snapshot::default();
         let mut good = 0;
         let t0 = Instant::now();
-        while t0.elapsed() < Duration::from_millis(300) {
+        // At least 300 ms of reads, and on until 100 were consistent: against a writer publishing
+        // flat out, a busy CI machine lets far fewer through in 300 ms (20 s only guards a hang).
+        while (t0.elapsed() < Duration::from_millis(300) || good < 100) && t0.elapsed() < Duration::from_secs(20) {
             if r.read(&mut s) {
                 let k = s.rms;
                 assert_eq!(s.track_seq, k as u32);
@@ -466,7 +468,7 @@ mod tests {
         }
         stop.store(true, Ordering::Relaxed);
         writer.join().unwrap();
-        assert!(good > 100, "only {good} consistent reads");
+        assert!(good >= 100, "only {good} consistent reads");
         std::fs::remove_file(&path).unwrap();
     }
 }
