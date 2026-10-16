@@ -3,7 +3,7 @@
 // drops: the drifting pixels and pulses still move, just without burning a GPU core.
 //
 //   interacting (input in the last 4 s) ........ display rate
-//   focused + playing .......................... display rate
+//   focused + playing .......................... display rate, at most 60 fps
 //   focused, idle, not playing ................. 30 fps
 //   unfocused + playing ........................ 30 fps
 //   unfocused, not playing ..................... 12 fps for 10 s, then paused (0 fps)
@@ -14,6 +14,12 @@ import { usePlayer } from '../state/player'
 import { ticker } from './ticker'
 
 const ACTIVE_MS = 4000
+/**
+ * Listening without touching anything: beat motion and visualizers are smooth at 60 fps, and on a
+ * 120 Hz display (ProMotion) the full rate would draw, and cost, twice the frames. Displays at
+ * 60 Hz or below are unaffected (a timer-paced 60 there would only add jitter).
+ */
+const PASSIVE_FPS = 60
 /** Unfocused and silent for this long: stop drawing entirely. */
 const PAUSE_AFTER_MS = 10000
 /** A new animation while paused runs at least this long. */
@@ -33,7 +39,8 @@ function decide(): number {
   const playing = usePlayer.getState().status === 'playing'
   const now = performance.now()
   const interacting = now - lastInput < ACTIVE_MS
-  if (focused && (interacting || playing)) return Infinity
+  if (focused && interacting) return Infinity
+  if (focused && playing) return ticker.refreshHz > PASSIVE_FPS + 10 ? PASSIVE_FPS : Infinity
   if (focused) return 30
   if (playing) return 30
   return now - Math.max(lastInput, lastBlur) < PAUSE_AFTER_MS || now - lastWake < WAKE_MS ? 12 : 0

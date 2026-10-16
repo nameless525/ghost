@@ -162,3 +162,22 @@ describe('formatBytes', () => {
     expect(formatBytesOf(300 * 1024, 4.5 * 1024 * 1024)).toBe('300 KB of 4.5 MB')
   })
 })
+
+describe('WaitTracker: looking for a backup', () => {
+  it('says why it looks elsewhere on the steps that follow', () => {
+    const w = new WaitTracker('1', new Typical(), () => 0)
+    expect(w.fallback('Internet Archive isn’t answering')).toBe(true)
+    expect(w.progress()).toMatchObject({ label: 'Looking for a backup', detail: 'Internet Archive isn’t answering' })
+    w.onResolveStep({ trackId: '1', provider: 'youtube', providerName: 'YouTube', kind: 'search', fraction: null })
+    expect(w.progress()).toMatchObject({ label: 'Looking for a backup on YouTube', detail: 'Internet Archive isn’t answering' })
+    w.opened('youtube')
+    expect(w.progress()).toMatchObject({ label: 'Connecting to YouTube', detail: 'Internet Archive isn’t answering' })
+  })
+
+  it('a source skipped before it was tried (its server is down) explains the search too', () => {
+    const w = new WaitTracker('1', new Typical(), () => 0)
+    expect(w.lookingElsewhere('Internet Archive isn’t answering')).toBe(true)
+    expect(w.progress()).toMatchObject({ label: 'Finding a source', detail: 'Internet Archive isn’t answering' })
+    expect(w.lookingElsewhere('Internet Archive isn’t answering')).toBe(false)
+  })
+})

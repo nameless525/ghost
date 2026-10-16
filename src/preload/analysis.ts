@@ -37,25 +37,31 @@ const none: AnalysisAPI = { read: () => null, readPacked: () => null }
 /** Reused packing buffer (the bridge copies it out on every call anyway). */
 let packBuf: Float32Array | undefined
 
+/** Load the addon (the whole engine library, 13+ MB) on the first read, not before the page loads. */
+function loadAddon(nativePath: string): ReaderAddon | null {
+  try {
+    // Runtime require of an absolute path: Vite leaves it alone and the .node is never bundled.
+    const addon = createRequire(__filename)(nativePath) as ReaderAddon
+    if (typeof addon.AnalysisReader !== 'function') throw new Error('AnalysisReader export missing')
+    return addon
+  } catch (e) {
+    console.warn('[ghost] analysis frames unavailable: cannot load', nativePath, e)
+    return null
+  }
+}
+
 export function createAnalysisReader(): AnalysisAPI {
   const nativePath = argValue('ghost-native')
   const shmPath = argValue('ghost-shm')
   if (!nativePath || !shmPath) return none // NullEngine / web build: no frames
 
-  let addon: ReaderAddon
-  try {
-    // Runtime require of an absolute path: Vite leaves it alone and the .node is never bundled.
-    addon = createRequire(__filename)(nativePath) as ReaderAddon
-    if (typeof addon.AnalysisReader !== 'function') throw new Error('AnalysisReader export missing')
-  } catch (e) {
-    console.warn('[ghost] analysis frames unavailable: cannot load', nativePath, e)
-    return none
-  }
-
+  let addon: ReaderAddon | null | undefined
   let reader: NativeReader | null = null
   let nextOpen = 0
 
   const read = (): AnalysisFrame | null => {
+    if (addon === undefined) addon = loadAddon(nativePath)
+    if (!addon) return null
     try {
       if (!reader) {
         const now = Date.now()

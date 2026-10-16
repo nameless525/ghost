@@ -215,6 +215,14 @@ impl GhostEngine {
         }
     }
 
+    /// Whether the app shows live analysis frames (its window is visible).
+    #[napi(catch_unwind)]
+    pub fn set_analysis_demand(&self, on: bool) {
+        if let Some(e) = self.live() {
+            e.set_analysis_demand(on);
+        }
+    }
+
     #[napi(catch_unwind)]
     pub fn set_loop(&self, mode: String, count: u32, fade_sec: f64) -> Result<()> {
         let mode = loop_mode(&mode)?;

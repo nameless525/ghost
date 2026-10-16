@@ -3,6 +3,7 @@
 import {
   AudioLines,
   Check,
+  CircleFadingArrowUp,
   Database,
   ExternalLink,
   FolderOpen,
@@ -17,6 +18,8 @@ import {
   Plug,
   RefreshCw,
   RotateCcw,
+  RotateCw,
+  ScrollText,
   TriangleAlert,
   Waypoints,
   X
@@ -31,6 +34,7 @@ import { openShortcuts } from '../../shell/shortcuts'
 import { sfx } from '../../sound'
 import { useTask } from '../../state/progress'
 import { useSettings } from '../../state/settings'
+import { checkForUpdates, installUpdate, openReleasePage, openUpdatePrompt, updateFraction, useUpdates, useUpdateUI } from '../../state/updates'
 import { Button } from '../../ui/Button'
 import { GhostMark } from '../../ui/GhostMark'
 import { IconButton } from '../../ui/IconButton'
@@ -722,6 +726,88 @@ function AboutPanel() {
   )
 }
 
+/** The running version, what the updater is doing in plain words, and its buttons. */
+function UpdatesRow(m: RowMeta) {
+  const s = useUpdates()
+  const restarting = useUpdateUI((u) => u.restarting)
+  const open = useContext(OpenContext)
+  const now = useNow(30000, open)
+  const v = s.latest?.version
+  const fraction = updateFraction(s)
+  const checking = s.status === 'checking'
+  const downloading = s.status === 'downloading'
+  const offer = !!v && (s.status === 'available' || s.status === 'error')
+
+  let status: ReactNode
+  switch (s.status) {
+    case 'checking':
+      status = 'Checking…'
+      break
+    case 'downloading':
+      status = `Downloading GHOST ${v}${fraction != null ? ` · ${Math.round(fraction * 100)}%` : '…'}${restarting ? ': GHOST restarts when it’s done' : ''}`
+      break
+    case 'ready':
+      status = `GHOST ${v} is ready: it installs when you quit`
+      break
+    case 'available':
+      status = `GHOST ${v} is available`
+      break
+    case 'error':
+      status = s.error ?? 'The last update check failed.'
+      break
+    default:
+      status = s.lastCheckedAt ? (
+        <>
+          Up to date · checked <b>{relativeTime(s.lastCheckedAt, now)}</b>
+        </>
+      ) : (
+        'Not checked yet'
+      )
+  }
+
+  return (
+    <Row
+      {...m}
+      label={`GHOST ${s.current}`}
+      wide
+      className="set-upd"
+      description={
+        <>
+          <span className={cx('set-upd__status', s.status === 'error' && 'set-upd__status--error')}>{status}</span>
+          {offer && !s.canInstall && s.manualReason && <span className="set-upd__reason">{s.manualReason}</span>}
+        </>
+      }
+    >
+      {downloading && <ProgressBar className="set-upd__bar" size="thin" progress={fraction} waitKey={v} />}
+      <div className="set-actions">
+        {s.status === 'ready' && (
+          <Button size="sm" variant="primary" sound="confirm" icon={<RotateCw />} disabled={restarting} onClick={installUpdate}>
+            {restarting ? 'Restarting…' : 'Restart to update'}
+          </Button>
+        )}
+        {offer &&
+          (s.canInstall ? (
+            <Button size="sm" variant="primary" sound="confirm" icon={<CircleFadingArrowUp />} onClick={installUpdate}>
+              Update now
+            </Button>
+          ) : (
+            <Button size="sm" variant="primary" icon={<ExternalLink />} onClick={() => openReleasePage(s.latest!.url)}>
+              Download
+            </Button>
+          ))}
+        {v && s.status !== 'idle' && s.status !== 'checking' && (
+          <Button size="sm" variant="soft" icon={<ScrollText />} onClick={openUpdatePrompt}>
+            Release notes
+          </Button>
+        )}
+        <Button size="sm" variant="soft" icon={<RefreshCw className={cx(checking && 'set-spin g-keep-motion')} />} disabled={checking || downloading} onClick={checkForUpdates}>
+          {checking ? 'Checking…' : 'Check now'}
+        </Button>
+      </div>
+    </Row>
+  )
+}
+
 function ShortcutsRow(m: RowMeta) {
   return (
     <Row
@@ -1170,7 +1256,7 @@ export const SECTIONS: SectionDef[] = [
     id: 'about',
     title: 'About',
     icon: <Info />,
-    blurb: 'Version and where GHOST keeps its data.',
+    blurb: 'Version, updates and where GHOST keeps its data.',
     groups: [
       {
         title: 'About',
@@ -1182,6 +1268,22 @@ export const SECTIONS: SectionDef[] = [
             keywords: 'version data folder credits',
             C: AboutPanel
           }
+        ]
+      },
+      {
+        title: 'Updates',
+        rows: [
+          row('updstatus', 'Check for updates', UpdatesRow, undefined, 'update upgrade version release new check download install restart notes changelog'),
+          row(
+            'updauto',
+            'Install updates automatically',
+            toggleRow(
+              (s) => s.updates.auto,
+              (v) => ({ updates: { auto: v } })
+            ),
+            'New versions download in the background and install when you quit GHOST. Turn it off to be asked first.',
+            'update auto upgrade version release automatic download background'
+          )
         ]
       }
     ]

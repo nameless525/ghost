@@ -51,6 +51,9 @@ export function parseSession(raw: unknown): SessionData | null {
 }
 
 export class FileSessionStore implements SessionStore {
+  /** JSON of the last saved queue array: a save while playing usually changes only the position. */
+  private queueJson: { of: SessionData['queue']; json: string } | null = null
+
   constructor(private readonly file: string) {}
 
   load(): SessionData | null {
@@ -63,7 +66,9 @@ export class FileSessionStore implements SessionStore {
 
   save(data: SessionData): void {
     try {
-      writeFileAtomic(this.file, JSON.stringify(data))
+      const { queue, ...rest } = data
+      if (this.queueJson?.of !== queue) this.queueJson = { of: queue, json: JSON.stringify(queue) }
+      writeFileAtomic(this.file, `${JSON.stringify(rest).slice(0, -1)},"queue":${this.queueJson.json}}`)
     } catch (e) {
       console.error('[player] failed to save session:', e)
     }

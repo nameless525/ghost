@@ -4,9 +4,9 @@
 // `system.perfStats()` (debug) so they can be attributed.
 //
 // The detectors are timers (a 50 ms drift check and the 10 ms event-loop-delay sampler: ~120
-// wakeups a second), so they only run while they can matter: while a GHOST window has focus,
-// for a while after perf stats were read, or always with GHOST_PERF_LOG. A backgrounded app
-// doesn't wake up for them.
+// wakeups a second), so they only run while someone looks: for a while after perf stats were
+// read, always with GHOST_PERF_LOG, and in development builds also while a window has focus.
+// A released app doesn't wake up for them.
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks'
 import { DatabaseSync, StatementSync } from 'node:sqlite'
 
@@ -46,6 +46,8 @@ export function perfHint(label: string): void {
 const TICK = 50
 let stallTimer: ReturnType<typeof setInterval> | null = null
 let focused = true
+/** Run the detectors whenever a window has focus (development builds). */
+let followFocus = true
 let inspectUntil = 0
 let inspectTimer: ReturnType<typeof setTimeout> | null = null
 /** After perf stats are read, keep measuring this long even without focus (scripted profiling). */
@@ -57,7 +59,7 @@ export function perfActive(): boolean {
 }
 
 function syncDetectors(): void {
-  const want = !!process.env.GHOST_PERF_LOG || focused || Date.now() < inspectUntil
+  const want = !!process.env.GHOST_PERF_LOG || (followFocus && focused) || Date.now() < inspectUntil
   if (want && !stallTimer) {
     hist.enable()
     let last = performance.now()
@@ -86,7 +88,8 @@ export function setPerfFocus(hasFocus: boolean): void {
   syncDetectors()
 }
 
-export function startMainPerf(): void {
+export function startMainPerf(opts: { followFocus: boolean }): void {
+  followFocus = opts.followFocus
   syncDetectors()
 
   // Time every statement execution; record the slow ones.

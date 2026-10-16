@@ -496,7 +496,7 @@ export class YouTubeProvider implements Provider {
    * is when the extraction started (in flight) or finished.
    */
   private videos = new Map<string, { validUntil: number; fetchedAt: number; value: Promise<YtVideo> }>()
-  private pending: { waiters: Map<string, Waiter[]>; timer: ReturnType<typeof setTimeout>; priority: 0 | 1 | 2 } | null = null
+  private pending: { waiters: Map<string, Waiter[]>; priorities: Map<string, number>; timer: ReturnType<typeof setTimeout>; priority: 0 | 1 | 2 } | null = null
 
   constructor(
     private readonly ytdlp: () => Promise<YtDlp>,
@@ -557,10 +557,11 @@ export class YouTubeProvider implements Provider {
   }
 
   private enqueue(id: string, w: Waiter, priority: 0 | 1 | 2): void {
-    if (!this.pending) this.pending = { waiters: new Map(), timer: setTimeout(() => void this.flush(), 25), priority }
+    if (!this.pending) this.pending = { waiters: new Map(), priorities: new Map(), timer: setTimeout(() => void this.flush(), 25), priority }
     const p = this.pending
     p.priority = Math.min(p.priority, priority) as 0 | 1 | 2
     p.waiters.set(id, [...(p.waiters.get(id) ?? []), w])
+    p.priorities.set(id, Math.min(p.priorities.get(id) ?? priority, priority))
     if (p.waiters.size >= 8) {
       clearTimeout(p.timer)
       void this.flush()
@@ -571,8 +572,14 @@ export class YouTubeProvider implements Provider {
     const p = this.pending
     if (!p) return
     this.pending = null
-    const ids = [...p.waiters.keys()]
+    // The most urgent first: yt-dlp extracts them in order, and each is handed over as soon as
+    // its line is printed, so a track someone is waiting for never waits for a warm-up batched
+    // with it.
+    const ids = [...p.waiters.keys()].sort((a, b) => p.priorities.get(a)! - p.priorities.get(b)!)
+    const settled = new Set<string>()
     const settle = (id: string, ok: YtVideo | null, err?: unknown) => {
+      if (settled.has(id)) return
+      settled.add(id)
       for (const w of p.waiters.get(id) ?? []) ok ? w.resolve(ok) : w.reject(err)
     }
     try {
@@ -581,7 +588,10 @@ export class YouTubeProvider implements Provider {
       const r = await y.run(['-j', '--no-playlist', '--ignore-errors', '-f', YT_FORMAT, ...ids.map(videoUrl)], {
         timeoutMs: this.opts.resolveTimeoutMs ?? 30_000 + 10_000 * ids.length,
         priority: p.priority,
-        allowFailure: true
+        allowFailure: true,
+        onLine: (line) => {
+          for (const [id, v] of parseJsonLines(line)) if (p.waiters.has(id)) settle(id, v)
+        }
       })
       const byId = parseJsonLines(r.stdout)
       for (const id of ids) {

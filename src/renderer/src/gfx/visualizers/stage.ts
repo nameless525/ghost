@@ -5,7 +5,7 @@
 // Driven by the global ticker at TickPriority.render; reads frame() / beat / levels once per
 // tick into one shared VisFrame. The renderer is a lazily created singleton that survives
 // Play screen remounts (no WebGL context churn); it only ticks while attached to a host.
-import { autoDetectRenderer, Container, Sprite, type Renderer } from 'pixi.js'
+import { Container, Sprite, type Renderer } from 'pixi.js'
 import { beat, type BeatEvent } from '../../motion/beat'
 import { easings } from '../../motion/easing'
 import { frame, levels, retainLevels } from '../../motion/frame'
@@ -15,6 +15,7 @@ import { usePlayer } from '../../state/player'
 import { accentNow } from '../../theme/accent'
 import { mixNumber } from '../../theme/color'
 import { uiZoom } from '../../ui/util'
+import { createGlRenderer } from '../glRenderer'
 import { adoptPixiTicker } from '../pixiTicker'
 import { Burst } from './burst'
 import { RadialVisualizer } from './radial'
@@ -69,6 +70,8 @@ export class VisualizerStage {
   private L: VisLayout = computeLayout(1, 1)
   private destroyed = false
   private shown = false
+  /** The canvas holds a cleared frame and is hidden: nothing to draw until something shows. */
+  private blank = false
   private lastAccentKey = -1
   private F: VisFrame = {
     dt: 16,
@@ -103,8 +106,7 @@ export class VisualizerStage {
   }
 
   private async init(): Promise<void> {
-    const r = await autoDetectRenderer({
-      preference: 'webgl',
+    const r = await createGlRenderer({
       width: Math.max(1, window.innerWidth),
       height: Math.max(1, window.innerHeight),
       resolution: this.resolution(),
@@ -152,6 +154,8 @@ export class VisualizerStage {
     this.flash = 0
     this.presence = 0
     this.shown = false
+    this.blank = false
+    if (this.renderer) this.renderer.canvas.style.visibility = ''
     this.renderer?.canvas.classList.remove('pl-vis__gl--ready')
     // The renderer outlives the Play screen (no WebGL context churn), but its full-window drawing
     // buffers (~12 MB each at 1.5x) needn't: shrink them while detached. The next tick after
@@ -328,7 +332,15 @@ export class VisualizerStage {
       eL.alpha = eR.alpha = Math.min(0.9, fa * 0.75)
     }
 
+    // Nothing visible (nothing playing, an error, behind the title card): clear once, hide the
+    // canvas so the compositor stops blending a transparent full-window layer, and stop drawing.
+    const empty = this.presenceTarget === 0 && this.presence < 0.002 && !vis && !this.burst.active
+    if (empty && this.blank) return
     r.render(this.stage)
+    if (empty !== this.blank) {
+      this.blank = empty
+      r.canvas.style.visibility = empty ? 'hidden' : ''
+    }
     if (!this.shown) {
       this.shown = true
       r.canvas.classList.add('pl-vis__gl--ready')

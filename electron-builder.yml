@@ -7,8 +7,13 @@ directories:
 files:
   - out/**
   - package.json
+  # Release notes shown after an update (src/main/updates).
+  - CHANGELOG.md
 asarUnpack:
   - "**/*.node"
+# GHOST's interface is English only: Chromium's own strings in ~55 other languages were 49 MB of
+# the app. `en` is the macOS .lproj name, `en-US` the .pak Windows and Linux fall back to.
+electronLanguages: [en, en-US]
 extraResources:
   - from: native/dist/ghost.node
     to: native/ghost.node

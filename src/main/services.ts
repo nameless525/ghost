@@ -2,6 +2,7 @@
 // Wires the DB, settings, catalog, audio engine, player, library and downloads together.
 // Nothing here assumes a window exists: all pushes go through `broadcast`.
 import { app, BrowserWindow, dialog, shell, type OpenDialogOptions } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { IPC_EVENT, type GhostServices } from '../shared/api'
 import { defaultSettings } from '../shared/defaults'
@@ -21,6 +22,7 @@ import { dataDir, paths } from './paths'
 import { perfMark } from './perf'
 import { FileSessionStore, Player } from './player'
 import { applyEngineSettings, createSettingsService, SettingsStore } from './settings'
+import { createUpdater } from './updates'
 
 export interface ServicesHandle {
   services: GhostServices
@@ -109,6 +111,7 @@ function unavailableCatalog(reason: string): CatalogService {
     resolveSources: async () => [],
     markSourceFailed: () => {},
     warmSources: () => {},
+    fillAlbums: () => {},
     albumOf: async () => null,
     queryTrackIds: async () => []
   }
@@ -136,6 +139,8 @@ export async function createServices(send: Broadcast): Promise<ServicesHandle> {
   const broadcast = notices.broadcast
 
   // --- storage & settings ----------------------------------------------------
+  // (Before the database exists: whether this is an update or a first run, for the release notes.)
+  const existingProfile = existsSync(paths.db())
   const db = openDb(paths.db())
   // The catalog worker shares this file on its own connection (WAL). Wait for its write lock rather
   // than failing with SQLITE_BUSY, and leave checkpoints to the worker so a large WAL is never
@@ -144,6 +149,17 @@ export async function createServices(send: Broadcast): Promise<ServicesHandle> {
   const settingsStore = new SettingsStore(join(dataDir(), 'settings.json'), defaultSettings(paths.defaultDownloads()))
   const getSettings = () => settingsStore.peek()
   perfMark('services:db+settings')
+
+  // --- GHOST's own updates (GitHub releases) ---------------------------------
+  const updates = createUpdater({
+    dir: dataDir('updates'),
+    getSettings,
+    existingProfile,
+    onState: (s) => broadcast('updates:state', s),
+    notify: (n) => broadcast('notify', n)
+  })
+  const updater = updates.updater
+  void updater.start(updates.scheduled).catch((e) => console.error('[updates] start failed:', e))
 
   // --- catalog ---------------------------------------------------------------
   // Runs in a worker thread (catalog/worker.ts): its SQLite queries, crawling and HTML parsing would
@@ -254,6 +270,7 @@ export async function createServices(send: Broadcast): Promise<ServicesHandle> {
     catalogHost?.setSettings(next)
     applyEngineSettings(engine, next, prev)
     player.onSettingsChanged(next)
+    if (next.updates.auto !== prev.updates.auto) updater.onAutoChanged(next.updates.auto)
   })
   library.onTracksChanged((ids) => player.refreshTracks(ids))
 
@@ -290,6 +307,7 @@ export async function createServices(send: Broadcast): Promise<ServicesHandle> {
       suggest: (text, limit) => catalog.suggest(text, limit),
       sources: () => catalog.sources(),
       warmSources: async (ids) => catalog.warmSources(Array.isArray(ids) ? ids.slice(0, 3) : []),
+      fillAlbums: async (ids) => catalog.fillAlbums(Array.isArray(ids) ? ids.slice(0, 24) : []),
       searchExternal: (query, providers) => catalog.searchExternal(query, providers),
       importExternal: async (hit, opts) => {
         const d = await catalog.importExternal(hit, opts)
@@ -309,6 +327,15 @@ export async function createServices(send: Broadcast): Promise<ServicesHandle> {
         if (path) shell.showItemInFolder(path)
       },
       info: async () => ({ platform: process.platform, version: app.getVersion(), dataDir: app.getPath('userData'), mock: false })
+    },
+    updates: {
+      getState: async () => updater.state(),
+      check: () => updater.check(),
+      download: () => updater.download(),
+      installNow: () => updater.installNow(),
+      dismiss: () => updater.dismiss(),
+      whatsNew: () => updater.whatsNew(),
+      whatsNewSeen: () => updater.whatsNewSeen()
     }
   }
 
@@ -319,6 +346,8 @@ export async function createServices(send: Broadcast): Promise<ServicesHandle> {
     shutdown: async () => {
       if (stopped) return
       stopped = true
+      // First: a downloaded update starts installing (it waits for GHOST to be gone).
+      updater.onQuit()
       notices.dispose()
       // Synchronous first: before-quit doesn't wait for promises.
       try {

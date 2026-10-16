@@ -295,14 +295,22 @@ export class Enricher {
   private async igdbStep(): Promise<boolean> {
     const repo = this.deps.repo
     const ids = this.wanted.splice(0, 10)
-    if (ids.length < 10) {
-      const more = repo.all<{ id: number }>(
-        `SELECT id FROM games WHERE igdb_checked_at IS NULL OR (igdb_id IS NULL AND igdb_checked_at < ?) ORDER BY igdb_checked_at IS NOT NULL, album_count DESC, id LIMIT ?`,
-        this.now() - RECHECK_MS,
-        10 - ids.length + 5
-      )
-      for (const r of more) if (ids.length < 10 && !ids.includes(r.id)) ids.push(r.id)
+    // Never-checked games first, biggest first: a walk of games_igdb_todo (as one OR query with
+    // the re-checks it read and sorted every game, ~7 ms a step on a full catalog). Re-checks of
+    // games IGDB didn't know only once those run out.
+    const want = () => 10 - ids.length + 5
+    const add = (rows: { id: number }[]) => {
+      for (const r of rows) if (ids.length < 10 && !ids.includes(r.id)) ids.push(r.id)
     }
+    if (ids.length < 10) add(repo.all<{ id: number }>(`SELECT id FROM games WHERE igdb_checked_at IS NULL ORDER BY album_count DESC, id LIMIT ?`, want()))
+    if (ids.length < 10)
+      add(
+        repo.all<{ id: number }>(
+          `SELECT id FROM games WHERE igdb_id IS NULL AND igdb_checked_at < ? ORDER BY album_count DESC, id LIMIT ?`,
+          this.now() - RECHECK_MS,
+          want()
+        )
+      )
     if (!ids.length) return false
     const games = ids
       .map((id) => repo.get<{ id: number; name: string; alt_names: string; year: number | null; igdb_json: string | null }>(`SELECT id, name, alt_names, year, igdb_json FROM games WHERE id = ?`, id))

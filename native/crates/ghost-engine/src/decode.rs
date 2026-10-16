@@ -164,7 +164,7 @@ struct Seg {
 }
 
 fn open_source(spec: &SourceSpec, cache: &Arc<CacheManager>, cancel: &Arc<std::sync::atomic::AtomicBool>, loops: &Arc<LoopSettings>) -> Result<Box<dyn AudioSource>, String> {
-    let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: false };
+    let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: false, background: false };
     let src = source::open(spec, &ctx).map_err(|e| e.message)?;
     Ok(Box::new(LoopStage::new(src, loops.clone())))
 }
@@ -371,7 +371,9 @@ pub fn decode_chunks<S>(
     start: impl FnOnce(usize, u32) -> S,
     mut push: impl FnMut(&mut S, &[f32]),
 ) -> Result<S, String> {
-    let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true };
+    // Background reads: an analysis may run while the same stream plays (a chapter of a long
+    // video is measured as soon as its bytes arrive) and must not hold up what is heard.
+    let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true, background: true };
     let raw = source::open(spec, &ctx).map_err(|e| e.message)?;
     let settings = Arc::new(LoopSettings::fixed(LoopSettings::finite(loops)));
     let mut src = LoopStage::new(raw, settings);

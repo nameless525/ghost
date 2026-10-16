@@ -4,6 +4,7 @@
 // (see holdForPreview), and anything that makes the queue audible ends the preview.
 import { randomUUID } from 'node:crypto'
 import type { PlayerAPI } from '../../shared/api'
+import { backupReason, isBackup, missReason } from '../../shared/providers'
 import type {
   AudioDevice,
   ID,
@@ -20,7 +21,8 @@ import type {
   SourceSummary,
   TrackAnalysis,
   TrackAnalysisSummary,
-  TrackView
+  TrackView,
+  SourceMiss
 } from '../../shared/types'
 import type { CatalogService, ResolvedSource } from '../catalog'
 import type { EngineBridge, EngineEvent, EnginePlaybackState, EngineSource, EngineTrack, EngineTrackInfo, OfflineAnalysisResult } from '../engine/types'
@@ -75,6 +77,13 @@ export const PREV_RESTART_MS = 3000
 export const HISTORY_MIN_MS = 30000
 /** A source refused again within this long after a refresh is treated as broken. */
 const REFRESH_AGAIN_MS = 10 * 60_000
+/**
+ * A server that didn't answer (a source URL's folder: an Internet Archive item, an album's folder)
+ * is tried last for this long: its other files, the rest of the album, are most likely down too.
+ */
+const UNREACHABLE_MS = 5 * 60_000
+/** Engine errors that mean the server never answered (rather than refusing, or sending a broken file). */
+const NO_ANSWER = /stream stalled|timed out/i
 
 /** How often the engine is asked what a loading / buffering track waits on (only while one does). */
 export const WAIT_POLL_MS = 200
@@ -103,6 +112,10 @@ interface Attempt {
   srcIdx: number
   /** Whether remote sources have been resolved (local downloads are tried first without the network). */
   remoteResolved: boolean
+  /** Whether the catalog was asked again for other sources (a fallback search) after these failed. */
+  searched?: boolean
+  /** The source this track was meant to play from, once given up on: what follows is a backup. */
+  missed?: SourceMiss
   lastError: string | null
 }
 
@@ -151,9 +164,18 @@ export function localSource(path: string): ResolvedSource {
   }
 }
 
-const summaryOf = (s: ResolvedSource): SourceSummary => ({ provider: s.provider, format: s.format, lossless: s.lossless, bitrateKbps: s.bitrateKbps, confidence: s.confidence })
-const sameSummary = (a: SourceSummary | null, s: ResolvedSource): boolean =>
-  !!a && a.provider === s.provider && a.format === s.format && a.lossless === s.lossless && a.bitrateKbps === s.bitrateKbps && a.confidence === s.confidence
+/** `missed`: the source the track was meant to play from, when this one stands in for it. */
+const summaryOf = (s: ResolvedSource, missed?: SourceMiss): SourceSummary => ({
+  provider: s.provider,
+  format: s.format,
+  lossless: s.lossless,
+  bitrateKbps: s.bitrateKbps,
+  confidence: s.confidence,
+  ...(isBackup(missed, s) ? { backupFor: missed } : {})
+})
+const sameMiss = (a: SourceMiss | null | undefined, b: SourceMiss | null | undefined): boolean => a === b || (!!a && !!b && a.provider === b.provider && a.format === b.format && a.noAnswer === b.noAnswer)
+const sameSummary = (a: SourceSummary | null, s: SourceSummary): boolean =>
+  !!a && a.provider === s.provider && a.format === s.format && a.lossless === s.lossless && a.bitrateKbps === s.bitrateKbps && a.confidence === s.confidence && sameMiss(a.backupFor, s.backupFor)
 const sameAnalysis = (a: TrackAnalysisSummary | null, b: TrackAnalysisSummary): boolean => !!a && a.bpm === b.bpm && a.intensity === b.intensity && a.lufs === b.lufs
 
 export function analysisFromResult(r: OfflineAnalysisResult): TrackAnalysis {
@@ -207,6 +229,8 @@ export class Player implements PlayerAPI {
   private s: Omit<PlayerState, 'current'>
   /** Pre-shuffle order of queue uids while shuffle is on. */
   private originalOrder: string[] | null = null
+  /** The queue as saved, kept while the queue array is the same (it's replaced, never mutated). */
+  private savedQueue: { of: QueueItem[]; items: SessionData['queue'] } | null = null
 
   private cur: Current | null = null
   private pre: Preload | null = null
@@ -232,6 +256,10 @@ export class Player implements PlayerAPI {
   private refreshed = new Map<string, number>()
   /** Cache keys that failed this session, per track (passed to resolveSources as `exclude`). */
   private failed = new Map<ID, Set<string>>()
+  /** Source folders whose server didn't answer, until when (see UNREACHABLE_MS). */
+  private unreachable = new Map<string, number>()
+  /** Queue items already announced as playing from a backup. */
+  private backupNoticed = new Set<string>()
   private failStreak = new Set<string>()
   private streakNotice = ''
   private uidTrack = new BoundedMap<string, ID>(512)
@@ -526,11 +554,28 @@ export class Player implements PlayerAPI {
     return s
   }
 
-  private async resolveRemote(trackId: ID): Promise<ResolvedSource[]> {
-    const exclude = [...(this.failed.get(trackId) ?? [])]
+  /** `skip`: cache keys to leave out besides the track's failed ones. */
+  private async resolveRemote(trackId: ID, skip: string[] = []): Promise<ResolvedSource[]> {
+    const exclude = [...(this.failed.get(trackId) ?? []), ...skip]
     const list = await this.catalog.resolveSources(trackId, { quality: this.deps.getSettings().sources.quality, exclude })
     const bad = new Set(exclude)
     return list.filter((s) => !bad.has(sourceKey(s.source)))
+  }
+
+  /** The folder a remote source lives in (one server, typically one album), or null. */
+  private static folderOf(s: ResolvedSource): string | null {
+    if (s.source.kind !== 'http' || s.provider === 'download') return null
+    const url = s.source.url
+    return url.slice(0, url.lastIndexOf('/'))
+  }
+
+  private isUnreachable(s: ResolvedSource): boolean {
+    const f = Player.folderOf(s)
+    const until = f ? this.unreachable.get(f) : undefined
+    if (until == null) return false
+    if (until > this.now()) return true
+    this.unreachable.delete(f!)
+    return false
   }
 
   /** Downloaded file first (no network); otherwise the catalog's ranked sources. */
@@ -540,23 +585,44 @@ export class Player implements PlayerAPI {
     return { sources: await this.resolveRemote(trackId), remoteResolved: true }
   }
 
-  /** Advance `a` to its next usable source, resolving remote sources lazily. */
-  private async nextSource(a: Attempt): Promise<ResolvedSource | null> {
+  /**
+   * Advance `a` to its next usable source, resolving remote sources lazily. When those run out, or
+   * only ones on a server that just didn't answer are left, the catalog is asked once more without
+   * them (`search`: it then searches its fallback sources, e.g. YouTube) before trying those last.
+   */
+  private async nextSource(a: Attempt, search = true): Promise<ResolvedSource | null> {
     for (;;) {
       a.srcIdx++
       const bad = this.failed.get(a.trackId)
       while (a.srcIdx < a.sources.length && bad?.has(sourceKey(a.sources[a.srcIdx].source))) a.srcIdx++
-      if (a.srcIdx < a.sources.length) return a.sources[a.srcIdx]
-      if (a.remoteResolved) return null
-      a.remoteResolved = true
-      try {
-        const more = await this.resolveRemote(a.trackId)
-        const have = new Set(a.sources.map((s) => sourceKey(s.source)))
-        a.sources.push(...more.filter((s) => !have.has(sourceKey(s.source))))
-      } catch (e) {
-        a.lastError = (e as Error)?.message ?? String(e)
+      const next = a.sources[a.srcIdx] as ResolvedSource | undefined
+      const lookFurther = search && a.remoteResolved && !a.searched
+      if (next && !(lookFurther && this.isUnreachable(next))) return next
+      if (next && lookFurther) {
+        // Not even tried: its server just failed another track. Say why the wait is a search.
+        a.missed ??= { provider: next.provider, format: next.format, noAnswer: true }
+        if (this.waitOf(a)?.lookingElsewhere(missReason(a.missed))) this.changed()
       }
-      a.srcIdx = Math.min(a.srcIdx, a.sources.length) - 1
+      if (!a.remoteResolved || lookFurther) {
+        const first = !a.remoteResolved
+        if (first) a.remoteResolved = true
+        else a.searched = true
+        try {
+          // Ones on a server that isn't answering stay out of this answer (they're still tried last).
+          const left = a.sources.slice(a.srcIdx)
+          const more = await this.resolveRemote(a.trackId, first ? [] : left.map((s) => sourceKey(s.source)))
+          const have = new Set(a.sources.map((s) => sourceKey(s.source)))
+          const fresh = more.filter((s) => !have.has(sourceKey(s.source)))
+          // Servers that just failed another track's file go after everything else.
+          fresh.sort((x, y) => Number(this.isUnreachable(x)) - Number(this.isUnreachable(y)))
+          a.sources.splice(a.srcIdx, 0, ...fresh)
+        } catch (e) {
+          a.lastError = (e as Error)?.message ?? String(e)
+        }
+        a.srcIdx--
+        continue
+      }
+      return next ?? null
     }
   }
 
@@ -600,6 +666,17 @@ export class Player implements PlayerAPI {
     a.lastError = message
     if (!src) return
     const key = sourceKey(src.source)
+    a.missed ??= { provider: src.provider, format: src.format, noAnswer: NO_ANSWER.test(message) }
+    const folder = NO_ANSWER.test(message) ? Player.folderOf(src) : null
+    if (folder) {
+      this.unreachable.set(folder, this.now() + UNREACHABLE_MS)
+      if (this.unreachable.size > 200) this.unreachable.delete(this.unreachable.keys().next().value!)
+      // The preloaded next track waits on the same server (the album's next file): drop it, so the
+      // next preload looks for it elsewhere while this one plays, not when it's due.
+      const pre = this.pre
+      const armed = pre && pre !== a ? pre.sources[pre.srcIdx] : undefined
+      if (armed && Player.folderOf(armed) === folder) this.clearPreload()
+    }
     // A remote URL refused with 401/403/410 has usually just gone stale (expired, or bound to an IP
     // this machine no longer has): drop it from this attempt and re-resolve once, which fetches a
     // fresh URL under the same key, before treating the source as broken.
@@ -623,15 +700,32 @@ export class Player implements PlayerAPI {
     }
   }
 
-  private setSourceSummary(uid: string, src: ResolvedSource): void {
+  private setSourceSummary(uid: string, src: ResolvedSource, missed?: SourceMiss): void {
     const i = this.s.queue.findIndex((q) => q.uid === uid)
     if (i < 0) return
     const q = this.s.queue[i]
+    const summary = summaryOf(src, missed)
     // Unchanged (a replay, a fallback to an equivalent source): keep the queue's identity, so the
     // (possibly long) queue isn't re-sent to the renderer.
-    if (sameSummary(q.track.source, src)) return
+    if (sameSummary(q.track.source, summary)) return
     this.s.queue = this.s.queue.slice()
-    this.s.queue[i] = { ...q, track: { ...q.track, source: summaryOf(src) } }
+    this.s.queue[i] = { ...q, track: { ...q.track, source: summary } }
+  }
+
+  /** The visible wait of an attempt (the current track's or the preview's; a preload has none). */
+  private waitOf(a: Attempt): WaitTracker | null {
+    return a === this.cur ? this.curWait : a === this.pv ? this.pvWait : null
+  }
+
+  /**
+   * Say so when a track plays from a backup because its own source failed: once per queue item, on
+   * one card per failed source (an album whose server is down updates that card track by track).
+   */
+  private noticeBackup(a: Attempt, src: ResolvedSource): void {
+    if (!isBackup(a.missed, src) || this.backupNoticed.has(a.id)) return
+    if (this.backupNoticed.size > 500) this.backupNoticed.clear()
+    this.backupNoticed.add(a.id)
+    this.notify('info', `“${a.track.title}” is playing from a backup`, backupReason(a.missed, src), a.track.cover, undefined, `player-backup-${a.missed.provider}`)
   }
 
   // ===========================================================================
@@ -697,6 +791,7 @@ export class Player implements PlayerAPI {
       sources: reuse ? reuse.sources : [],
       srcIdx: reuse ? Math.max(-1, reuse.srcIdx - 1) : -1,
       remoteResolved: reuse ? reuse.remoteResolved : false,
+      missed: reuse?.missed,
       lastError: null,
       seq,
       autoplay,
@@ -741,7 +836,8 @@ export class Player implements PlayerAPI {
       this.seekHold = null
       this.engineState = 'loading'
       this.uidTrack.set(cur.id, cur.trackId)
-      this.setSourceSummary(cur.id, src)
+      this.setSourceSummary(cur.id, src, cur.missed)
+      this.noticeBackup(cur, src)
       this.curWait?.opened(src.provider)
       this.syncWaitPoll()
       if (!cur.autoplay) this.setStatus('paused')
@@ -1025,6 +1121,7 @@ export class Player implements PlayerAPI {
       sources: pre?.sources ?? [],
       srcIdx: pre?.srcIdx ?? -1,
       remoteResolved: pre?.remoteResolved ?? false,
+      missed: pre?.missed,
       lastError: null,
       seq: this.loadSeq,
       autoplay: true,
@@ -1033,7 +1130,10 @@ export class Player implements PlayerAPI {
     }
     if (pre) {
       const src = pre.sources[pre.srcIdx]
-      if (src) this.setSourceSummary(id, src)
+      if (src) {
+        this.setSourceSummary(id, src, pre.missed)
+        this.noticeBackup(this.cur, src)
+      }
     }
     this.uidTrack.set(id, item.track.id)
     this.curWait = WaitTracker.playing(`${id}:${this.loadSeq}`, this.typical, this.now)
@@ -1095,7 +1195,7 @@ export class Player implements PlayerAPI {
       cur.loaded = false
       // Same queue position; superseded if the user loads something else meanwhile.
       cur.autoplay = cur.autoplay && this.s.status !== 'paused'
-      ;(this.curWait ??= new WaitTracker(`${cur.id}:${cur.seq}`, this.typical, this.now)).fallback()
+      ;(this.curWait ??= new WaitTracker(`${cur.id}:${cur.seq}`, this.typical, this.now)).fallback(cur.missed && missReason(cur.missed))
       this.setStatus('loading')
       this.changed()
       void this.track(this.startSource(cur))
@@ -1180,7 +1280,7 @@ export class Player implements PlayerAPI {
     const live = this.s.status === 'playing' ? this.s.positionMs + Math.max(0, this.now() - this.s.positionAt) : this.s.positionMs
     return {
       v: 1,
-      queue: this.s.queue.map((q) => ({ uid: q.uid, trackId: q.track.id })),
+      queue: this.sessionQueue(),
       originalOrder: this.originalOrder ? [...this.originalOrder] : null,
       queueIndex: this.s.queueIndex,
       positionMs: Math.round(live),
@@ -1191,6 +1291,12 @@ export class Player implements PlayerAPI {
       context: this.s.context,
       savedAt: this.now()
     }
+  }
+
+  /** Same array while the queue is: the session store reuses its JSON (see FileSessionStore). */
+  private sessionQueue(): SessionData['queue'] {
+    if (this.savedQueue?.of !== this.s.queue) this.savedQueue = { of: this.s.queue, items: this.s.queue.map((q) => ({ uid: q.uid, trackId: q.track.id })) }
+    return this.savedQueue.items
   }
 
   private scheduleSave(): void {
@@ -1237,7 +1343,10 @@ export class Player implements PlayerAPI {
     }
     const uids = new Set(queue.map((q) => q.uid))
     this.originalOrder = data.shuffle !== 'off' ? (data.originalOrder ?? queue.map((q) => q.uid)).filter((u) => uids.has(u)) : null
-    if (this.originalOrder) for (const q of queue) if (!this.originalOrder.includes(q.uid)) this.originalOrder.push(q.uid)
+    if (this.originalOrder) {
+      const known = new Set(this.originalOrder)
+      for (const q of queue) if (!known.has(q.uid)) this.originalOrder.push(q.uid)
+    }
     this.s.queue = queue
     this.s.queueIndex = idx
     this.s.context = data.context
@@ -1261,13 +1370,15 @@ export class Player implements PlayerAPI {
   refreshTracks(trackIds: ID[]): void {
     const ids = new Set(trackIds)
     let touched = false
-    this.s.queue = this.s.queue.map((q) => {
+    // A new queue array is a full queue resend to the window: only when an item changed.
+    const queue = this.s.queue.map((q) => {
       if (!ids.has(q.track.id)) return q
       const t = this.library.decorateOne(q.track)
       if (t === q.track) return q
       touched = true
       return { ...q, track: t }
     })
+    if (touched) this.s.queue = queue
     if (this.s.preview && ids.has(this.s.preview.track.id)) {
       const t = this.library.decorateOne(this.s.preview.track)
       if (t !== this.s.preview.track) {
@@ -1779,7 +1890,7 @@ export class Player implements PlayerAPI {
 
   private async startPreviewSource(pv: Preview): Promise<boolean> {
     for (;;) {
-      const src = await this.nextSource(pv)
+      const src = await this.nextSource(pv, false) // a preview never waits on a fallback search
       // A newer preview() call (still fetching its track, so not yet in this.pv) supersedes this one.
       if (pv !== this.pv || pv.seq !== this.pvSeq) return false
       if (!src) {
@@ -1891,6 +2002,10 @@ export class Player implements PlayerAPI {
     this.engineMask = m
     this.safe(() => this.engine.setVoiceMask?.(m))
     this.changed()
+  }
+
+  async setAnalysisDemand(on: boolean): Promise<void> {
+    this.safe(() => this.engine.setAnalysisDemand?.(!!on))
   }
 
   async devices(): Promise<AudioDevice[]> {

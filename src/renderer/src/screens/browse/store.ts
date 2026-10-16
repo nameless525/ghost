@@ -108,20 +108,7 @@ export const SORT_LABELS: Record<SortBy, string> = {
   random: 'Random'
 }
 
-export const PROVIDER_NAMES: Record<string, string> = {
-  khinsider: 'KHInsider',
-  youtube: 'YouTube',
-  yt: 'YouTube',
-  archive: 'Internet Archive',
-  bandcamp: 'Bandcamp',
-  local: 'Local files',
-  chip: 'Chiptune engine',
-  zophar: 'Zophar’s Domain',
-  modland: 'Modland',
-  soundcloud: 'SoundCloud'
-}
-
-export const providerName = (p: string | null | undefined): string => (p ? (PROVIDER_NAMES[p] ?? p.charAt(0).toUpperCase() + p.slice(1)) : 'Unknown')
+export { PROVIDER_NAMES, providerName } from '@shared/providers'
 
 /** A web-search friendly version of a catalog query: free text (as typed) plus name-like filter values. */
 export function naturalQuery(text: string): string {

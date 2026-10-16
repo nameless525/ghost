@@ -16,6 +16,8 @@ export const CATALOG_SCHEMA_VERSION = 2
 export const FTS_VERSION = 2
 /** Version of the album → game clustering rules (normalize.ts). A change re-clusters on next start. */
 export const CLUSTER_VERSION = 2
+/** catalog_meta key: a crawl ended with its full re-cluster left to a later one (see Crawler). */
+export const RECLUSTER_PENDING = 'recluster_pending'
 
 /** Sentinels used by sort columns for unknown values (sort last in ascending order). */
 export const UNKNOWN_YEAR = 9999

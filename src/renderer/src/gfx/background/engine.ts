@@ -9,7 +9,7 @@
 // renders at CSS-pixel resolution (BG_RES) and the compositor scales it up: on a 2× display
 // that is a quarter of the fill, with no visible difference. Grain and vignette are sharp CSS
 // layers on top.
-import { autoDetectRenderer, Container, Sprite, type Renderer } from 'pixi.js'
+import { Container, Sprite, type Renderer } from 'pixi.js'
 import { beat } from '../../motion/beat'
 import { damp } from '../../motion/easing'
 import { levels, retainLevels } from '../../motion/frame'
@@ -17,6 +17,7 @@ import { motionPrefs } from '../../motion/prefs'
 import { ticker, TickPriority } from '../../motion/ticker'
 import { accentNow } from '../../theme/accent'
 import { mixNumber } from '../../theme/color'
+import { createGlRenderer } from '../glRenderer'
 import { adoptPixiTicker } from '../pixiTicker'
 import { ArtLayer } from './artLayer'
 import { GradientField } from './gradient'
@@ -56,8 +57,7 @@ export class BackgroundEngine {
 
   private async init(): Promise<void> {
     this.res = this.resolutionFor(this.quality)
-    const r = await autoDetectRenderer({
-      preference: 'webgl',
+    const r = await createGlRenderer({
       width: window.innerWidth,
       height: window.innerHeight,
       resolution: this.res,

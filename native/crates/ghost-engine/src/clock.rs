@@ -7,7 +7,7 @@
 //! covering "now" or a given device frame. Writes are wait-free (per-slot seqlocks over atomics),
 //! so the RT thread never blocks.
 
-use std::sync::atomic::{fence, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU64, Ordering};
 
 const SLOTS: usize = 1024;
 
@@ -74,6 +74,9 @@ pub struct Clock {
     pub latency_us: AtomicU64,
     /// Device frames rendered so far.
     pub rendered: AtomicU64,
+    /// Someone shows the live analysis (the window is visible). While false the mixer stops
+    /// feeding the analysis thread, which then idles, and so does the publisher behind it.
+    pub analysis_wanted: AtomicBool,
 }
 
 impl Default for Clock {
@@ -89,6 +92,7 @@ impl Clock {
             write_idx: AtomicU64::new(0),
             latency_us: AtomicU64::new(0),
             rendered: AtomicU64::new(0),
+            analysis_wanted: AtomicBool::new(true),
         }
     }
 

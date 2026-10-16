@@ -240,6 +240,110 @@
   -webkit-app-region: no-drag;
 }
 
+/* GHOST's own update (UpdatePill): downloading, ready to restart into, or waiting for the user */
+.g-tb-update {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  margin: 0 4px;
+  padding: 0 12px 0 8px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: inset 0 0 0 1px var(--line-1);
+  color: var(--fg-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-hover) var(--ease-out-quint),
+    box-shadow var(--dur-hover) var(--ease-out-quint),
+    color var(--dur-hover) var(--ease-out-quint),
+    transform 200ms var(--ease-out-quint);
+  animation: g-tb-update-in 520ms var(--ease-out-back) backwards;
+}
+.g-tb-update:hover {
+  background: rgb(255 255 255 / 0.09);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--fg-0);
+}
+.g-tb-update:active:not(:disabled) {
+  transform: scale(0.95);
+}
+.g-tb-update:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgb(var(--accent-rgb) / 0.85);
+}
+.g-tb-update__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--accent-hi);
+}
+.g-tb-update__icon > svg {
+  width: 16px;
+  height: 16px;
+}
+.g-tb-update__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.g-tb-update--available {
+  background: rgb(var(--accent-rgb) / 0.12);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.35);
+}
+.g-tb-update--available:hover {
+  background: rgb(var(--accent-rgb) / 0.2);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.6);
+}
+.g-tb-update--error .g-tb-update__icon {
+  color: var(--warning);
+}
+.g-tb-update--ready {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow:
+    0 0 16px rgb(var(--accent-rgb) / 0.42),
+    inset 0 1px 0 rgb(255 255 255 / 0.22);
+}
+.g-tb-update--ready:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow:
+    0 0 24px rgb(var(--accent-rgb) / 0.65),
+    0 0 0 1px rgb(var(--accent-rgb) / 0.7),
+    inset 0 1px 0 rgb(255 255 255 / 0.3);
+}
+.g-tb-update--ready .g-tb-update__icon {
+  color: inherit;
+}
+.g-tb-update--ready:hover .g-tb-update__icon > svg {
+  transform: rotate(90deg);
+}
+.g-tb-update--ready .g-tb-update__icon > svg {
+  transition: transform 600ms var(--ease-out-quint);
+}
+.g-tb-update--ready:focus-visible {
+  box-shadow:
+    0 0 16px rgb(var(--accent-rgb) / 0.42),
+    0 0 0 2px var(--fg-0);
+}
+.g-tb-update__ver {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: rgb(0 0 0 / 0.2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+@keyframes g-tb-update-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
 /* now playing chip */
 .g-np-chip {
   position: relative;
@@ -868,4 +972,99 @@
     min-height: 24px;
     padding-block: 1px;
   }
+}
+
+/* ---- Update prompt and What's new (UpdateDialogs.tsx) ---- */
+.g-upd {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+}
+.g-upd__sub {
+  margin-top: 3px;
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: 1.4;
+}
+.g-upd__well {
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.16);
+  box-shadow: inset 0 0 0 1px var(--line-1);
+  overflow: hidden;
+}
+.g-upd__notes {
+  max-height: 50vh;
+  padding: 14px 16px 12px;
+}
+.g-upd__notes:focus-visible {
+  outline: none;
+}
+.g-upd__well:has(.g-upd__notes:focus-visible) {
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.55);
+}
+.g-upd__section + .g-upd__section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-1);
+}
+.g-upd__ver {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+  color: var(--accent-hi);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+.g-upd__date {
+  color: var(--fg-3);
+  font-weight: var(--fw-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.g-upd__empty {
+  color: var(--fg-3);
+}
+.g-upd__note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgb(var(--info-rgb) / 0.1);
+  box-shadow: inset 0 0 0 1px rgb(var(--info-rgb) / 0.25);
+  color: var(--fg-1);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.g-upd__note > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--info);
+}
+.g-upd__note--error {
+  background: rgb(var(--danger-rgb) / 0.1);
+  box-shadow: inset 0 0 0 1px rgb(var(--danger-rgb) / 0.3);
+}
+.g-upd__note--error > svg {
+  color: var(--danger);
+}
+.g-upd__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.g-upd__after {
+  color: var(--fg-3);
+  font-size: var(--fs-sm);
+}
+/* the release page sits on the left, away from the choice */
+.g-upd__page {
+  margin-right: auto;
 }

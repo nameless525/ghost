@@ -1,15 +1,16 @@
-// The osu!-like top bar. Left: GHOST mark (home), Browse, Library. Right: downloads ring,
-// notifications, a mini now-playing chip, clock, settings. Translucent with blur; the whole
+// The osu!-like top bar. Left: GHOST mark (home), Browse, Library. Right: GHOST's own update (when
+// there is one), downloads ring, notifications, a mini now-playing chip, clock, settings. Translucent with blur; the whole
 // bar is a window drag region (controls are no-drag). Leaves room for the macOS traffic
 // lights (left) and the Windows titleBarOverlay controls (right, via env(titlebar-area-*)).
 // On the Play screen it hides itself until the pointer nears the top edge.
-import { Bell, Compass, Download, LibraryBig, Music2, Pause, Play, Settings } from 'lucide-react'
+import { ArrowDown, Bell, CircleFadingArrowUp, Compass, Download, LibraryBig, Music2, Pause, Play, RotateCw, Settings, TriangleAlert } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { DownloadItem, Progress } from '@shared/types'
 import { ghost } from '../ghost'
 import { Spring } from '../motion/spring'
 import { useTicker } from '../motion/ticker'
 import { livePositionMs, usePlayer } from '../state/player'
+import { installUpdate, openUpdatePrompt, updateFraction, useUpdates, useUpdateUI } from '../state/updates'
 import { useUI, type OverlayId } from '../state/ui'
 import { sfx } from '../sound'
 import { CoverArt } from '../ui/CoverArt'
@@ -116,6 +117,83 @@ function NotificationsButton() {
     >
       {unread > 0 && <span className="g-tb-badge">{unread > 9 ? '9+' : unread}</span>}
     </ToolbarButton>
+  )
+}
+
+/**
+ * GHOST's own update, while there's something to say about it: downloading ("Updating to 0.4.1"),
+ * downloaded ("Restart to update"), or waiting for the user ("Update to 0.4.1", until they say
+ * Not now). Hidden otherwise. Always names the version.
+ */
+function UpdatePill() {
+  const status = useUpdates((s) => s.status)
+  const version = useUpdates((s) => s.latest?.version ?? null)
+  const dismissed = useUpdates((s) => s.dismissed)
+  const canInstall = useUpdates((s) => s.canInstall)
+  const error = useUpdates((s) => s.error)
+  const fraction = useUpdates(updateFraction)
+  const restarting = useUpdateUI((s) => s.restarting)
+  if (!version) return null
+  const pct = fraction != null ? Math.round(fraction * 100) : null
+
+  let kind: 'downloading' | 'ready' | 'available' | 'error'
+  let icon: ReactNode
+  let label: ReactNode
+  let tip: string
+  if (status === 'downloading') {
+    kind = 'downloading'
+    icon = (
+      <ProgressRing value={fraction} size={20} thickness={2}>
+        <ArrowDown style={{ width: 10, height: 10 }} />
+      </ProgressRing>
+    )
+    label = `Updating to ${version}`
+    tip = `Downloading GHOST ${version}${pct != null ? ` · ${pct}%` : ''}: ${restarting ? 'GHOST restarts into it when it’s done' : 'it installs when you quit GHOST'}`
+  } else if (status === 'ready') {
+    kind = 'ready'
+    icon = restarting ? <ProgressRing value={null} size={16} thickness={2} /> : <RotateCw />
+    label = (
+      <>
+        Restart to update<span className="g-tb-update__ver tnum">{version}</span>
+      </>
+    )
+    tip = `GHOST ${version} is downloaded: restart to install it now (it also installs when you quit)`
+  } else if ((status === 'available' || status === 'error') && !dismissed) {
+    kind = status
+    icon = status === 'error' ? <TriangleAlert /> : <CircleFadingArrowUp />
+    label = `Update to ${version}`
+    tip =
+      status === 'error'
+        ? `Could not update to GHOST ${version}${error ? `: ${error}` : ''}`
+        : `GHOST ${version} is available: see what’s new and ${canInstall ? 'update' : 'download it'}`
+  } else {
+    return null
+  }
+
+  return (
+    <Tooltip content={tip}>
+      <button
+        type="button"
+        className={cx('g-tb-update', `g-tb-update--${kind}`)}
+        aria-label={tip}
+        aria-busy={kind === 'downloading' || restarting || undefined}
+        disabled={kind === 'ready' && restarting}
+        onPointerEnter={() => sfx.play('hover')}
+        onClick={() => {
+          if (kind === 'ready' && usePlayer.getState().status !== 'playing') {
+            sfx.play('confirm', { volume: 0.7 })
+            installUpdate()
+          } else {
+            // (with music playing, the prompt asks before a restart cuts it off)
+            sfx.play('select', { volume: 0.7 })
+            openUpdatePrompt()
+          }
+        }}
+      >
+        <span className="g-tb-update__icon">{icon}</span>
+        <span className="g-tb-update__label">{label}</span>
+      </button>
+    </Tooltip>
   )
 }
 
@@ -313,6 +391,7 @@ export function Toolbar() {
       </nav>
       <div className="g-toolbar__spacer" />
       <div className="g-toolbar__right">
+        <UpdatePill />
         <DownloadsButton />
         <NotificationsButton />
         <NowPlayingChip />

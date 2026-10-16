@@ -34,7 +34,7 @@ pub use ghost_formats::Family;
 use ghost_formats::vgmstream::{ByteSource, FileOpener, FsOpener, MemoryOpener, ReadSeekSource, VgmstreamSource};
 use ghost_formats::OpenOptions;
 
-use crate::cache::CacheManager;
+use crate::cache::{CacheManager, CacheReader};
 use crate::{ArchiveEntryInfo, ArchiveListing, SourceSpec};
 
 /// Whole-file reads for in-memory decoders (chip / tracker files are tiny; this guards against a
@@ -50,6 +50,17 @@ pub struct OpenCtx<'a> {
     pub cancel: Arc<AtomicBool>,
     /// Prefer sample-accurate seeking even if it means reading from the start of the stream.
     pub accurate_seek: bool,
+    /// Read HTTP sources through background cache readers (never ahead of playback's fetches).
+    pub background: bool,
+}
+
+impl OpenCtx<'_> {
+    /// A cache reader over the HTTP source `spec`, with this context's cancel flag and priority.
+    pub fn reader(&self, spec: &SourceSpec) -> Result<CacheReader, SourceError> {
+        let cancel = Some(self.cancel.clone());
+        let r = if self.background { self.cache.open_background_reader(spec, cancel) } else { self.cache.open_reader(spec, cancel) };
+        r.map_err(|e| SourceError::new(e.to_string()))
+    }
 }
 
 /// An opened source and the `ghost-formats` family that decodes it (`None` = symphonia).
@@ -69,7 +80,7 @@ pub fn open_detailed(spec: &SourceSpec, ctx: &OpenCtx<'_>) -> Result<Opened, Sou
         return open_unclipped(spec, ctx);
     }
     // Clips start with a seek that must land exactly (consecutive clips join gaplessly).
-    let accurate = OpenCtx { cache: ctx.cache, cancel: ctx.cancel.clone(), accurate_seek: true };
+    let accurate = OpenCtx { accurate_seek: true, cancel: ctx.cancel.clone(), ..*ctx };
     let o = open_unclipped(spec, &accurate)?;
     let clipped = clip::ClipStage::new(o.source, ex.clip_start_ms.unwrap_or(0), ex.clip_end_ms)?;
     Ok(Opened { source: Box::new(clipped), family: o.family })
@@ -148,7 +159,7 @@ fn peek(spec: &SourceSpec, ctx: &OpenCtx<'_>) -> Result<(Vec<u8>, Option<u64>), 
             Ok((head, size))
         }
         SourceSpec::Http { .. } => {
-            let mut r = ctx.cache.open_reader(&spec.base(), Some(ctx.cancel.clone())).map_err(|e| SourceError::new(e.to_string()))?;
+            let mut r = ctx.reader(&spec.base())?;
             r.wait_header().map_err(|e| SourceError::new(e.to_string()))?;
             let size = r.total_len();
             let mut head = Vec::with_capacity(PEEK);
@@ -185,7 +196,7 @@ pub(crate) fn read_all_with(spec: &SourceSpec, ctx: &OpenCtx<'_>, max: u64, mut 
             std::fs::read(path).map_err(|e| SourceError::new(format!("read {}: {e}", path.display())))
         }
         SourceSpec::Http { .. } => {
-            let mut r = ctx.cache.open_reader(&spec.base(), Some(ctx.cancel.clone())).map_err(|e| SourceError::new(e.to_string()))?;
+            let mut r = ctx.reader(&spec.base())?;
             r.wait_header().map_err(|e| SourceError::new(e.to_string()))?;
             if r.total_len().is_some_and(|t| t > max) {
                 return Err(too_big());
@@ -280,6 +291,7 @@ struct CacheOpener {
     spec: SourceSpec,
     name: String,
     cancel: Arc<AtomicBool>,
+    background: bool,
 }
 
 impl FileOpener for CacheOpener {
@@ -287,7 +299,8 @@ impl FileOpener for CacheOpener {
         if !ghost_formats::file_name_of(name).eq_ignore_ascii_case(ghost_formats::file_name_of(&self.name)) {
             return None;
         }
-        let r = self.cache.open_reader(&self.spec, Some(self.cancel.clone())).ok()?;
+        let ctx = OpenCtx { cache: &self.cache, cancel: self.cancel.clone(), accurate_seek: false, background: self.background };
+        let r = ctx.reader(&self.spec).ok()?;
         r.wait_header().ok()?;
         let size = r.total_len();
         Some(Box::new(ReadSeekSource::new(r, size).ok()?))
@@ -307,7 +320,7 @@ fn open_vgmstream(spec: &SourceSpec, ctx: &OpenCtx<'_>, name: &str, ext: Option<
                 Some(e) if ghost_formats::extension_of(name).as_deref() != Some(e) => format!("{name}.{e}"),
                 _ => name.to_string(),
             };
-            let opener = Arc::new(CacheOpener { cache: ctx.cache.clone(), spec: spec.base(), name: name.clone(), cancel: ctx.cancel.clone() });
+            let opener = Arc::new(CacheOpener { cache: ctx.cache.clone(), spec: spec.base(), name: name.clone(), cancel: ctx.cancel.clone(), background: ctx.background });
             VgmstreamSource::open(&name, opener, opts)
         }
     }
@@ -341,7 +354,7 @@ fn open_archive_entry(spec: &SourceSpec, entry: &str, ctx: &OpenCtx<'_>, mut opt
 
 /// List an archive source and return its playlists' text (see `Engine::inspect_archive`).
 pub fn inspect_archive(spec: &SourceSpec, cache: &Arc<CacheManager>) -> Result<ArchiveListing, SourceError> {
-    let ctx = OpenCtx { cache, cancel: Arc::new(AtomicBool::new(false)), accurate_seek: false };
+    let ctx = OpenCtx { cache, cancel: Arc::new(AtomicBool::new(false)), accurate_seek: false, background: false };
     let base = spec.base();
     let set = archive_cache::get(&base, &ctx)?;
     Ok(ArchiveListing {

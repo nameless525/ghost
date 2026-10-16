@@ -142,7 +142,7 @@ mod tests {
         // Decode with symphonia and compare.
         let spec = crate::SourceSpec::file(&path);
         let cache = crate::cache::CacheManager::new(dir.join("c"), 1 << 30, "t").unwrap();
-        let ctx = crate::source::OpenCtx { cache: &cache, cancel: Default::default(), accurate_seek: true };
+        let ctx = crate::source::OpenCtx { cache: &cache, cancel: Default::default(), accurate_seek: true, background: false };
         let mut src = crate::source::open(&spec, &ctx).unwrap();
         assert_eq!(src.duration(), Some(frames as u64));
         let mut out = vec![0.0f32; sig.len() + 100];

@@ -93,6 +93,16 @@ export interface SourceSummary {
   bitrateKbps: number | null
   /** 0..1 match confidence against the canonical track. */
   confidence: number
+  /** A backup: this plays because the source GHOST meant to use failed (which one, and how). */
+  backupFor?: SourceMiss | null
+}
+
+/** A source GHOST meant to play a track from and gave up on. */
+export interface SourceMiss {
+  provider: string
+  format: AudioFormat
+  /** It never answered (a stall, a timeout) rather than refusing or sending something unplayable. */
+  noAnswer: boolean
 }
 
 /** A track joined with everything the UI needs to render it. */
@@ -479,9 +489,66 @@ export interface Settings {
     igdbClientSecret: string
     steamGridDbKey: string
   }
+  updates: {
+    /** Download new releases in the background and install them when GHOST quits (or restarts). Off: ask first. */
+    auto: boolean
+  }
 }
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? (T[K] extends unknown[] ? T[K] : DeepPartial<T[K]>) : T[K] }
+
+// ---------------------------------------------------------------------------
+// Updates
+
+/**
+ * What the updater is doing. `available`: a newer release was found and waits for the user (auto
+ * updates off, or this install can't update itself). `ready`: downloaded and prepared; it installs
+ * when GHOST quits, or at once on a restart.
+ */
+export type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
+
+export interface UpdateRelease {
+  /** "0.4.1" (no leading v). */
+  version: string
+  /** Release notes, Markdown (the release's changelog section). */
+  notes: string
+  /** The release page on GitHub. */
+  url: string
+  /** Epoch ms. */
+  publishedAt: number | null
+  /** Size of the installer this system would download, when known. */
+  sizeBytes: number | null
+}
+
+export interface UpdateState {
+  /** The running version. */
+  current: string
+  status: UpdateStatus
+  /** The newest release, once a check found one newer than `current`. */
+  latest: UpdateRelease | null
+  /** While downloading. */
+  progress: { bytes: number; totalBytes: number | null } | null
+  /** Why the last check, download or install failed. */
+  error: string | null
+  /** Epoch ms of the last successful check. */
+  lastCheckedAt: number | null
+  /** This installation can update itself. Otherwise GHOST says a release is out and links to it. */
+  canInstall: boolean
+  /** Why it can't, for Settings ("Installed from a .deb package: update it the way you installed it."). */
+  manualReason: string | null
+  /** The user said "Not now" to `latest`: no prompt for that version again. */
+  dismissed: boolean
+}
+
+/** Release notes shown once after an update. */
+export interface WhatsNew {
+  /** The version now running. */
+  version: string
+  /** The version updated from, when known. */
+  from: string | null
+  /** Each version's changelog section since `from`, newest first. */
+  sections: { version: string; date: string | null; notes: string }[]
+}
 
 // ---------------------------------------------------------------------------
 // Notifications

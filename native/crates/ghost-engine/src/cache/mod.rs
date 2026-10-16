@@ -4,7 +4,8 @@
 //! chunk) plus a `.meta` sidecar holding the total size, content type and a bitmap of the 256 KB
 //! chunks that are present. A fetcher thread per open entry fills it with bounded HTTP Range
 //! requests: chunks a blocked reader is waiting for first, then ~30 s ahead of the read position,
-//! then the rest of the file (forward from the read position, then from the start). Servers that
+//! then chunks a blocked background reader (a loudness measurement) waits for, then the rest of
+//! the file (forward from the read position, then from the start). Servers that
 //! ignore Range are filled linearly. Decoders read through [`CacheReader`], an ordinary blocking
 //! `Read + Seek`; bytes of the chunk being downloaded are readable as soon as they are on disk,
 //! so playback starts after the first few KB rather than the first whole chunk.
@@ -105,6 +106,9 @@ pub(crate) struct State {
     pub range_ok: Option<bool>,
     /// Chunks blocked readers are waiting for (most urgent first).
     pub demand: Vec<u64>,
+    /// Chunks blocked background readers are waiting for: fetched after the read-ahead window,
+    /// and never a reason to drop a response (see `CacheManager::open_background_reader`).
+    pub bg_demand: Vec<u64>,
     /// The chunk being downloaded right now and how many of its leading bytes are on disk
     /// (readable before the chunk is complete).
     pub partial: Option<(u64, u64)>,
@@ -283,6 +287,7 @@ impl CacheManager {
             complete: false,
             range_ok: None,
             demand: Vec::new(),
+            bg_demand: Vec::new(),
             partial: None,
             waiting: 0,
             wait_since: None,
@@ -334,7 +339,15 @@ impl CacheManager {
     /// Blocking reader over an HTTP source (shares the entry with other readers).
     pub fn open_reader(self: &Arc<Self>, spec: &SourceSpec, cancel: Option<Arc<AtomicBool>>) -> Result<CacheReader, CacheError> {
         let entry = self.entry(spec)?;
-        Ok(CacheReader::new(entry, self.clone(), cancel))
+        Ok(CacheReader::new(entry, self.clone(), cancel, false))
+    }
+
+    /// A reader that never competes with playback: it doesn't move the read-ahead window, and
+    /// what it waits for is fetched only once that window is in. For work that reads ahead of
+    /// the listener (measuring a chapter of a long video while it plays).
+    pub fn open_background_reader(self: &Arc<Self>, spec: &SourceSpec, cancel: Option<Arc<AtomicBool>>) -> Result<CacheReader, CacheError> {
+        let entry = self.entry(spec)?;
+        Ok(CacheReader::new(entry, self.clone(), cancel, true))
     }
 
     /// Progress of the entry under `cache_key` while it is open (being read or filled, or held
@@ -520,6 +533,7 @@ impl Entry {
             st.meta_dirty = true;
         }
         st.demand.retain(|&d| d != c);
+        st.bg_demand.retain(|&d| d != c);
         if !st.complete && st.all_present() {
             st.complete = true;
             st.meta_dirty = true;

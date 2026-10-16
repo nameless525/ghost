@@ -34,6 +34,7 @@ export function sanitizeSettings(s: Settings, defaults: Settings): Settings {
   if (typeof s.library.namingTemplate !== 'string' || !s.library.namingTemplate.trim()) out.library.namingTemplate = defaults.library.namingTemplate
   out.interface.uiScale = clamp(s.interface.uiScale, 0.5, 2, defaults.interface.uiScale)
   out.interface.backgroundDim = clamp(s.interface.backgroundDim, 0, 1, defaults.interface.backgroundDim)
+  if (typeof s.updates?.auto !== 'boolean') out.updates = { ...defaults.updates }
   return out
 }
 

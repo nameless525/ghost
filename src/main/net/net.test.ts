@@ -37,6 +37,19 @@ describe('HostLimiter', () => {
     expect(order).toEqual(['interactive', 'background'])
   })
 
+  it('runs interactive jobs newest first, the rest in order', async () => {
+    // Scrolling past albums A, B, C and stopping on D: D is fetched next, then the others.
+    const l = new HostLimiter({ concurrency: 1, spacingMs: 0 })
+    const order: string[] = []
+    const blocker = l.schedule(() => sleep(30))
+    const jobs = [
+      ...['bg1', 'bg2'].map((n) => l.schedule(async () => void order.push(n), 2)),
+      ...['A', 'B', 'C', 'D'].map((n) => l.schedule(async () => void order.push(n), 0))
+    ]
+    await Promise.all([blocker, ...jobs])
+    expect(order).toEqual(['D', 'C', 'B', 'A', 'bg1', 'bg2'])
+  })
+
   it('promotes a queued job', async () => {
     const l = new HostLimiter({ concurrency: 1, spacingMs: 0 })
     const order: string[] = []

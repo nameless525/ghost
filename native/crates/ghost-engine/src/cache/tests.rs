@@ -215,6 +215,31 @@ fn missing_chunk_is_prioritised() {
 }
 
 #[test]
+fn background_reader_waits_behind_the_read_ahead() {
+    // 8 MB at ~8 MB/s. Playback reads at the start; a background reader (a loudness measurement)
+    // wants bytes far ahead. Playback's read-ahead window comes first, and the background reader
+    // doesn't move it.
+    let data = test_data(8 * 1024 * 1024, 4);
+    let srv = serve(data.clone(), ServerOpts { per_16k_delay: Duration::from_millis(2), ..Default::default() });
+    let mgr = CacheManager::new_for_test(tmp_dir("bg"), 1 << 30, Duration::from_secs(8));
+    let key = "bg";
+    let mut fg = mgr.open_reader(&spec(&srv.url, key), None).unwrap();
+    let mut buf = vec![0u8; 4096];
+    fg.read_exact(&mut buf).unwrap();
+    let mut bg = mgr.open_background_reader(&spec(&srv.url, key), None).unwrap();
+    let pos = 6 * 1024 * 1024;
+    bg.seek(SeekFrom::Start(pos)).unwrap();
+    bg.read_exact(&mut buf).unwrap();
+    assert_eq!(&buf[..], &data[pos as usize..pos as usize + 4096]);
+    let entry = fg.entry().clone();
+    let st = entry.state.lock();
+    let window = PREFETCH_BYTES / CHUNK_SIZE;
+    assert!((0..window).all(|c| st.has(c)), "read-ahead window not fetched before the background read");
+    assert!(!st.complete, "should be served before a linear fill would get there");
+    assert_eq!(entry.read_hint.load(Ordering::Relaxed), 0, "a background read moved the read-ahead window");
+}
+
+#[test]
 fn background_fill_completes_and_emits_event() {
     let data = test_data(3 * 1024 * 1024 + 7, 3);
     let srv = serve(data.clone(), ServerOpts::default());

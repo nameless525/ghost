@@ -135,19 +135,20 @@ fn is_dead_status(msg: &str) -> bool {
     matches!(msg, "HTTP 401" | "HTTP 403" | "HTTP 404" | "HTTP 410")
 }
 
-/// Pick what to fetch next: demanded chunks, then the prefetch window, then the rest of the file
-/// (forward from the read position first: upcoming audio, e.g. the next chapters of a long
-/// video, before what was already played or skipped).
+/// Pick what to fetch next: demanded chunks, then the prefetch window, then what background
+/// readers wait for, then the rest of the file (forward from the read position first: upcoming
+/// audio, e.g. the next chapters of a long video, before what was already played or skipped).
 fn plan(st: &State, read_hint: u64) -> Option<Job> {
     let n_chunks = st.n_chunks();
     let in_range = |c: u64| n_chunks.is_none_or(|n| c < n);
     let h = read_hint / CHUNK_SIZE;
-    let demand = st.demand.iter().copied().find(|&d| !st.has(d) && in_range(d));
-    let (start, max) = match demand {
+    let wanted = |list: &[u64]| list.iter().copied().find(|&d| !st.has(d) && in_range(d));
+    let (start, max) = match wanted(&st.demand) {
         Some(d) => (d, DEMAND_RUN),
         None => {
             let s = st
                 .first_missing(h, h + PREFETCH_BYTES / CHUNK_SIZE + 1)
+                .or_else(|| wanted(&st.bg_demand))
                 .or_else(|| st.first_missing(h, u64::MAX))
                 .or_else(|| st.first_missing(0, h))?;
             (s, FILL_RUN)
@@ -247,6 +248,7 @@ fn fetch(entry: &Arc<Entry>, http: &crate::http::Http, mgr: &super::CacheManager
                 Some(t) => {
                     set_total(entry, &mut st, t);
                     st.demand.retain(|&d| d * CHUNK_SIZE < t);
+                    st.bg_demand.retain(|&d| d * CHUNK_SIZE < t);
                     let became = !st.complete && st.all_present();
                     if became {
                         st.complete = true;

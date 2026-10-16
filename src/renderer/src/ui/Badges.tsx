@@ -1,6 +1,7 @@
 import { Star } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { intensityColor } from '@shared/defaults'
+import { backupReason } from '@shared/providers'
 import type { AudioFormat, SourceSummary } from '@shared/types'
 import { cx } from './util'
 
@@ -67,6 +68,17 @@ export function SourceBadge({ source, className, title }: SourceBadgeProps) {
   return (
     <span className={cx('g-source', `g-source--${info.tone}`, className)} title={title ?? (provider ? `${info.label} · ${provider}` : info.label)}>
       {info.label}
+    </span>
+  )
+}
+
+/** "Backup" beside a source that plays in place of the one GHOST meant to use, which failed (why, on hover). */
+export function BackupBadge({ source, className }: { source: SourceSummary | null | undefined; className?: string }) {
+  const miss = source?.backupFor
+  if (!source || !miss) return null
+  return (
+    <span className={cx('g-source', 'g-source--backup', className)} title={backupReason(miss, source)}>
+      Backup
     </span>
   )
 }

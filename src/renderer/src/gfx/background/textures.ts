@@ -47,16 +47,3 @@ export function makeBlobTexture(size = 256): Texture {
   g.fillRect(0, 0, size, size)
   return Texture.from(c)
 }
-
-/** Tileable film grain (data URL) for the CSS dither layer; hides 8-bit banding in gradients. */
-export function makeGrainDataUrl(size = 160): string {
-  const [c, g] = canvas(size, size)
-  const img = g.createImageData(size, size)
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = Math.random() < 0.5 ? 0 : 255
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v
-    img.data[i + 3] = Math.floor(Math.random() * 28)
-  }
-  g.putImageData(img, 0, 0)
-  return c.toDataURL('image/png')
-}

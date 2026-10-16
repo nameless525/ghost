@@ -423,7 +423,9 @@ export class Carousel {
     if (g && !this.collapsed) {
       if (g.kind === 'album') {
         const albumId = g.key.slice(g.key.indexOf(':') + 1)
-        const d = this.model.detailFor(albumId)
+        // Loaded once the selection rests on it (Browse's wedge-detail effect), not for every
+        // album group an arrow key passes.
+        const d = this.model.peekDetail(albumId)
         if (d) {
           const multiDisc = d.tracks.some((t) => t.disc > 1)
           d.tracks.forEach((t, ti) => rows.push(reuse({ type: 'track', id: 'T' + t.id, gi: this.sel.gi, depth: 1, album: d.album, track: t, ti, parent: gid, born, h: TH, pitch: TP, multiDisc })))

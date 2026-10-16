@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 
@@ -40,8 +41,19 @@ impl JobPool {
 #[derive(Debug)]
 pub struct Loudness {
     pub id: String,
+    /// Integrated loudness of the track (None: it couldn't be measured), or, when `interim`, of
+    /// the part decoded so far (`secs` of audio) while the rest still downloads.
     pub lufs: Option<f32>,
+    pub interim: bool,
+    pub secs: f32,
+    /// The job was called off (its track was dropped) before it finished.
+    pub canceled: bool,
 }
+
+/// A measurement that waits on a download reports the loudness so far this often, once it has
+/// decoded `INTERIM_MIN_SECS` of audio. A local decode finishes before the first report.
+const INTERIM_EVERY: Duration = Duration::from_secs(1);
+const INTERIM_MIN_SECS: u64 = 5;
 
 fn cache_key_of(spec: &SourceSpec) -> Option<String> {
     match spec {
@@ -62,20 +74,37 @@ pub fn analyze_job(
     loops: (crate::LoopMode, u32, f32),
 ) {
     use ghost_analysis::offline::OfflineAnalyzer;
+    let mut reported = Instant::now();
+    let interim = |a: &mut OfflineAnalyzer, rate: u64| {
+        // Decoding as the stream arrives: the part heard so far already shows a loud track.
+        let Some(tx) = &loudness_tx else { return };
+        if reported.elapsed() < INTERIM_EVERY || a.frames() < INTERIM_MIN_SECS * rate {
+            return;
+        }
+        reported = Instant::now();
+        if let Some(l) = a.loudness_so_far().filter(|l| l.is_finite()) {
+            let secs = a.frames() as f32 / rate.max(1) as f32;
+            let _ = tx.send(Loudness { id: id.clone(), lufs: Some(l), interim: true, secs, canceled: false });
+        }
+    };
     // Analysis runs alongside decoding (on the analysis crate's low-priority pool), chunk by
     // chunk: no whole-track buffer, and results bit-identical to the batch `analyze()`.
     let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        decode_chunks(&source, &cache, cancel.clone(), loops, OfflineAnalyzer::new, |a, chunk| a.push(chunk))
+        let mut interim = interim;
+        decode_chunks(&source, &cache, cancel.clone(), loops, |ch, rate| (OfflineAnalyzer::new(ch, rate), rate as u64), |(a, rate), chunk| {
+            a.push(chunk);
+            interim(a, *rate);
+        })
     }))
     .unwrap_or_else(|_| Err("decoder crashed (malformed stream)".into()));
-    let mut analyzer = match decoded {
-        Ok(a) => a,
+    let (mut analyzer, rate) = match decoded {
+        Ok(v) => v,
         Err(e) => {
             match &loudness_tx {
                 // The playing track's own background measurement is best effort: its id is the
                 // queue item's, so an error event would read as a playback failure.
                 Some(tx) => {
-                    let _ = tx.send(Loudness { id: id.clone(), lufs: None });
+                    let _ = tx.send(Loudness { id: id.clone(), lufs: None, interim: false, secs: 0.0, canceled: cancel.load(Ordering::Relaxed) });
                 }
                 None if !cancel.load(Ordering::Relaxed) => {
                     let _ = events.send(EngineEvent::Error { id: Some(id), message: format!("analysis failed: {e}"), recoverable: true });
@@ -89,7 +118,8 @@ pub fn analyze_job(
     // exactly the value the full analysis reports.
     if let Some(tx) = &loudness_tx {
         let lufs = analyzer.integrated_lufs();
-        let _ = tx.send(Loudness { id: id.clone(), lufs: lufs.filter(|l| l.is_finite()) });
+        let secs = analyzer.frames() as f32 / rate.max(1) as f32;
+        let _ = tx.send(Loudness { id: id.clone(), lufs: lufs.filter(|l| l.is_finite()), interim: false, secs, canceled: false });
     }
     if cancel.load(Ordering::Relaxed) {
         return;

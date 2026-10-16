@@ -1,6 +1,7 @@
 // Likes, play history, the downloaded-tracks index, and TrackView decoration
 // (`liked` / `downloaded` flags). Playlists live in ./playlists.ts.
 import { existsSync } from 'node:fs'
+import { access } from 'node:fs/promises'
 import type { HistoryEntry, ID, Settings, TrackView } from '../../shared/types'
 import type { DB } from '../db'
 import type { Broadcast } from '../ipc'
@@ -181,15 +182,30 @@ export class Library {
     this.tracksChanged([trackId])
   }
 
+  /**
+   * Which of `paths` exist. The real check runs in parallel on libuv's pool: a synchronous stat of
+   * every downloaded file, on the thread that also delivers window input, stalled the opening of a
+   * Downloaded view of thousands of files (tests inject a synchronous check).
+   */
+  private async existing(paths: string[]): Promise<boolean[]> {
+    if (this.fileExists !== existsSync) return paths.map((p) => this.fileExists(p))
+    const out: boolean[] = []
+    for (let i = 0; i < paths.length; i += 64) {
+      out.push(...(await Promise.all(paths.slice(i, i + 64).map((p) => access(p).then(() => true, () => false)))))
+    }
+    return out
+  }
+
   async downloaded(): Promise<TrackView[]> {
     const entries = [...this.downloadedMap.entries()].sort((a, b) => b[1].at - a[1].at)
-    const missing = entries.filter(([, d]) => !this.fileExists(d.path)).map(([id]) => id)
+    const exists = await this.existing(entries.map(([, d]) => d.path))
+    const missing = entries.filter((_, i) => !exists[i]).map(([id]) => id)
     if (missing.length) {
       // Files moved or deleted outside the app: stop claiming they're downloaded.
       for (const id of missing) this.downloads.forgetDone(id, this.downloadedMap.get(id)!.path)
       this.downloadedMap = this.downloads.donePaths()
       this.tracksChanged(missing)
     }
-    return this.fetchTracks(entries.filter(([id]) => !missing.includes(id)).map(([id]) => id))
+    return this.fetchTracks(entries.filter((_, i) => exists[i]).map(([id]) => id))
   }
 }

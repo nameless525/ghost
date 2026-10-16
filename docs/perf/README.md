@@ -11,6 +11,7 @@
 | `node scripts/perf/trace.mjs <secs> <out>` / `--summary <out>` | Chrome trace (style/layout/paint/raster/GPU) |
 | `GHOST_PERF_LOG=1` | log main stalls live (otherwise the detectors only run while a window is focused, or for 10 min after `__perf()`) |
 | `GHOST_PERF_IPC=1` | count IPC bytes per channel (`window.ghost.__perf().ipc`) |
+| `node scripts/perf/coldstart.mjs <app executable> --profile <dir> [--runs N]` | launch → main ready → window → first screen → catalog's first answer, from fresh process starts on clones of a profile, plus CPU and memory after start-up |
 | `node scripts/perf/startup.mjs [runs] [--screen browse]` | renderer startup milestones (first screen, canvas, settled) over N reloads |
 | `node scripts/perf/nav.mjs` | screen / overlay open latency |
 | `node scripts/perf/cpu.mjs [secs] [--focus\|--blur] [--settle s]` | CPU per Electron process + renderer main-thread breakdown (idle checks) |
@@ -105,3 +106,86 @@ What changed, briefly:
   - Streaming offline analysis.
   - Division-free limiter.
   - Device-change listener instead of polling.
+
+## Third pass (2026-10-15): launch, background playback, memory, size
+
+Same machine and profile as above (M5, 4K display at 60 Hz, window 1440×900 at 2x, 93k games),
+production builds. Launch numbers are medians of 9 fresh launches (`coldstart.mjs`, on clones of
+the profile with and without Chromium's GPU caches). CPU numbers are the share of one core used by
+every GHOST process together, from interleaved A/B runs of both builds: this machine had a browser
+playing video at the time, so single samples vary by up to ±8 points (medians of 9 shown).
+
+| Area | Before | After |
+|---|---|---|
+| **Minimised (or fully covered) while playing** | 26–29 % (30 fps drawn into a hidden window; live analysis running) | **2.4–2.8 %** |
+| Launch → title screen (warm GPU caches / first launch) | 393 / 432 ms | 334 / 340 ms |
+| Launch → window shown / catalog's first answer | 329 / 260 ms | 285 / 201 ms |
+| CPU used in the first 8 s after launch | 3.1 s | 2.4 s |
+| JavaScript parsed before the first screen | 513 KB | 331 KB |
+| Focused, playing: Title / Play / Browse (60 fps) | 49.9 / 40.4 / 48.3 % | 46.1 / 37.9 / 41.8 % |
+| Title idle (focused, 30 fps) / Browse playing unfocused (30 fps) | 18.7 / 28.0 % | 17.5 / 26.6 % |
+| Title screen: the spinning logo's GPU layer | 4038×4083 px (63 MB) | 1008×1008 px (4 MB) |
+| Memory after playing on Browse (main / GPU process / renderer) | 94 / 382 / 117 MB | 78 / 355 / 103 MB |
+| Engine CPU playing a 44.1 kHz MP3 (48 kHz device) | 31–36 ms per s | 24–27 ms per s |
+| Resampler, 44.1 → 48 kHz | 3.46 ms per s of audio | 0.74 ms per s of audio |
+| Engine + coreaudiod with nothing playing (after 30 s) | ~5.6 ms per s, device kept running | 0 (stream suspended) |
+| Capped frames (12 / 20 fps; 30 fps on 120 Hz): rAF calls per drawn frame | 2 | 1 |
+| Listening without input on a 120 Hz display | 120 fps | 60 fps |
+| macOS installer / app on disk / ghost.node | 144.5 / 321 / 17.2 MB | 129.6 / 263 / 13.5 MB |
+| First catalog build: full re-clusters (each ~1 s plus an FTS merge) | one per source (4) | 1 |
+| Weekly refresh: writes for unchanged albums | ~135k row updates | none |
+| IGDB enrichment step (backlog query) | 7 ms | 0.05 ms |
+| Browse covers, random jump + 40-row scroll, empty art cache (median until a cover shows / every visible row shows one after stopping) | 6.9–12.9 s / 6.3–15.6 s | 0.3–1.0 s / 0.7–1.0 s |
+| Same, on a simulated 50 Mbps CDN (median / visible rows after stopping) | 0.3–1.6 s / 0–1.8 s | 4–8 ms / 0–0.3 s |
+
+What changed:
+- **Hidden windows draw nothing.** `backgroundThrottling` is back on (it had been off since the
+  scaffold), so a minimised or covered window reports itself hidden and the ticker stops. The
+  renderer also tells the engine (`player.setAnalysisDemand`), which then stops feeding its
+  real-time analysis thread and publisher; so does closing the last window on macOS.
+- **Start-up:** the engine registers for CoreAudio device changes on its own thread (the first
+  CoreAudio call costs ~45 ms and ran on Electron's main thread, ahead of the window). Pixi and
+  the background's WebGL set-up load after the first screen (`shell/firstScreen.ts`): Pixi's
+  module init reads back a GPU canvas, and WebGL set-up waits on the GPU process, which on a cold
+  start held the first frame for hundreds of ms in a trace. Renderers are made without a probe
+  context or depth/stencil buffers (`gfx/glRenderer.ts`). The preload loads the addon on the
+  first analysis read. The catalog worker imports `cheerio/slim` (~45 ms less to load), and
+  cheerio and music-metadata are bundled instead of shipped as 1,082 loose files.
+- **Memory:** the title logo's SVG is clipped to its viewBox (the textPath's conservative bounds
+  made a 63 MB layer); full-size background art is dropped 10 s after the blur returns, and older
+  tracks' copies as soon as a new one lands; the visualizer canvas hides and stops drawing when
+  nothing on it is visible.
+- **Frame pacing:** passive playback is capped at 60 fps on displays above 70 Hz. Capped frames
+  three or more vsyncs apart are requested by a timer that learns where a request lands
+  (Chromium serves a rAF asked for mid-interval at once, stamped with that interval, when it
+  hasn't drawn yet), so none has to be skipped; frames two vsyncs apart keep the every-vsync rAF.
+- **Engine:** exact polyphase resampling (nearest lookup in a sinc table with `to / gcd` points per
+  input sample) wherever that table is ≤ 1024 points, cubic otherwise; the device stream is
+  paused after 30 s with nothing playing and resumed by the next command; whole-program LTO.
+- **Main and catalog:** the queue isn't re-sent on library changes that don't touch it; session
+  saves reuse the queue's JSON; production builds don't run the stall detectors; the Downloaded
+  view checks files in parallel; the art cache is trimmed once a day; the full re-cluster runs
+  once per crawl round; unchanged albums aren't written on refresh; the IGDB backlog is two index
+  walks; the spellchecker is off.
+- **Package:** only English Chromium locales (`electronLanguages`).
+- **Browse covers** (`net/art-protocol.ts`, `screens/browse/prefetch.ts`): a quick scroll queued
+  every cover it passed, full-size scans included, as up to 4 downloads per host across ~7 hosts
+  at once; with the connection split ~28 ways, covers on screen waited behind everything scrolled
+  past (Electron gives the handler no sign that an <img> moved on). Now at most 6 downloads run,
+  newest first, small images ahead of full-size ones, background ones last, and a slot is only
+  taken when the host's limiter can start; the smallest bucket comes from the source's thumbnail
+  (KHInsider 117 px, Zophar ~180 px); game rows show that preview under the full cover; the rows
+  around a resting selection are fetched ahead at background priority; the info wedge's 1600 px
+  hero waits for the selection to rest.
+
+Measured, not changed (yet):
+- At 60 Hz, a focused window while music plays costs ~45–55 % of a core on Title, Browse and Play,
+  almost all of it Chromium's per-frame work (style, paint, commit, two WebGL canvases, compositing
+  and presentation). Hiding single layers doesn't move it; fewer frames does. An unfocused window
+  while playing is 30 fps (~32 %); at 20 fps it would be ~22 %.
+- A Genesis VGM (Nuked OPN2, cycle-accurate) costs ~100 ms of engine CPU per second; libgme's
+  faster YM2612 cores would cut that at a fidelity cost.
+- Minimised while playing, what's left is the main process and engine (~1.1 %), the renderer
+  (~0.8 %) and Chromium's audio service (~0.6 %). The last two are mostly the silent `<audio>` kept
+  for the OS media controls; native media controls (MPNowPlayingInfoCenter / SMTC / MPRIS) would
+  remove it.

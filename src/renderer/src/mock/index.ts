@@ -1,7 +1,7 @@
 // Browser-only mock of GhostAPI. Lets the whole UI run (and be screenshotted) without Electron,
 // the Rust engine or the network. Playback is simulated with a clock; analysis frames are
 // synthesised from a per-track tempo so beat-reactive visuals behave realistically.
-import type { GhostAPI, GhostEventName, GhostEvents } from '@shared/api'
+import type { GhostAPI, GhostEventName, GhostEvents, UpdatesAPI } from '@shared/api'
 import { defaultSettings, mergeSettings } from '@shared/defaults'
 import type {
   Album,
@@ -24,7 +24,10 @@ import type {
   Settings,
   TaskProgress,
   TrackAnalysis,
-  TrackView
+  TrackView,
+  UpdateRelease,
+  UpdateState,
+  UpdateStatus
 } from '@shared/types'
 import { FIXTURE_GAMES, type FixtureGame } from './fixtures'
 import { GHOST_VERSION } from '@shared/version'
@@ -648,6 +651,105 @@ function readFrame(): AnalysisFrame | null {
 }
 
 // ---------------------------------------------------------------------------
+// GHOST's own updates: up to date by default. ?update=available|manual|downloading|ready|error
+// starts with a newer release in that state ('manual': an install that can't update itself), and
+// ?whatsnew shows the notes as after an update. "Update now" downloads it, then "restarts" into it.
+
+const MOCK_NOTES = `### Release notes, rendered
+GHOST checks for new versions at launch and **installs them when you quit**. Every release is on [GitHub](https://github.com/nameless525/ghost/releases).
+- **A bold lead.** Then the rest of the bullet, with \`ghost-cli render\` and *some emphasis*.
+- Nested bullets:
+  - one level down
+    - and another
+  - back up one
+- Full Changelog: https://github.com/nameless525/ghost/compare/v0.4.0...v0.4.1
+
+#### Fixes
+- Something small that was wrong is right now.
+
+---
+
+### Install
+- Not shown: GitHub release bodies end with these instructions.`
+
+function mockUpdates(): UpdatesAPI {
+  const q = new URLSearchParams(window.location.search)
+  const preview = q.get('update')
+  const next = GHOST_VERSION.replace(/\d+$/, (n) => String(Number(n) + 1))
+  const latest: UpdateRelease = { version: next, notes: MOCK_NOTES, url: 'https://github.com/nameless525/ghost/releases', publishedAt: now() - 86_400_000, sizeBytes: 130 * 1024 * 1024 }
+  let state: UpdateState = { current: GHOST_VERSION, status: 'idle', latest: null, progress: null, error: null, lastCheckedAt: now() - 2 * 3_600_000, canInstall: true, manualReason: null, dismissed: false }
+  if (preview && ['available', 'manual', 'downloading', 'ready', 'error'].includes(preview)) {
+    const manual = preview === 'manual'
+    state = {
+      ...state,
+      latest,
+      status: (manual ? 'available' : preview) as UpdateStatus,
+      canInstall: !manual,
+      manualReason: manual ? 'Installed from a .deb package: update GHOST the way you installed it.' : null,
+      error: preview === 'error' ? 'The download stopped: the connection was reset.' : null
+    }
+  }
+  const push = (patch: Partial<UpdateState>) => {
+    state = { ...state, ...patch }
+    emit('updates:state', structuredClone(state))
+  }
+  // what installNow's restart would come back as
+  let restartWhenReady = false
+  const restart = () =>
+    window.setTimeout(() => {
+      restartWhenReady = false
+      emit('notify', { id: uid('n'), kind: 'info', title: `GHOST would restart into ${next} now`, body: 'The browser preview can’t restart itself.' })
+      push({ current: next, status: 'idle', latest: null, progress: null, dismissed: false, lastCheckedAt: now() })
+    }, 900)
+  let timer = 0
+  const download = () => {
+    if (state.status === 'ready') return void (restartWhenReady && restart())
+    if (timer) return
+    const total = latest.sizeBytes!
+    push({ latest, status: 'downloading', error: null, progress: { bytes: 0, totalBytes: total } })
+    timer = window.setInterval(() => {
+      const bytes = Math.min(total, (state.progress?.bytes ?? 0) + total / 50)
+      if (bytes < total) return push({ progress: { bytes, totalBytes: total } })
+      window.clearInterval(timer)
+      timer = 0
+      push({ status: 'ready', progress: null })
+      if (restartWhenReady) restart()
+    }, 250)
+  }
+  if (preview === 'downloading') download()
+  return {
+    getState: () => delay(structuredClone(state), 0),
+    check: async () => {
+      const before = state.status
+      push({ status: 'checking', error: null })
+      await delay(null, 1200)
+      push({ status: !state.latest ? 'idle' : before === 'ready' ? 'ready' : 'available', lastCheckedAt: now() })
+      return structuredClone(state)
+    },
+    download: async () => download(),
+    installNow: async () => {
+      restartWhenReady = true
+      download()
+    },
+    dismiss: async () => push({ dismissed: true }),
+    whatsNew: () =>
+      delay(
+        q.has('whatsnew')
+          ? {
+              version: GHOST_VERSION,
+              from: '0.3.2',
+              sections: [
+                { version: GHOST_VERSION, date: '2026-10-15', notes: MOCK_NOTES },
+                { version: '0.3.3', date: '2026-10-14', notes: '### Open source\n- GHOST is now on GitHub under the MIT License.' }
+              ]
+            }
+          : null
+      ),
+    whatsNewSeen: async () => {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // API
 
 export function installMockGhost(): void {
@@ -791,6 +893,7 @@ export function installMockGhost(): void {
         return delay({ groupKey: `game:${g.id}`, albumId: as[Math.floor(Math.random() * as.length)]?.id ?? null })
       },
       warmSources: () => delay(undefined),
+      fillAlbums: () => delay(undefined),
       sources: () =>
         delay([
           { id: 'khinsider', albums: albums.length, lastIndexedAt: Date.now() - 2 * 86_400_000, indexing: false },
@@ -898,6 +1001,7 @@ export function installMockGhost(): void {
       },
       setOverlayFilter: async () => {},
       devices: () => delay([{ id: 'default', name: 'System default', isDefault: true }]),
+      setAnalysisDemand: async () => {},
       setVoiceMask: async (mask) => {
         const v = player.voices
         if (!v) return
@@ -1015,6 +1119,7 @@ export function installMockGhost(): void {
       reveal: async () => {},
       info: async () => ({ platform: 'web', version: `${GHOST_VERSION}-mock`, dataDir: '(mock)', mock: true })
     },
+    updates: mockUpdates(),
     analysis: { read: readFrame },
     on(event, cb) {
       let set = listeners.get(event)

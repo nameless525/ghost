@@ -991,6 +991,25 @@
   font-size: var(--fs-xs);
   font-style: italic;
 }
+/* updates (UpdatesRow): status words, the download's bar, the buttons */
+.set-upd__status b {
+  color: var(--fg-1);
+  font-weight: var(--fw-semibold);
+}
+.set-upd__status--error {
+  color: var(--danger);
+}
+.set-upd__reason {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg-2);
+}
+.set-upd__bar {
+  margin: 2px 0 10px;
+}
+.set-upd .set-actions {
+  flex-wrap: wrap;
+}
 .set-about__credits {
   color: var(--fg-4);
   font-size: var(--fs-sm);

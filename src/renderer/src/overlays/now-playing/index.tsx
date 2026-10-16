@@ -15,7 +15,7 @@ import type { OverlayProps } from '../../shell/types'
 import { sfx } from '../../sound'
 import { livePositionMs, usePlayer } from '../../state/player'
 import { useUI } from '../../state/ui'
-import { Button, CoverArt, GhostMark, IconButton, Marquee, ProgressBar, Slider, SourceBadge, formatTime } from '../../ui'
+import { BackupBadge, Button, CoverArt, GhostMark, IconButton, Marquee, ProgressBar, Slider, SourceBadge, formatTime } from '../../ui'
 import { cx } from '../../ui/util'
 import {
   AddToPlaylistButton,
@@ -143,6 +143,7 @@ export default function NowPlayingOverlay({ open, close }: NowPlayingOverlayProp
               <Intensity value={intensity} size="sm" />
               {bpm ? <span className="np-chip tnum">{Math.round(bpm)} BPM</span> : null}
               {current.source && <SourceBadge source={current.source} />}
+              <BackupBadge source={current.source} />
             </div>
           </div>
           {/* on the Play screen already it only closed the panel */}

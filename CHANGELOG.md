@@ -1,6 +1,46 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-15)
+
+### GHOST updates itself
+- **Once a day GHOST checks GitHub for a new release, and by default installs it for you.** It downloads in the background with a notice that names the version ("Updating GHOST to 0.4.1"), checks the download against its SHA-256 checksum, and installs it when you quit GHOST. To install it right away, choose **Restart to update** in the top bar.
+- **Prefer to be asked?** Turn off **Install updates automatically** in Settings → About. GHOST then tells you when a new version is out and lets you update now or dismiss it. Settings → About also shows your version, when GHOST last checked, and a **Check now** button.
+- **After an update, GHOST shows what's new** in the version you now have (and in any versions you skipped).
+- The Mac app in Applications, the Windows installer's copy and the Linux AppImage update themselves. A `.deb` install is told about new releases and links to them, since replacing it needs administrator rights.
+- This starts with 0.4.0: from 0.3.x, install 0.4.0 by hand once.
+
+### Even volume from the first seconds, for imports too
+GHOST measures each track's loudness the first time it plays and remembers it. Until then a track plays at a guess, and for some imports that guess lasted a long time.
+- **Chapters of a long YouTube video are evened out within a second.** A soundtrack imported from one long video with chapters played each chapter at the guess until the whole video had downloaded: about 20 seconds on a fast connection, minutes on a slow one. Each chapter is now measured from its own audio as it arrives, usually within a second of starting.
+- **Loud tracks are turned down while they download.** GHOST measures a track as it downloads, and turns it down as soon as the part heard so far shows it's loud, instead of after the last byte. Long single-file soundtracks (YouTube, Internet Archive) are evened out once a few minutes of them have been measured, seconds after they start, instead of after hundreds of megabytes.
+- **A better guess.** A track not measured yet starts at its album's loudness when GHOST knows other tracks of the album, instead of the same fixed level for everything.
+- **Previews in Browse are evened out too.** They used to play at the guess and were never measured. Now previewing a track measures it, so its first real play starts at the right volume.
+
+### Browse fills in faster
+- **A game's track count and length are complete.** They used to count only the albums you had opened, so a game showed "7+" or "38:00+" until you opened each one. Resting on a game now loads its albums' track lists in the background: a game with 8 albums is complete about 2 seconds later, one with 20 in about 2.5 s.
+- **The album you stop on loads first.** Every album you passed while scrolling was fetched, one by one and in order, before the one you stopped on. Scrolling past 10 to 15 Zophar's Domain albums, the last one's tracks took 9 to 13 seconds to appear; now under a second. And holding an arrow key through album groups no longer opens every album it passes.
+- While an album group's track list loads, the side panel no longer says it has 1 track.
+
+### A source that's down no longer stops an album
+- **When a track's own files can't be reached, GHOST looks elsewhere before skipping it.** It searches its other sources (YouTube and the rest) the way it does for a track with nothing to play, instead of moving on to the next track.
+- **Once a server stops answering, the rest of the album isn't tried there first.** The next tracks are looked up elsewhere while the current one plays, so they start right away. For five minutes, that server's files are only a last resort.
+- For example, an Internet Archive soundtrack whose only storage server was down used to wait 16 seconds on every track and then skip it. Now the first track plays from YouTube after that one wait, and the next ones start without any.
+- **It always says when it does this.** While it looks, the loading line reads "Looking for a backup on YouTube · Internet Archive isn’t answering". When the backup plays, a notice names the track, what failed and where the copy comes from ("Internet Archive isn’t answering, so this is a backup copy from YouTube"). An album that falls back track after track updates one notice instead of adding a hundred. The track also carries an orange **Backup** badge, on the Play screen and in Now Playing, explaining the same when you hover it.
+
+### YouTube starts sooner
+- **The first YouTube track after launch plays about 4 seconds sooner** (about 6 s from click to sound instead of 10 for a track not looked up yet). GHOST ran yt-dlp once at every launch just to read its version, and the standalone yt-dlp takes seconds to start. A copy that has run before and hasn't changed since isn't checked again. The first online search after launch gains the same.
+- A track you click no longer waits for the next ones GHOST looks up in the background at the same moment: they share one yt-dlp run, and each is ready as soon as yt-dlp has it.
+
+### Lighter and faster
+- **Covers show up while you scroll Browse.** After a random jump and a quick scroll, covers took 7 to 13 seconds to appear, because GHOST downloaded every one it passed, full size and all at once. Now it fetches what's on screen first, shows a small preview of each cover within about a second (the site's own thumbnail, a few KB) while the full one downloads, and fetches the covers just below where you stop before you get there. Small covers, like the album list's, come from those thumbnails instead of multi-megabyte scans.
+- **Minimised or covered, GHOST stops drawing.** Music keeps playing, but a window nobody can see no longer redraws 30 times a second, and the engine stops computing the visualizer's spectrum. Listening with GHOST in the background used about 27% of a CPU core; it now uses under 3%.
+- **Starts sooner.** The title screen appears about 335 ms after launch instead of 395 ms (340 ms instead of 430 ms on a first launch, before the graphics caches are warm). The window no longer waits for the audio system to start, and the animated background loads just after the first screen instead of before it.
+- **Less memory.** The title screen's spinning logo took 63 MB of graphics memory because of how Chromium measures curved text; it now takes 4 MB. Full-size background art is released 10 seconds after leaving the Play screen, and the visualizer canvas no longer reserves depth and stencil buffers it never used (about 12 MB).
+- **Smaller download.** The installers no longer carry Chromium's built-in text in 55 languages GHOST doesn't use, and the audio engine is built with whole-program optimisation. The macOS installer is 130 MB instead of 144 MB, and the app takes 263 MB on disk instead of 321 MB.
+- **A cheaper audio path.** Resampling (for example 44.1 kHz music on a 48 kHz device) is now exact polyphase filtering, a fifth of the work it was with no loss in quality: the engine's CPU while playing an MP3 drops by about a quarter. After 30 seconds with nothing playing, GHOST pauses its audio output instead of streaming silence, so the system's audio service and Bluetooth headphones can rest.
+- **Smoother on 120 Hz screens.** Listening without touching anything draws at 60 frames per second instead of 120 (full speed returns the moment you interact), and slowed-down animation no longer wastes a frame of work between drawn frames.
+- **First catalog build:** games are re-grouped once at the end instead of after every source, and weekly refreshes no longer rewrite every unchanged album.
+- Smaller things: the catalog starts about 50 ms sooner, the Downloaded view checks its files in parallel instead of one at a time on the main thread, the art cache is trimmed once a day instead of at every launch, IGDB enrichment steps are about 100 times cheaper, saving the session while playing no longer re-serialises the whole queue, and the spellchecker is off (Windows and Linux no longer download dictionaries for it).
 
 ### Fixes
 - yt-dlp's state file is written atomically, so another part of the app reading it mid-write can't mistake it for a missing install and download yt-dlp again.

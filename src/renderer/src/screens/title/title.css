@@ -89,7 +89,10 @@
 .tl-logo-art__spin svg {
   width: 100%;
   height: 100%;
-  overflow: visible;
+  /* Clipped to the viewBox, which everything fits: with overflow visible, Chromium's very
+     conservative bounds for the textPath made this composited layer ~4x the disc (63 MB of GPU
+     memory at 2x). */
+  overflow: hidden;
 }
 .tl-ring-text {
   font-family: var(--font-sans);

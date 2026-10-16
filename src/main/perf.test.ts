@@ -17,7 +17,7 @@ describe('main perf diagnostics', () => {
   })
 
   it('stall detectors (timers that wake the process) only run with focus or right after stats were read', () => {
-    startMainPerf()
+    startMainPerf({ followFocus: true })
     setPerfFocus(true)
     expect(perfActive()).toBe(true)
     setPerfFocus(false)
@@ -30,6 +30,11 @@ describe('main perf diagnostics', () => {
       expect(perfActive()).toBe(false) // backgrounded and nobody measuring: no wakeups
       setPerfFocus(true)
       expect(perfActive()).toBe(true)
+      // a released build: focus alone doesn't start them
+      startMainPerf({ followFocus: false })
+      expect(perfActive()).toBe(false)
+      perfStats()
+      expect(perfActive()).toBe(true) // someone is measuring
     } finally {
       vi.useRealTimers()
     }

@@ -167,6 +167,7 @@ usePulse(glowRef, { mode: 'var' })             // writes --pulse (0..1.6) for CS
 | `ScrollArea` | smooth wheel (mouse only, trackpads stay native), fade edges; `viewportRef`; `scrollToSmooth(el, y)` |
 | `OverlayHeader` | standard overlay title row: `icon`, `title`, `description`, `actions`; tinted by the overlay hue automatically |
 | `GhostMark` | the brand mark (currentColor), for empty states |
+| `Markdown` | `source` (release notes / changelog Markdown) → React elements, no innerHTML: `###`/`####`, paragraphs, nested `-` bullets, bold, italic, `code`, http(s) links (open in the browser); stops at a `---` line. Parser: `markdownParser.ts` |
 | `formatTime(ms)` | `83000 → "1:23"` |
 
 ---

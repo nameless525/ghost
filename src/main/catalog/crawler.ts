@@ -6,6 +6,7 @@
 import { isNetError } from '../net/errors'
 import type { IndexProvider, IndexSection } from '../providers/types'
 import { writerPause, type CatalogRepo } from './repo'
+import { RECLUSTER_PENDING } from './schema'
 
 export const INDEX_MAX_AGE_MS = 7 * 24 * 3600_000
 const BLOCK_PAUSE_MS = 10 * 60_000
@@ -35,6 +36,12 @@ export interface CrawlerDeps {
   sections?: string[]
   /** Limit pages per section (smoke tests). */
   maxPagesPerSection?: number
+  /**
+   * Another crawl is running or due to follow this one: leave the full re-cluster to the last crawl
+   * of the round (marked pending meanwhile). The first launch crawls four sources back to back,
+   * and each full pass reads and rewrites every album.
+   */
+  deferRecluster?: () => boolean
   /** The main catalog source (default true): status wording only. */
   primary?: boolean
 }
@@ -275,10 +282,13 @@ export class Crawler {
     }
     if (signal.aborted) return
     this.etaMs = null
-    this.detail = 'grouping into games'
-    this.message = 'Grouping albums into games…'
-    this.deps.onProgress()
-    await repo.reclusterAll()
+    if (this.deps.deferRecluster?.()) repo.setMeta(RECLUSTER_PENDING, '1')
+    else {
+      this.detail = 'grouping into games'
+      this.message = 'Grouping albums into games…'
+      this.deps.onProgress()
+      await repo.reclusterAll()
+    }
     repo.run(`UPDATE crawl_jobs SET status = 'done', finished_at = ?, message = NULL WHERE id = ?`, this.now(), job.id)
     // Keep crawl_pages of the last two jobs only (page-count estimates use the previous one).
     repo.run(`DELETE FROM crawl_pages WHERE job_id < (SELECT MIN(id) FROM (SELECT id FROM crawl_jobs ORDER BY id DESC LIMIT 2))`)

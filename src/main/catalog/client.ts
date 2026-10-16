@@ -45,7 +45,7 @@ export interface CallStats {
   maxMs: number
 }
 
-const FIRE_AND_FORGET = new Set(['start', 'stop', 'recordAnalysis', 'markSourceFailed', 'warmSources'])
+const FIRE_AND_FORGET = new Set(['start', 'stop', 'recordAnalysis', 'markSourceFailed', 'warmSources', 'fillAlbums'])
 
 /** The TrackAnalysis the catalog will store for an engine result (before its float32 rounding). */
 export function analysisOf(r: OfflineAnalysisResult): TrackAnalysis {
@@ -250,7 +250,8 @@ export class CatalogClient {
         this.fire('recordAnalysis', [trackId, result])
       },
       markSourceFailed: (trackId: ID, cacheKey: string, reason: string) => this.fire('markSourceFailed', [trackId, cacheKey, reason]),
-      warmSources: (trackIds: ID[]) => this.fire('warmSources', [trackIds])
+      warmSources: (trackIds: ID[]) => this.fire('warmSources', [trackIds]),
+      fillAlbums: (albumIds: ID[]) => this.fire('fillAlbums', [albumIds])
     }
     // Everything else (including methods added to CatalogService later) is a plain RPC.
     return new Proxy(known, {

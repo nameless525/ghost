@@ -150,7 +150,7 @@ fn run(
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
-    let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true };
+    let ctx = OpenCtx { cache, cancel: cancel.clone(), accurate_seek: true, background: false };
     if source.extras().archive_entry.is_some() {
         // Everything below needs the extracted set, i.e. the whole archive: report the archive's
         // bytes while it is fetched instead of sitting at 0 until it is in. (Rendering then

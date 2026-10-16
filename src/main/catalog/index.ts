@@ -50,6 +50,13 @@ export interface CatalogService extends CatalogAPI {
    * Fire-and-forget.
    */
   warmSources(trackIds: ID[]): void
+  /**
+   * Hint: these albums are on screen and their track lists aren't known (the selected game's), so
+   * fetch them in the background (normal priority, a couple at a time, at most a couple of dozen)
+   * for the game's track count and length. A newer call replaces the albums still waiting.
+   * Fire-and-forget.
+   */
+  fillAlbums(albumIds: ID[]): void
   /** Album + game for a track (tagging, album gain, notifications). */
   albumOf(trackId: ID): Promise<{ album: Album; game: Game | null } | null>
   /** Evaluate a search query (same syntax as Browse) to track ids, e.g. for smart playlists. */

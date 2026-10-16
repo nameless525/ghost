@@ -542,7 +542,7 @@ impl Mixer {
             }
             self.tap.dev_frame = self.dev_frame;
             self.tap.frames = n as u32;
-            if self.idle_frames <= self.tap_hold {
+            if self.idle_frames <= self.tap_hold && self.clock.analysis_wanted.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Some(tx) = self.tap_tx.as_mut() {
                     let _ = tx.push(*self.tap);
                 }

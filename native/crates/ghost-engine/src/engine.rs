@@ -29,8 +29,15 @@ const DEVICE_POLL_WATCHED: Duration = Duration::from_secs(30);
 /// After a command, keep the housekeeping cadence fast this long (voices the mixer drops come
 /// back through its garbage queue shortly after).
 const BUSY_AFTER_CMD: Duration = Duration::from_secs(2);
+/// Nothing playing and no commands for this long: suspend the device stream (see `OutputStream::suspend`).
+const SUSPEND_STREAM_AFTER: Duration = Duration::from_secs(30);
 const SEEK_BUFFERING_AFTER: Duration = Duration::from_millis(250);
-const PROVISIONAL_GAIN_DB: f32 = -4.0;
+/// Loudness assumed for a track nothing is known about yet: its gain until it is measured
+/// (−4 dB at the default −16 LUFS target; loud uploads come out a little hot, quiet rips quiet).
+const ASSUMED_LUFS: f32 = -12.0;
+/// A measurement still under way that has covered this much of the track counts as its loudness
+/// (a long single-file soundtrack takes minutes to download in full).
+const INTERIM_TRUSTED_SECS: f32 = 180.0;
 const LOUDNESS_RAMP_SEC: f32 = 2.0;
 const SETTINGS_RAMP_SEC: f32 = 0.3;
 const GAP_SEC: f32 = 0.5;
@@ -51,6 +58,8 @@ pub enum Cmd {
     Preview { track: TrackLoad, start_ms: u64 },
     StopPreview,
     SetDevice(Option<String>),
+    /// Whether anyone shows the live analysis (see `Clock::analysis_wanted`).
+    AnalysisDemand(bool),
     Shutdown,
 }
 
@@ -187,6 +196,12 @@ struct Track {
     shared: Option<Arc<VoiceShared>>,
     seq: u32,
     measured_lufs: Option<f32>,
+    /// Loudness of the part measured so far while the stream downloads, and whether that part
+    /// is long enough to stand for the whole track (see `gain`).
+    interim_lufs: Option<f32>,
+    interim_trusted: bool,
+    /// Stops this track's measurement while it still reads a downloading stream.
+    measure_cancel: Option<Arc<AtomicBool>>,
     info: Option<TrackInfo>,
     started: bool,
     ever_started: bool,
@@ -203,6 +218,9 @@ impl Track {
             shared: None,
             seq,
             measured_lufs: None,
+            interim_lufs: None,
+            interim_trusted: false,
+            measure_cancel: None,
             info: None,
             started: false,
             ever_started: false,
@@ -250,7 +268,7 @@ pub struct Controller {
     /// Device-change notifications (wake-ups) and the generation last enumerated.
     dev_rx: Receiver<()>,
     /// Kept so `dev_rx` never disconnects (a disconnected channel is always ready in `select!`).
-    _dev_tx: Sender<()>,
+    dev_tx: Sender<()>,
     dev_gen: u64,
     dev_watched: bool,
     last_cmd: Instant,
@@ -305,10 +323,6 @@ impl Controller {
         init.cache.subscribe(cache_tx);
         let (loud_tx, loud_rx) = crossbeam_channel::unbounded();
         let (dev_tx, dev_rx) = crossbeam_channel::bounded(1);
-        let dev_watched = matches!(init.mode, OutputMode::Device) && output::device_watch::watching();
-        if dev_watched {
-            output::device_watch::subscribe(dev_tx.clone());
-        }
         Self {
             cache: init.cache,
             events: init.events,
@@ -331,9 +345,9 @@ impl Controller {
             known_devices: Vec::new(),
             last_poll: Instant::now().checked_sub(DEVICE_POLL_WATCHED).unwrap_or_else(Instant::now),
             dev_rx,
-            _dev_tx: dev_tx,
+            dev_tx,
             dev_gen: output::device_watch::generation(),
-            dev_watched,
+            dev_watched: false,
             last_cmd: Instant::now(),
             last_open_error: None,
             current: None,
@@ -366,6 +380,13 @@ impl Controller {
     }
 
     pub fn run(mut self) {
+        // Registering for device changes is the process's first CoreAudio call, which starts its
+        // HAL client (~45 ms). It happens here, on the engine thread: in new() it ran on the
+        // caller's thread, which is Electron's main thread, ahead of the window.
+        if matches!(self.mode, OutputMode::Device) && output::device_watch::watching() {
+            output::device_watch::subscribe(self.dev_tx.clone());
+            self.dev_watched = true;
+        }
         self.open_output(false);
         loop {
             select! {
@@ -390,6 +411,11 @@ impl Controller {
         let loads = std::mem::take(&mut *self.shared.loads.lock());
         drop(loads);
         self.measure_cancel.store(true, Ordering::Relaxed);
+        for t in [&self.current, &self.next, &self.preview].into_iter().flatten() {
+            if let Some(c) = &t.measure_cancel {
+                c.store(true, Ordering::Relaxed);
+            }
+        }
         for v in self.voices.values() {
             v.cancel();
         }
@@ -534,6 +560,12 @@ impl Controller {
     }
 
     fn send(&mut self, cmd: MixerCmd) {
+        // The mixer takes commands in the device callback: a suspended stream must run again first.
+        if let Out::Device(s) = &mut self.out {
+            if s.resume().is_err() {
+                self.device_err.fetch_or(ERR_REBUILD, Ordering::Relaxed);
+            }
+        }
         let Some(link) = self.link.as_mut() else { return };
         let mut cmd = cmd;
         for _ in 0..200 {
@@ -651,6 +683,13 @@ impl Controller {
         if let Some(s) = &t.shared {
             s.cancel();
         }
+        // A measurement still reading the stream as it downloads stops with its track (it would
+        // fetch the rest of the file for nothing); one that has all the data finishes and is kept.
+        if let Some(c) = &t.measure_cancel {
+            if !t.cache_key().is_some_and(|k| self.cache.complete_path(k).is_some()) {
+                c.store(true, Ordering::Relaxed);
+            }
+        }
     }
 
     // ---------------------------------------------------------------- gain
@@ -669,15 +708,21 @@ impl Controller {
 
     /// Normalisation gain for `t`; `prev`/`next` are its neighbours (for Auto album mode).
     fn gain_for(&self, t: &Track, prev: Option<&TrackLoad>, next: Option<&TrackLoad>) -> f32 {
+        self.gain(t, self.album_mode_for(&t.load, prev, next))
+    }
+
+    /// A preview stands alone: album gain only when that is the mode.
+    fn preview_gain(&self, t: &Track) -> f32 {
+        self.gain(t, self.norm_mode == NormalizationMode::Album)
+    }
+
+    /// Track (or album) gain for `t` (see [`gain_lufs`]).
+    fn gain(&self, t: &Track, album: bool) -> f32 {
         if !self.norm_enabled {
             return 0.0;
         }
-        let track_lufs = t.load.lufs.or(t.measured_lufs);
-        let lufs = if self.album_mode_for(&t.load, prev, next) { t.load.album_lufs.or(track_lufs) } else { track_lufs };
-        match lufs {
-            Some(l) if l.is_finite() => (self.norm_target - l).clamp(-24.0, 12.0),
-            _ => PROVISIONAL_GAIN_DB,
-        }
+        let interim = t.interim_lufs.map(|l| (l, t.interim_trusted));
+        (self.norm_target - gain_lufs(t.load.lufs.or(t.measured_lufs), t.load.album_lufs, album, interim)).clamp(-24.0, 12.0)
     }
 
     fn refresh_gains(&mut self, ramp_sec: f32) {
@@ -692,8 +737,7 @@ impl Controller {
             cmds.push((1, n.key, g));
         }
         if let Some(p) = &self.preview {
-            let g = if self.norm_enabled { p.load.lufs.map(|l| (self.norm_target - l).clamp(-24.0, 12.0)).unwrap_or(PROVISIONAL_GAIN_DB) } else { 0.0 };
-            cmds.push((2, p.key, g));
+            cmds.push((2, p.key, self.preview_gain(p)));
         }
         for (slot, key, g) in cmds {
             let t = match slot {
@@ -749,26 +793,44 @@ impl Controller {
         }
     }
 
+    fn slot_mut(&mut self, slot: u8) -> Option<&mut Track> {
+        match slot {
+            0 => self.current.as_mut(),
+            1 => self.next.as_mut(),
+            _ => self.preview.as_mut(),
+        }
+    }
+
+    /// Measure the loudness of the track in `slot` (0 current, 1 next, 2 preview). A stream
+    /// still downloading is measured as it arrives, through background reads that never get
+    /// ahead of playback: the part measured so far already shows a loud track (interim
+    /// results), and a clip (a chapter of a long video) needs only its own bytes, not the whole
+    /// video. A preview of a whole stream waits for it instead: measuring must not download
+    /// more than listening does.
     fn maybe_measure(&mut self, slot: u8) {
-        let t = match slot {
-            0 => self.current.as_ref(),
-            _ => self.next.as_ref(),
-        };
-        let Some(t) = t else { return };
-        if t.load.lufs.is_some() || t.measured_lufs.is_some() || self.measuring.contains(&t.load.id) {
+        let Some(t) = self.slot_mut(slot) else { return };
+        if t.load.lufs.is_some() || t.measured_lufs.is_some() {
             return;
         }
-        let ready = match &t.load.source {
+        let (id, source) = (t.load.id.clone(), t.load.source.clone());
+        if self.measuring.contains(&id) {
+            return;
+        }
+        let complete = match &source {
             SourceSpec::File { .. } => true,
             SourceSpec::Http { cache_key, .. } => self.cache.complete_path(cache_key).is_some(),
         };
-        if !ready {
+        if !complete && slot == 2 && !source.extras().has_clip() {
             return;
         }
-        let id = t.load.id.clone();
-        let source = t.load.source.clone();
+        let cancel = if complete { self.measure_cancel.clone() } else { Arc::new(AtomicBool::new(false)) };
+        if !complete {
+            if let Some(t) = self.slot_mut(slot) {
+                t.measure_cancel = Some(cancel.clone());
+            }
+        }
         self.measuring.insert(id.clone());
-        let (cache, events, loud, cancel) = (self.cache.clone(), self.events.clone(), self.loud_tx.clone(), self.measure_cancel.clone());
+        let (cache, events, loud) = (self.cache.clone(), self.events.clone(), self.loud_tx.clone());
         let loops = self.loops.get();
         self.jobs.submit(move || analyze_job(id, source, cache, events, Some(loud), cancel, loops));
     }
@@ -879,6 +941,13 @@ impl Controller {
             }
             Cmd::Preview { track, start_ms } => self.preview(track, start_ms),
             Cmd::StopPreview => self.send(MixerCmd::StopPreview),
+            Cmd::AnalysisDemand(on) => {
+                let was = self.shared.clock.analysis_wanted.swap(on, Ordering::Relaxed);
+                // back on: the analysis thread may be in its deep-idle poll (2 s)
+                if on && !was {
+                    let _ = self.tap_tx.send(TapMsg::Wake);
+                }
+            }
             Cmd::SetDevice(id) => {
                 self.selected_device = id;
                 if matches!(self.mode, OutputMode::Device) {
@@ -1033,13 +1102,16 @@ impl Controller {
         let seq = self.next_seq;
         self.next_seq += 1;
         let mut t = Track::new(load, seq);
-        let gain = if self.norm_enabled { t.load.lufs.map(|l| (self.norm_target - l).clamp(-24.0, 12.0)).unwrap_or(PROVISIONAL_GAIN_DB) } else { 0.0 };
+        let gain = self.preview_gain(&t);
         t.gain_db = gain;
         if let Some((v, sh)) = self.make_voice(&t.load, start_ms, Bus::Preview, seq, gain) {
             t.key = v.key;
             t.shared = Some(sh);
             self.send(MixerCmd::Preview(v));
             self.preview = Some(t);
+            // Measured like a played track: the preview evens out, and the track's first real
+            // play starts at the right level.
+            self.maybe_measure(2);
         } else {
             self.emit(EngineEvent::PreviewEnded { id: t.load.id });
         }
@@ -1234,18 +1306,52 @@ impl Controller {
         if self.next.as_ref().is_some_and(|c| c.cache_key() == Some(cache_key.as_str())) {
             self.maybe_measure(1);
         }
+        if self.preview.as_ref().is_some_and(|c| c.cache_key() == Some(cache_key.as_str())) {
+            self.maybe_measure(2);
+        }
     }
 
     fn on_loudness(&mut self, l: Loudness) {
-        self.measuring.remove(&l.id);
         let mut changed = false;
-        for t in [&mut self.current, &mut self.next].into_iter().flatten() {
-            if t.load.id == l.id {
-                // NaN = measured but failed: keeps the provisional gain and stops re-measuring
-                // (a full decode) on every later trigger.
-                t.measured_lufs = Some(l.lufs.unwrap_or(f32::NAN));
-                changed |= l.lufs.is_some();
+        if l.interim {
+            let trusted = l.secs >= INTERIM_TRUSTED_SECS;
+            for t in [&mut self.current, &mut self.next, &mut self.preview].into_iter().flatten() {
+                // Every change is a ramp: only moves of 1 LU or more.
+                if let (true, None, Some(v)) = (t.load.id == l.id, t.measured_lufs, l.lufs) {
+                    if t.interim_lufs.is_none_or(|p| (v - p).abs() >= 1.0) || trusted != t.interim_trusted {
+                        t.interim_lufs = Some(v);
+                        t.interim_trusted = trusted;
+                        changed = true;
+                    }
+                }
             }
+            if changed {
+                self.refresh_gains(LOUDNESS_RAMP_SEC);
+            }
+            return;
+        }
+        self.measuring.remove(&l.id);
+        let mut restart = Vec::new();
+        let cache = &self.cache;
+        for (slot, t) in [&mut self.current, &mut self.next, &mut self.preview].into_iter().enumerate() {
+            let Some(t) = t.as_mut().filter(|t| t.load.id == l.id) else { continue };
+            t.measure_cancel = None;
+            if l.canceled {
+                // The job of a dropped instance of this track: this one measures on its own.
+                restart.push(slot as u8);
+                continue;
+            }
+            // Measured while it downloaded, it can fail with the network (a stall): the whole
+            // stream arriving later tries again. Any other failure is final: NaN keeps the
+            // provisional gain and stops re-measuring (a full decode) on every trigger.
+            let retry = l.lufs.is_none() && matches!(&t.load.source, SourceSpec::Http { cache_key, .. } if cache.complete_path(cache_key).is_none());
+            if !retry {
+                t.measured_lufs = Some(l.lufs.unwrap_or(f32::NAN));
+            }
+            changed |= l.lufs.is_some();
+        }
+        for slot in restart {
+            self.maybe_measure(slot);
         }
         if changed {
             self.refresh_gains(LOUDNESS_RAMP_SEC);
@@ -1268,6 +1374,11 @@ impl Controller {
         if err & ERR_REBUILD != 0 {
             self.rebuild_output();
             return;
+        }
+        if !self.playing && self.preview.is_none() && self.last_cmd.elapsed() >= SUSPEND_STREAM_AFTER {
+            if let Out::Device(s) = &mut self.out {
+                s.suspend();
+            }
         }
         let gen = output::device_watch::generation();
         let every = if self.dev_watched { DEVICE_POLL_WATCHED } else { DEVICE_POLL };
@@ -1324,6 +1435,25 @@ impl Controller {
     }
 }
 
+/// The loudness a track's gain is set from: its own (`album`: its album's), once measured. Until
+/// then its album's loudness (what the caller knows of it) is the best guess, else
+/// `ASSUMED_LUFS`. A measurement under way (`interim`: loudness so far, and whether it covers
+/// enough of the track to stand for it) may raise that guess at once, as the part heard so far
+/// shows a loud track but not that the rest stays quiet, and replaces it once trusted.
+fn gain_lufs(own: Option<f32>, album_lufs: Option<f32>, album: bool, interim: Option<(f32, bool)>) -> f32 {
+    let known = |l: &f32| l.is_finite();
+    let (own, album_lufs) = (own.filter(known), album_lufs.filter(known));
+    let measured = if album { album_lufs.or(own) } else { own };
+    measured.unwrap_or_else(|| {
+        let guess = album_lufs.unwrap_or(ASSUMED_LUFS);
+        match interim.filter(|(l, _)| l.is_finite()) {
+            Some((l, true)) => l,
+            Some((l, false)) => l.max(guess),
+            None => guess,
+        }
+    })
+}
+
 fn same_source(a: &SourceSpec, b: &SourceSpec) -> bool {
     let same_stream = match (a, b) {
         (SourceSpec::Http { cache_key: ka, url: ua, .. }, SourceSpec::Http { cache_key: kb, url: ub, .. }) => ka == kb && ua == ub,
@@ -1332,4 +1462,34 @@ fn same_source(a: &SourceSpec, b: &SourceSpec) -> bool {
     };
     // Clips / sub-songs / archive entries of one file are different tracks.
     same_stream && a.extras() == b.extras()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gain_lufs_prefers_measurements_then_the_best_guess() {
+        let nan = f32::NAN;
+        for (own, album_lufs, album, interim, expect) in [
+            // Measured: the track's own loudness, or in album mode the album's.
+            (Some(-20.0), Some(-22.0), false, None, -20.0),
+            (Some(-20.0), Some(-22.0), true, None, -22.0),
+            (Some(-20.0), None, true, None, -20.0),
+            // Not yet: its album's loudness is the better guess, else the assumption.
+            (None, Some(-22.0), false, None, -22.0),
+            (None, None, false, None, ASSUMED_LUFS),
+            // A failed measurement (NaN) is no measurement.
+            (Some(nan), Some(-22.0), false, None, -22.0),
+            // Under way: may say "louder" at once, "quieter" only once it covers enough.
+            (None, None, false, Some((-6.0, false)), -6.0),
+            (None, None, false, Some((-30.0, false)), ASSUMED_LUFS),
+            (None, Some(-22.0), false, Some((-25.0, false)), -22.0),
+            (None, None, false, Some((-30.0, true)), -30.0),
+            // A finished measurement wins over one under way.
+            (Some(-20.0), None, false, Some((-6.0, true)), -20.0),
+        ] {
+            assert_eq!(gain_lufs(own, album_lufs, album, interim), expect, "{own:?} {album_lufs:?} album={album} {interim:?}");
+        }
+    }
 }

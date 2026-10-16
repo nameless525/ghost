@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -19,9 +19,11 @@ afterAll(() => {
 
 /**
  * A stand-in yt-dlp: prints its version, "updates" (slowly on request), sleeps / fails on request,
- * prints progress lines when asked for them, echoes its args.
+ * prints progress lines when asked for them, echoes its args. Each run's first arg goes to `calls`
+ * beside it.
  */
 const fakeBinary = (version: string, opts: { updateSec?: number } = {}) => `#!/bin/sh
+echo "$1" >> "$(dirname "$0")/calls"
 if [ "$1" = "--version" ]; then echo ${version}; exit 0; fi
 if [ "$1" = "-U" ]; then sleep ${opts.updateSec ?? 0}; echo "Updated yt-dlp to stable@2026.09.01"; touch "$(dirname "$0")/updated"; exit 0; fi
 for a in "$@"; do
@@ -111,6 +113,24 @@ describe.runIf(unix)('yt-dlp: locate / download / update / run', () => {
     const f2 = releaseFetch(bin)
     await new YtDlp({ binDir, fetch: f2, systemDirs: [], jsRuntime: null, now: () => NOW, autoUpdate: false }).ensure()
     expect(f2.urls).toEqual([])
+  })
+
+  it('a managed copy that ran before and is unchanged is not run again just to read its version', async () => {
+    const binDir = join(tmp(), 'bin')
+    const path = join(binDir, releaseAssetName()!)
+    const opts = { binDir, systemDirs: [], jsRuntime: null, now: () => NOW, autoUpdate: false }
+    const calls = () => readFileSync(join(binDir, 'calls'), 'utf8').trim().split('\n')
+    await new YtDlp({ ...opts, fetch: releaseFetch(Buffer.from(fakeBinary('2026.08.19'))) }).ensure()
+    expect(calls()).toEqual(['--version']) // once, to check the download runs
+    expect(await new YtDlp({ ...opts, fetch: releaseFetch(Buffer.alloc(0)) }).ensure()).toEqual({ path, version: '2026.08.19', managed: true })
+    expect(calls()).toEqual(['--version'])
+    // Replaced on disk: checked again.
+    writeFileSync(path, fakeBinary('2026.09.30'))
+    utimesSync(path, new Date(NOW), new Date(NOW))
+    expect((await new YtDlp({ ...opts, fetch: releaseFetch(Buffer.alloc(0)) }).ensure()).version).toBe('2026.09.30')
+    expect(calls()).toEqual(['--version', '--version'])
+    expect((await new YtDlp({ ...opts, fetch: releaseFetch(Buffer.alloc(0)) }).ensure()).version).toBe('2026.09.30')
+    expect(calls()).toEqual(['--version', '--version'])
   })
 
   it('reports the download as it arrives, then that it runs', async () => {
@@ -218,6 +238,17 @@ describe.runIf(unix)('yt-dlp: locate / download / update / run', () => {
     expect(args.at(-1)).toBe('https://api.soundcloud.com/tracks/1')
     // Other runs keep yt-dlp quiet.
     expect((await y.run(['-J', 'x'])).stdout.split('\n')).toContain('--no-progress')
+  })
+
+  it('hands over stdout line by line as it is printed', async () => {
+    const sys = tmp()
+    writeFileSync(join(sys, 'yt-dlp'), fakeBinary('2026.09.30'))
+    chmodSync(join(sys, 'yt-dlp'), 0o755)
+    const y = new YtDlp({ binDir: join(tmp(), 'bin'), systemDirs: [sys], jsRuntime: null, now: () => NOW, autoUpdate: false })
+    const lines: string[] = []
+    const r = await y.run(['-j', 'https://www.youtube.com/watch?v=aaaaaaaaaaa'], { onLine: (l) => lines.push(l) })
+    expect(lines).toEqual(r.stdout.trim().split('\n'))
+    expect(lines.at(-1)).toBe('https://www.youtube.com/watch?v=aaaaaaaaaaa')
   })
 
   it('passes args without a shell, ignores user config, queues ≤2 at a time, times out, classifies errors', async () => {

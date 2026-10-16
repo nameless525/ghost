@@ -448,6 +448,9 @@ describe('source fallback', () => {
     expect(track.id).toBe(uid)
     expect(track.source).toMatchObject({ url: 'https://cdn.example/t1/fresh.m4a' })
     expect(t.st().current?.id).toBe('t1')
+    // the same file under a fresh URL is no backup
+    expect(t.st().current?.source?.backupFor).toBeUndefined()
+    expect(t.bc.of('notify').find((x) => x.title.includes('backup'))).toBeUndefined()
     // a second 403 on the same key is a real failure: skip on
     t.engine.emit({ type: 'error', id: uid, message: 'stream failed: HTTP 403', recoverable: true })
     await t.settle()
@@ -468,6 +471,82 @@ describe('source fallback', () => {
     expect((t.engine.lastCall('setCurrent')![0] as EngineTrack).id).toBe(t.uidAt(1))
     const n = t.bc.of('notify').find((x) => x.kind === 'error')
     expect(n?.title).toContain('Song 1')
+  })
+
+  it("when a track's own sources all fail, it asks the catalog once more (its fallback search) before skipping", async () => {
+    const t = setup()
+    const yt = httpSource('t1', 'yt', { provider: 'youtube' })
+    const resolve = t.catalog.resolveSources.bind(t.catalog)
+    // like the resolver: its fallback search runs only when none of the album's own sources is left
+    t.catalog.resolveSources = async (id, opts) => (id === 't1' && ['t1#a', 't1#b'].every((k) => opts?.exclude?.includes(k)) ? [yt] : resolve(id, opts))
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    const uid = t.uidAt(0)
+    t.engine.emit({ type: 'error', id: uid, message: 'decode error', recoverable: true })
+    await t.settle()
+    t.engine.emit({ type: 'error', id: uid, message: 'HTTP 404', recoverable: true })
+    await t.settle()
+    const [track] = t.engine.lastCall('setCurrent') as [EngineTrack]
+    expect(track.id).toBe(uid)
+    expect(track.source).toEqual(yt.source)
+    expect(t.st().current?.id).toBe('t1')
+    expect(t.bc.of('notify').find((x) => x.kind === 'error')).toBeUndefined()
+    // and it says so: on the track, and in a notice
+    expect(t.st().current?.source).toMatchObject({ provider: 'youtube', backupFor: { provider: 'khinsider', format: 'mp3', noAnswer: false } })
+    const n = t.bc.of('notify').filter((x) => x.title.includes('backup'))
+    expect(n).toHaveLength(1)
+    expect(n[0]).toMatchObject({ kind: 'info', title: '“Song 1” is playing from a backup', body: 'KHInsider’s MP3 couldn’t be played, so this is a backup copy from YouTube.' })
+  })
+
+  it("a server that didn't answer is tried last for the rest of the album: the others are asked for first", async () => {
+    const t = setup()
+    // An Internet Archive item on a storage server that's down: every track's file is in one folder.
+    const ia = (id: string) => httpSource(id, 'ia', { provider: 'archive', source: { kind: 'http', url: `https://ia.example/items/ost/${id}.flac`, cacheKey: `${id}#ia` } })
+    const yt = (id: string) => httpSource(id, 'yt', { provider: 'youtube' })
+    for (const id of ['t1', 't2']) t.catalog.sources.set(id, [ia(id)])
+    const resolve = t.catalog.resolveSources.bind(t.catalog)
+    // like the resolver: its fallback search runs only when nothing of the album's own is left
+    t.catalog.resolveSources = async (id, opts) => ((opts?.exclude ?? []).includes(`${id}#ia`) && id === 't2' ? [yt(id)] : resolve(id, opts))
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    t.engine.emit({ type: 'error', id: t.uidAt(0), message: 'stream stalled for 8s (timeout: connect)', recoverable: true })
+    await t.settle()
+    // t1 had nothing else; t2 doesn't wait on the same server first
+    expect(t.st().current?.id).toBe('t2')
+    const [track] = t.engine.lastCall('setCurrent') as [EngineTrack]
+    expect(track.source).toEqual(yt('t2').source)
+    expect(t.st().current?.source?.backupFor).toEqual({ provider: 'archive', format: 'mp3', noAnswer: true })
+    expect(t.bc.of('notify').find((x) => x.title.includes('backup'))?.body).toBe('Internet Archive isn’t answering, so this is a backup copy from YouTube.')
+    // still there as a last resort
+    t.engine.emit({ type: 'error', id: t.uidAt(1), message: 'decode error', recoverable: true })
+    await t.settle()
+    expect((t.engine.lastCall('setCurrent') as [EngineTrack])[0].source).toEqual(ia('t2').source)
+  })
+
+  it("the preloaded next track on a server that stopped answering is looked for elsewhere while the current one plays", async () => {
+    const t = setup()
+    const ia = (id: string) => httpSource(id, 'ia', { provider: 'archive', source: { kind: 'http', url: `https://ia.example/items/ost/${id}.flac`, cacheKey: `${id}#ia` } })
+    const yt = (id: string) => httpSource(id, 'yt', { provider: 'youtube' })
+    for (const id of ['t1', 't2']) t.catalog.sources.set(id, [ia(id)])
+    const resolve = t.catalog.resolveSources.bind(t.catalog)
+    t.catalog.resolveSources = async (id, opts) => ((opts?.exclude ?? []).includes(`${id}#ia`) ? [yt(id)] : resolve(id, opts))
+    await t.player.playTracks(['t1', 't2'])
+    await t.settle()
+    expect((t.engine.lastCall('setNext') as [EngineTrack])[0].source).toEqual(ia('t2').source) // armed before anyone knew
+    t.engine.emit({ type: 'error', id: t.uidAt(0), message: 'stream stalled for 8s (no data)', recoverable: true })
+    await t.settle()
+    expect((t.engine.lastCall('setCurrent') as [EngineTrack])[0].source).toEqual(yt('t1').source)
+    const [next] = t.engine.lastCall('setNext') as [EngineTrack]
+    expect(next.id).toBe(t.uidAt(1))
+    expect(next.source).toEqual(yt('t2').source)
+    // gaplessly into t2: announced too, on the same card as t1's (one per failed source)
+    t.engine.emit({ type: 'advanced', id: t.uidAt(1) })
+    await t.settle()
+    expect(t.st().current?.id).toBe('t2')
+    expect(t.st().current?.source?.backupFor?.provider).toBe('archive')
+    const cards = t.bc.of('notify').filter((x) => x.title.includes('backup'))
+    expect(cards.map((c) => c.title)).toEqual(['“Song 1” is playing from a backup', '“Song 2” is playing from a backup'])
+    expect(new Set(cards.map((c) => c.id)).size).toBe(1)
   })
 
   it('stops instead of skipping forever when nothing in the queue can play', async () => {
@@ -939,7 +1018,7 @@ describe('loading progress', () => {
     expect(t.st().loading).toBeNull()
   })
 
-  it('a source failing mid-track shows "Trying another source"', async () => {
+  it('a source failing mid-track says a backup is being looked for, and why', async () => {
     const t = setup()
     await t.player.playTracks(['t1'])
     await t.settle()
@@ -948,7 +1027,7 @@ describe('loading progress', () => {
     t.catalog.gate = new Promise((r) => (open = r))
     t.engine.emit({ type: 'error', id: t.engine.current!.id, message: 'stream failed: HTTP 500', recoverable: true })
     expect(t.st().status).toBe('loading')
-    expect(t.st().loading?.label).toBe('Trying another source')
+    expect(t.st().loading).toMatchObject({ label: 'Looking for a backup', detail: 'KHInsider’s MP3 couldn’t be played' })
     t.catalog.gate = null
     open()
     await t.settle()

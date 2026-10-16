@@ -22,6 +22,11 @@ export interface PanelNode {
   sub: HTMLElement | null
   meta: HTMLElement | null
   img: HTMLImageElement | null
+  /**
+   * Group rows: a small copy of the cover under `img` (the source's own thumbnail where it has
+   * one, a few KB), shown until the full-size one has downloaded.
+   */
+  preview: HTMLImageElement | null
   right: HTMLElement | null
   num: HTMLElement | null
   /** Loading rows: what the row waits on, as a line along its bottom. */
@@ -128,6 +133,7 @@ export function createPanel(type: PanelType): PanelNode {
   el.setAttribute('role', type === 'loading' ? 'presentation' : 'option')
   const panel = div('bc-panel', el)
   let img: HTMLImageElement | null = null
+  let preview: HTMLImageElement | null = null
   let sub: HTMLElement | null = null
   let meta: HTMLElement | null = null
   let right: HTMLElement | null = null
@@ -136,6 +142,7 @@ export function createPanel(type: PanelType): PanelNode {
   let title: HTMLElement
   if (type === 'group') {
     const art = div('bc-art', panel)
+    preview = makeImg('bc-art__img bc-art__img--preview', art)
     img = makeImg('bc-art__img', art)
     div('bc-shade', panel)
     div('bc-edge', panel)
@@ -172,7 +179,7 @@ export function createPanel(type: PanelType): PanelNode {
   // layers without the panel's rounded overflow clip.
   const ring = div('bc-ring', el)
   const glow = div('bc-glow', el)
-  return { type, el, panel, glow, ring, title, sub, meta, img, right, num, load, cache: {} }
+  return { type, el, panel, glow, ring, title, sub, meta, img, preview, right, num, load, cache: {} }
 }
 
 function setText(n: PanelNode, key: string, el: HTMLElement | null, text: string): void {
@@ -187,12 +194,12 @@ function setHTML(n: PanelNode, key: string, el: HTMLElement | null, html: string
   el.innerHTML = html
 }
 
-function setImg(n: PanelNode, url: string | null, w: number): void {
-  const img = n.img
-  if (!img) return
-  const src = artUrl(url, { w }) ?? ''
-  if (n.cache.img === src) return
-  n.cache.img = src
+/** Width (css px) group rows ask their cover for: .bc-art is 196 px wide. */
+export const GROUP_ART_W = 200
+/** Width of the preview under it: the smallest size the art protocol makes (128 px at 2x). */
+const PREVIEW_W = 64
+
+function loadInto(img: HTMLImageElement, src: string): void {
   img.classList.remove('is-loaded')
   if (!src) {
     img.removeAttribute('src')
@@ -200,6 +207,17 @@ function setImg(n: PanelNode, url: string | null, w: number): void {
   }
   img.src = src
   if (img.complete && img.naturalWidth > 0) img.classList.add('is-loaded')
+}
+
+function setImg(n: PanelNode, url: string | null, w: number): void {
+  const img = n.img
+  if (!img) return
+  const src = artUrl(url, { w }) ?? ''
+  if (n.cache.img === src) return
+  n.cache.img = src
+  loadInto(img, src)
+  // The preview only while the full-size cover is still on its way (not when it was cached).
+  if (n.preview) loadInto(n.preview, src && !img.classList.contains('is-loaded') ? (artUrl(url, { w: PREVIEW_W }) ?? '') : '')
 }
 
 function setVar(n: PanelNode, name: string, value: string): void {
@@ -241,7 +259,7 @@ export function fillGroup(n: PanelNode, g: BrowseGroup | null, title: string | n
   if (g.kind !== 'game' && g.kind !== 'album') meta = `<span class="bc-chip bc-chip--kind">${esc(g.kind)}</span>` + meta
   if (g.kind === 'game' && g.platforms.length > 3) meta += `<span class="bc-chip bc-chip--soft">+${g.platforms.length - 3}</span>`
   setHTML(n, 'meta', n.meta, meta)
-  setImg(n, g.cover ?? g.hero, 200) // .bc-art is 196 css px wide
+  setImg(n, g.cover ?? g.hero, GROUP_ART_W)
   setVar(n, '--ga', g.accent ?? 'var(--accent)')
 }
 

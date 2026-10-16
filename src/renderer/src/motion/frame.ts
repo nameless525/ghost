@@ -13,6 +13,15 @@ import type { AnalysisFrame } from '@shared/types'
 import { ghost } from '../ghost'
 import { ticker, TickPriority } from './ticker'
 
+// The engine computes the live analysis only while it can be seen: tell it whenever the window
+// is hidden (minimised, fully covered) or back. Sent once at start too, so a new page (a reload
+// after a crash) never inherits an old "hidden".
+if (typeof document !== 'undefined') {
+  const report = () => void ghost()?.player.setAnalysisDemand?.(!document.hidden).catch(() => {})
+  document.addEventListener('visibilitychange', report)
+  report()
+}
+
 let cached: AnalysisFrame | null = null
 let cachedFrame = -1
 const reused: AnalysisFrame = { bands: new Float32Array(96), waveform: new Float32Array(512), rms: 0, peak: 0, onset: 0, positionMs: 0, trackSeq: 0 }

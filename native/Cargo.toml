@@ -8,8 +8,9 @@ version = "0.1.0"
 license = "MIT"
 
 [profile.release]
-lto = "thin"
-codegen-units = 4
+# Whole-program LTO in one unit: a ~20% smaller addon (same speed as thin LTO; ~1 min more to build).
+lto = "fat"
+codegen-units = 1
 debug = 1
 
 # Audio code is unusably slow unoptimised; keep dev builds fast enough to listen to.

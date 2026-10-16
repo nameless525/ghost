@@ -259,6 +259,32 @@ describe('youtube: provider over a fake yt-dlp', () => {
     expect(y.calls).toHaveLength(1)
   })
 
+  it('a batched resolve is handed over when its own line is printed, the most urgent first', async () => {
+    // A warm-up (background) and a track someone waits for, batched into one run: the wanted one
+    // goes first and resolves while the warm-up is still being extracted.
+    let finish!: () => void
+    const rest = new Promise<void>((r) => (finish = r))
+    const calls: string[][] = []
+    const y = {
+      async run(args: string[], opts?: RunOptions): Promise<RunResult> {
+        calls.push(args)
+        const lines = args.filter((a) => a.startsWith('https://www.youtube.com/watch?v=')).map((a) => JSON.stringify({ ...hornet, id: a.slice(-11) }))
+        opts?.onLine?.(lines[0])
+        await rest
+        for (const l of lines.slice(1)) opts?.onLine?.(l)
+        return { stdout: lines.join('\n'), stderr: '', code: 0 }
+      }
+    } as unknown as YtDlp
+    const p = new YouTubeProvider(async () => y, { now })
+    const warm = p.resolveStream('aaaaaaaaaaa', { priority: 2 })
+    const wanted = await p.resolveStream('7xkM8mWC4Kk', { priority: 0 })
+    expect(wanted[0].source).toMatchObject({ cacheKey: 'yt:7xkM8mWC4Kk.m4a' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].filter((a) => a.startsWith('https://')).map((a) => a.slice(-11))).toEqual(['7xkM8mWC4Kk', 'aaaaaaaaaaa'])
+    finish()
+    expect((await warm)[0].source).toMatchObject({ cacheKey: 'yt:aaaaaaaaaaa.m4a' })
+  })
+
   it('a forced resolve reuses an extraction under two minutes old (chapters of one video refresh with one run)', async () => {
     let t = now()
     const y = fakeYtDlp((args) => {

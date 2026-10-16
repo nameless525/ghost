@@ -397,7 +397,9 @@ impl Engine {
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let (tap_tx, tap_rx) = crossbeam_channel::unbounded();
         let shared = Arc::new(engine::Shared::new());
-        let jobs = Arc::new(jobs::JobPool::new(2));
+        // Two measurements can wait on downloads (the playing track and the next) while a third
+        // thread keeps local work moving (a preview, a cached file).
+        let jobs = Arc::new(jobs::JobPool::new(3));
         let loops = Arc::new(source::loop_stage::LoopSettings::default());
         analysis_tap::spawn(shared.analysis.clone(), shared.clock.clone(), tap_rx);
         let ctl = engine::Controller::new(engine::ControllerInit {
@@ -464,6 +466,11 @@ impl Engine {
     }
     pub fn set_muted(&self, muted: bool) {
         self.cmd(engine::Cmd::Muted(muted));
+    }
+    /// Whether anyone shows the live analysis frames (the app's window is visible). Off, the
+    /// real-time analysis and its publisher idle; frames resume within a hop of turning it on.
+    pub fn set_analysis_demand(&self, on: bool) {
+        self.cmd(engine::Cmd::AnalysisDemand(on));
     }
     /// Applies live to playing tracks that carry loop points.
     pub fn set_loop(&self, mode: LoopMode, count: u32, fade_sec: f32) {

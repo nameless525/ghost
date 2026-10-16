@@ -95,6 +95,8 @@ export class WaitTracker {
   private wait: string
   /** The part of the bar the one-time tool install takes, while it runs. */
   private toolSpan: [number, number] | null = null
+  /** Why another source is being looked for ("Internet Archive isn’t answering"): the detail of the steps that follow. */
+  private why: string | null = null
 
   constructor(
     private readonly id: string,
@@ -146,22 +148,39 @@ export class WaitTracker {
     const key = `${s.kind}:${s.provider}`
     const name = s.providerName || s.provider
     if (s.providerName) this.typical.names.set(s.provider, s.providerName)
+    // Looking for a backup (`why`): the label says so too, where only the label fits (the mini player).
     const label =
       s.kind === 'search'
-        ? `Searching ${name} for this track`
+        ? this.why
+          ? `Looking for a backup on ${name}`
+          : `Searching ${name} for this track`
         : s.provider === 'youtube'
-          ? 'Getting the stream from YouTube'
+          ? this.why
+            ? 'Getting the backup from YouTube'
+            : 'Getting the stream from YouTube'
           : s.provider === 'soundcloud'
             ? 'Downloading from SoundCloud'
-            : `Getting the track from ${name}`
+            : this.why
+              ? `Getting the backup from ${name}`
+              : `Getting the track from ${name}`
     const fraction = s.fraction != null && Number.isFinite(s.fraction) ? Math.max(0, Math.min(1, s.fraction)) : null
+    const detail = s.detail ?? this.why
     if (key === this.stepKey) {
       // Progress within the same step (a whole-track download measuring itself).
-      if (this.step.fraction === fraction && this.step.detail === (s.detail ?? null)) return false
-      this.step = { ...this.step, fraction, detail: s.detail ?? null, expectMs: fraction == null ? this.step.expectMs : null }
+      if (this.step.fraction === fraction && this.step.detail === detail) return false
+      this.step = { ...this.step, fraction, detail, expectMs: fraction == null ? this.step.expectMs : null }
       return true
     }
-    this.begin(key, this.make(label, s.detail ?? null, fraction, fraction == null ? this.typical.get(key) : null, [this.spanStart(), RESOLVE_END]))
+    this.begin(key, this.make(label, detail, fraction, fraction == null ? this.typical.get(key) : null, [this.spanStart(), RESOLVE_END]))
+    return true
+  }
+
+  /** The source meant for this track is out (`why`): what follows is a search for another. */
+  lookingElsewhere(why: string): boolean {
+    if (this.why === why) return false
+    this.why = why
+    if (this.phase !== 'resolve' || this.step.detail) return false
+    this.step = { ...this.step, detail: why }
     return true
   }
 
@@ -212,7 +231,7 @@ export class WaitTracker {
     const local = provider === 'download' || provider === 'local'
     const name = this.typical.names.get(provider)
     const key = local ? 'open:local' : 'connect'
-    this.begin(key, this.make(local ? 'Opening the file' : name ? `Connecting to ${name}` : 'Connecting', null, null, local ? 200 : this.typical.get(key), [RESOLVE_END, 1]))
+    this.begin(key, this.make(local ? 'Opening the file' : name ? `Connecting to ${name}` : 'Connecting', this.why, null, local ? 200 : this.typical.get(key), [RESOLVE_END, 1]))
     return true
   }
 
@@ -235,13 +254,14 @@ export class WaitTracker {
     return true
   }
 
-  /** The source failed; the player moves to the next one (re-resolving if needed): a new wait. */
-  fallback(): boolean {
+  /** The source failed (`why`, for the UI); the player moves to the next one (re-resolving if needed): a new wait. */
+  fallback(why?: string): boolean {
     this.endStep()
     this.phase = 'resolve'
     this.wait = `${this.id}#${++this.waitN}`
     this.stepKey = ''
-    this.step = this.make('Trying another source', null, null, this.typical.get('find'), [0, RESOLVE_END])
+    if (why) this.why = why
+    this.step = this.make(this.why ? 'Looking for a backup' : 'Trying another source', this.why, null, this.typical.get('find'), [0, RESOLVE_END])
     return true
   }
 

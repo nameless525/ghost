@@ -2,11 +2,11 @@
 
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::*;
 use ghost_engine::wav;
-use ghost_engine::{DownloadStatus, EngineEvent, PlaybackState, SourceSpec, TagInfo};
+use ghost_engine::{DownloadStatus, EngineEvent, NormalizationMode, PlaybackState, SourceExtras, SourceSpec, TagInfo};
 
 /// Gapless null test: one continuous sweep split at an arbitrary (non block-aligned) frame into
 /// two files; rendering A → B must reproduce the original exactly — no gap, no click.
@@ -297,6 +297,8 @@ fn normalization_track_and_album_gain() {
         (ghost_engine::NormalizationMode::Track, Some(-20.0), Some(-22.0), 4.0f32),
         (ghost_engine::NormalizationMode::Album, Some(-20.0), Some(-22.0), 6.0),
         (ghost_engine::NormalizationMode::Track, None, None, -4.0), // provisional
+        // Not measured yet, but its album is: the album's loudness is the better first guess.
+        (ghost_engine::NormalizationMode::Track, None, Some(-22.0), 6.0),
     ] {
         let (engine, sink) = offline(&dir, rate);
         engine.set_normalization(true, -16.0, mode);
@@ -312,6 +314,78 @@ fn normalization_track_and_album_gain() {
         println!("normalization {mode:?} lufs={lufs:?}: gain {got_db:.2} dB (expected {expect_db})");
         assert!((got_db - expect_db).abs() < 0.05, "{mode:?}: got {got_db} dB, expected {expect_db}");
     }
+}
+
+/// Waits for the `Analysis` event of track `id` (its loudness reached the gain by then).
+fn analysis_of(engine: &ghost_engine::Engine, id: &str, timeout: Duration) -> Option<ghost_engine::OfflineAnalysis> {
+    let events = engine.events();
+    let t0 = Instant::now();
+    while t0.elapsed() < timeout {
+        if let Ok(EngineEvent::Analysis { id: got, result, .. }) = events.recv_timeout(Duration::from_millis(50)) {
+            if got == id {
+                return Some(result);
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn clip_is_measured_without_waiting_for_the_whole_stream() {
+    // A chapter of a long video: the stream past 4 MB never arrives (the server refuses ranges
+    // starting there), so the file can't complete, but the clip lies in its first 1.2 MB.
+    let dir = tmp_dir("clip-measure");
+    let rate = 48_000;
+    let a = dir.join("long.wav");
+    wav::write_f32(&a, rate, 2, &tone(rate, rate as usize * 40, 440.0, 0.1)).unwrap();
+    let srv = serve_with(std::fs::read(&a).unwrap(), "long.wav", Duration::ZERO, false, |start| (start >= 4 << 20).then_some(503));
+    let (engine, _sink) = offline(&dir, rate);
+    engine.set_normalization(true, -16.0, NormalizationMode::Track);
+    let extras = SourceExtras { clip_start_ms: Some(1000), clip_end_ms: Some(3000), ..Default::default() };
+    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "clip".into(), format_hint: None, extras };
+    engine.set_current(track("c", spec), 0, true);
+    let a = analysis_of(&engine, "c", Duration::from_secs(30)).expect("the clip was never measured");
+    let lufs = a.integrated_lufs.expect("no loudness");
+    // A 440 Hz sine at 0.1 in both channels: about −20.7 LUFS.
+    assert!((lufs + 20.7).abs() < 1.0, "clip measured at {lufs} LUFS");
+}
+
+#[test]
+fn loud_stream_is_turned_down_before_it_finishes_downloading() {
+    // A very loud track (a 0.9 sine, about −1.6 LUFS) streaming at ~2× real time: the whole
+    // file takes ~16 s. It starts at the provisional −4 dB; the measurement running along the
+    // download reports it loud after ~1.5 s, long before the last byte arrives (the window
+    // checked below plays ~10–14 s in, leaving a loaded machine plenty of slack).
+    let dir = tmp_dir("interim");
+    let rate = 48_000;
+    let secs = 30;
+    let a = dir.join("loud.wav");
+    wav::write_f32(&a, rate, 2, &tone(rate, rate as usize * secs, 440.0, 0.9)).unwrap();
+    let srv = serve(std::fs::read(&a).unwrap(), "loud.wav", Duration::from_millis(11), false);
+    let (engine, sink) = offline(&dir, rate);
+    engine.set_normalization(true, -16.0, NormalizationMode::Track);
+    let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "loud".into(), format_hint: None, extras: Default::default() };
+    engine.set_current(track("l", spec), 0, true);
+    let (out, _) = collect_until_ended(&engine, &sink, Duration::from_secs(60));
+    let at = |s: f32| (s * rate as f32) as usize * 2;
+    let start = peak(&out[..at(0.5)]);
+    let middle = peak(&out[at(18.0)..at(26.0)]);
+    println!("peak at the start {start:.3}, at 18–26 s {middle:.3}");
+    assert!((start - 0.9 * ghost_engine::util::db_to_lin(-4.0)).abs() < 0.02, "start {start}");
+    // Measured −1.6 LUFS → −14.4 dB; anything near that shows it was turned down mid-download.
+    assert!(middle < 0.9 * ghost_engine::util::db_to_lin(-10.0), "still at {middle} 18–26 s in");
+}
+
+#[test]
+fn preview_is_measured() {
+    let dir = tmp_dir("preview-measure");
+    let rate = 48_000;
+    let a = dir.join("a.wav");
+    wav::write_f32(&a, rate, 2, &tone(rate, rate as usize * 3, 440.0, 0.1)).unwrap();
+    let (engine, _sink) = offline(&dir, rate);
+    engine.set_normalization(true, -16.0, NormalizationMode::Track);
+    engine.preview(track("p", file(&a)), 0);
+    assert!(analysis_of(&engine, "p", Duration::from_secs(30)).is_some_and(|a| a.integrated_lufs.is_some()), "the preview was never measured");
 }
 
 #[test]
@@ -462,11 +536,13 @@ fn engine_handle_is_send_and_sync() {
 fn url_expiring_mid_stream_reports_http_status() {
     let dir = tmp_dir("expire");
     let rate = 48_000;
-    let sig = sweep(rate, rate as usize * 12, 60.0, 8_000.0, 0.5);
+    // 11.5 MB: longer than any one request (a fill asks for up to 8 MB), so whoever opens the
+    // stream first (the voice, or the loudness measurement), a later request crosses 1 MB.
+    let sig = sweep(rate, rate as usize * 30, 60.0, 8_000.0, 0.5);
     let wavf = dir.join("long.wav");
     wav::write_f32(&wavf, rate, 2, &sig).unwrap();
     let bytes = std::fs::read(&wavf).unwrap();
-    let srv = serve_with(bytes.clone(), "long.wav", Duration::from_millis(1), false, |a| (a >= 1024 * 1024).then_some(403));
+    let srv = serve_with(bytes.clone(), "long.wav", Duration::ZERO, false, |a| (a >= 1024 * 1024).then_some(403));
     let (engine, sink) = offline(&dir, rate);
     let events = engine.events();
     let spec = SourceSpec::Http { url: srv.url.clone(), headers: vec![], cache_key: "expire".into(), format_hint: None, extras: Default::default() };
@@ -535,7 +611,7 @@ fn streamed_flac_skips_embedded_art() {
     std::fs::write(&local, &withart).unwrap();
 
     let decode = |spec: &SourceSpec, cache: &std::sync::Arc<ghost_engine::cache::CacheManager>| {
-        let ctx = OpenCtx { cache, cancel: Default::default(), accurate_seek: false };
+        let ctx = OpenCtx { cache, cancel: Default::default(), accurate_seek: false, background: false };
         let t = std::time::Instant::now();
         let mut s = source::open(spec, &ctx).unwrap_or_else(|e| panic!("{}", e.message));
         let mut buf = vec![0.0f32; 4096];

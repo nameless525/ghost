@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { defaultSettings } from '../../shared/defaults'
 import type { CatalogStatus, Settings } from '../../shared/types'
 import { NetError } from '../net/errors'
@@ -9,6 +9,7 @@ import { ProviderRegistry } from '../providers'
 import { KhinsiderProvider, parseLatestPage } from '../providers/khinsider'
 import type { Provider, StreamInfo } from '../providers/types'
 import type { CatalogService } from './index'
+import { CatalogRepo } from './repo'
 import { createCatalogService } from './service'
 import { memoryDb } from './testing'
 
@@ -395,9 +396,12 @@ describe('several index sources', () => {
     const other = fakeIndex('other', [['Ys (Arranged)'], ['Ys II OST']], calls)
     const late = Object.assign(fakeIndex('late', [['?Mother 3 (NSF)', '?Unknown Tune']], calls), { indexAfterOthers: true })
     const muted = fakeIndex('muted', [['Never Crawled']], calls)
+    const db = memoryDb()
+    // the full re-cluster runs once a round, after the last crawl (earlier ones leave it pending)
+    const recluster = vi.spyOn(CatalogRepo.prototype, 'reclusterAll')
     const svc = createCatalogService(
       {
-        db: memoryDb(),
+        db,
         broadcast: ((e: string, p: unknown) => {
           if (e === 'notify') notes.push(p as never)
           if (e === 'catalog:status') statuses.push(p as CatalogStatus)
@@ -414,6 +418,8 @@ describe('several index sources', () => {
     expect(new Set(calls.slice(2, 5))).toEqual(new Set(['extra:1', 'other:1', 'other:2']))
     expect(calls.at(-1)).toBe('late:1')
     expect(calls).not.toContain('muted:1')
+    expect(recluster).toHaveBeenCalledTimes(1)
+    expect(db.prepare(`SELECT value FROM catalog_meta WHERE key = 'recluster_pending'`).get()).toEqual({ value: '0' })
     const games = await svc.browse({ text: '', group: 'game', sort: 'title', offset: 0, limit: 10 })
     // the second source's Chrono Trigger rip joins the existing game; "late" only kept Mother 3 (known)
     expect(games.groups.map((g) => [g.title, g.albumCount])).toEqual([
@@ -446,6 +452,8 @@ describe('several index sources', () => {
     expect(calls.at(-1)).toBe('late:1')
     await new Promise((r) => setTimeout(r, 1200))
     expect(notes).toEqual([])
+    expect(recluster).toHaveBeenCalledTimes(2)
+    recluster.mockRestore()
     svc.stop()
   }, 20_000)
 })
@@ -570,6 +578,76 @@ describe('albums a source lists without files', () => {
     expect((await svc.browse({ text: '', group: 'album', sort: 'title', offset: 0, limit: 10 })).total).toBe(1)
     await expect(svc.album(String(id))).rejects.toThrow(/lists “Fushigi no Dungeon 2” but has no tracks/)
     expect((await svc.browse({ text: '', group: 'album', sort: 'title', offset: 0, limit: 10 })).total).toBe(0)
+    svc.stop()
+  })
+})
+
+describe('track lists of the game being looked at', () => {
+  const hitOf = (ref: string) => ({ provider: 'zophar', ref, title: `Album ${ref}`, titleFromRef: false, platforms: [], kind: 'gamerip' as const, typeLabel: null, year: null, thumb: null, cover: null, catalogNo: null, addedAt: null })
+  /** A Zophar stand-in whose album pages arrive when the test releases them; it records each request's priority. */
+  async function setup(refs: string[]) {
+    const settings: Settings = defaultSettings('/tmp/ghost-dl')
+    const calls: string[] = []
+    const waiting = new Map<string, (() => void)[]>()
+    const release = (ref: string) => {
+      for (const r of waiting.get(ref) ?? []) r()
+      waiting.delete(ref)
+    }
+    const provider: Provider = {
+      id: 'zophar',
+      name: "Zophar's Domain",
+      async getAlbum(ref: string, opts?: { priority?: number }) {
+        calls.push(`${ref}@${opts?.priority}`)
+        await new Promise<void>((r) => waiting.set(ref, [...(waiting.get(ref) ?? []), r]))
+        const track = { disc: 1, number: 1, title: 'Title', durationMs: 90_000, locator: `${ref}/1`, files: [], composers: [] }
+        return { ...hitOf(ref), altTitles: [], titleOriginal: null, developers: [], publishers: [], composers: [], images: [], description: null, formats: [], totalSizes: {}, externalId: null, tracks: [track, { ...track, number: 2, locator: `${ref}/2` }] }
+      },
+      async resolveStream(): Promise<StreamInfo[]> {
+        return []
+      }
+    }
+    const db = memoryDb()
+    const svc = createCatalogService({ db, broadcast: (() => {}) as never, getSettings: () => settings }, { registry: new ProviderRegistry().register(provider), disableEnrichment: true, startDelayMs: 1e9, log: () => {} })
+    const repo = new CatalogRepo(db)
+    const ids = repo.upsertHits(refs.map(hitOf), { initial: false }).map(String)
+    repo.assignGames(ids.map(Number))
+    const counts = () => repo.all<{ track_count: number | null }>(`SELECT track_count FROM albums ORDER BY id`).map((r) => r.track_count)
+    return { svc, calls, release, waiting, ids, counts }
+  }
+
+  it('fetches the unknown ones in the background, two at a time; another game replaces what still waits', async () => {
+    const { svc, calls, release, waiting, ids, counts } = await setup(['a', 'b', 'c', 'd', 'e'])
+    svc.fillAlbums([ids[0], ids[1], ids[2]])
+    await until(() => calls.length === 2)
+    expect(calls).toEqual(['a@1', 'b@1']) // normal priority: behind anything someone opens
+    // Another game: 'c' was still waiting and is dropped.
+    svc.fillAlbums([ids[3], ids[4]])
+    release('a')
+    await until(() => calls.length === 3)
+    release('b')
+    await until(() => calls.length === 4)
+    release('d')
+    release('e')
+    await until(() => counts()[4] === 2)
+    expect(calls).toEqual(['a@1', 'b@1', 'd@1', 'e@1'])
+    expect(counts()).toEqual([2, 2, null, 2, 2])
+    // Known ones aren't fetched again.
+    svc.fillAlbums([ids[0], ids[3]])
+    await new Promise((r) => setTimeout(r, 30))
+    expect(calls).toHaveLength(4)
+    expect(waiting.size).toBe(0)
+    svc.stop()
+  })
+
+  it('opening an album the background is fetching asks again at once, moving that request up its queue', async () => {
+    const { svc, calls, release, ids } = await setup(['a'])
+    svc.fillAlbums([ids[0]])
+    await until(() => calls.length === 1)
+    const open = svc.album(ids[0])
+    await until(() => calls.length === 2)
+    expect(calls).toEqual(['a@1', 'a@0'])
+    release('a')
+    expect((await open).tracks).toHaveLength(2)
     svc.stop()
   })
 })

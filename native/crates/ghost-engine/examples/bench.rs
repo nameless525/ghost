@@ -226,7 +226,7 @@ fn open_bench(o: &Opts, src: &str) {
             prefill_cache(&cache, &s);
         }
         let cancel = Arc::new(AtomicBool::new(false));
-        let ctx = OpenCtx { cache: &cache, cancel: cancel.clone(), accurate_seek: false };
+        let ctx = OpenCtx { cache: &cache, cancel: cancel.clone(), accurate_seek: false, background: false };
         let t0 = Instant::now();
         let mut a = source::open(&s, &ctx).unwrap_or_else(|e| panic!("open: {}", e.message));
         let opened = t0.elapsed();
@@ -282,7 +282,7 @@ fn hash_bench(o: &Opts, src: &str) {
     let dir = scratch("hash");
     let cache = CacheManager::new(dir.join("cache"), 4 << 30, UA).unwrap();
     let s = spec(src, &o.headers, "hash", o.clip);
-    let ctx = OpenCtx { cache: &cache, cancel: Arc::new(AtomicBool::new(false)), accurate_seek: false };
+    let ctx = OpenCtx { cache: &cache, cancel: Arc::new(AtomicBool::new(false)), accurate_seek: false, background: false };
     let mut a = source::open(&s, &ctx).unwrap_or_else(|e| panic!("open: {}", e.message));
     let rate = a.sample_rate() as u64;
     let mut landed = 0;

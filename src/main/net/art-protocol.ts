@@ -1,7 +1,10 @@
 // `ghost-art://` protocol: serves remote artwork with an on-disk cache and permissive CORS so the
 // renderer can use it as WebGL textures.
 //
-//   ghost-art://img/?u=<encodeURIComponent(https url)>[&w=<width px>]
+//   ghost-art://img/?u=<encodeURIComponent(https url)>[&w=<width px>][&bg=1]
+//
+// `bg=1` marks a request nobody is looking at yet (Browse warming the rows ahead): its download
+// only uses capacity the on-screen ones leave (see "Download order").
 //
 // Nothing here blocks the main thread (on macOS it also delivers window input): decoding,
 // resizing, re-encoding and the accent colour run in the native art pipeline (`processArt`,
@@ -26,6 +29,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { artAccentOf, artPipelineAvailable, processArt } from '../engine/native'
 import { paths } from '../paths'
+import { perfActive } from '../perf'
 import { accentHex } from './accent'
 import { blockedMessage, isNetError, NetError } from './errors'
 import { detectBlock, GHOST_USER_AGENT, type FetchLike } from './http'
@@ -84,20 +88,23 @@ export function handleArtProtocol(): void {
   protocol.handle(ART_SCHEME, async (req) => {
     const t0 = performance.now()
     stats.requests++
-    if (stats.urls.size < 50_000) stats.urls.add(req.url)
+    // distinct URLs, for perf stats only (up to ~15 MB of strings in a long session otherwise)
+    if (perfActive() && stats.urls.size < 50_000) stats.urls.add(req.url)
     let target: string | null = null
     let w: number | undefined
+    let bg = false
     try {
       const u = new URL(req.url)
       target = u.searchParams.get('u')
       const wp = Number(u.searchParams.get('w'))
       w = Number.isFinite(wp) && wp > 0 ? wp : undefined
+      bg = u.searchParams.get('bg') === '1'
     } catch {
       /* fall through */
     }
     if (!target || !/^https?:\/\//i.test(target)) return new Response('bad art url', { status: 400, headers: { ...CORS, 'cache-control': 'no-store' } })
     try {
-      const art = await getArt(target, w)
+      const art = await getArt(target, w, bg)
       const ms = performance.now() - t0
       stats.totalMs += ms
       if (ms > stats.maxMs) stats.maxMs = ms
@@ -312,11 +319,14 @@ async function fetchBytes(url: string, retries: number): Promise<{ bytes: Buffer
   }
 }
 
-/** KHInsider full-size scans occasionally 404 while their /thumbs/ copy exists. */
-function fallbackUrl(url: string): string | null {
+/**
+ * The source's own small copy of a full-size cover: KHInsider's /thumbs/ (117 px, ~10–30 KB) and
+ * Zophar's thumbs_large (~180 px), where the full scan can be several MB. Used for the smallest
+ * bucket (album rows, queue and library lists), and when a full-size scan 404s.
+ */
+function thumbnailUrl(url: string): string | null {
   const m = /^(https?:\/\/[^/]*vgmtreasurechest\.com\/soundtracks\/[^/]+\/)(?!thumbs)([^/]+)$/.exec(url)
   if (m) return `${m[1]}thumbs/${m[2]}`
-  // Zophar's full-size cover → its large thumbnail.
   const z = /^(https?:\/\/fi\.zophar\.net\/soundcovers\/[^/]+\/)(?!thumbs_)([^/]+)$/.exec(url)
   return z ? `${z[1]}thumbs_large/${z[2]}` : null
 }
@@ -325,10 +335,111 @@ async function fetchArt(url: string): Promise<{ bytes: Buffer; contentType: stri
   try {
     return await fetchBytes(url, 2)
   } catch (e) {
-    const fb = isNetError(e, 'not_found') ? fallbackUrl(url) : null
+    const fb = isNetError(e, 'not_found') ? thumbnailUrl(url) : null
     if (!fb) throw e
     return fetchBytes(fb, 1)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Download order
+//
+// Scrolling Browse asks for covers far faster than they download, and nothing says when a page
+// stops wanting one (Electron's request signal doesn't fire when an <img> moves on). All started
+// at once, a fling's worth of full-size scans (up to 4 per host, across half a dozen hosts) split
+// the connection, so the covers on screen arrived no sooner than everything scrolled past: a
+// median of 7.6 s in a quick scroll, 20 s at worst. Now at most DOWNLOADS run at a time, newest
+// first, since what was asked for last is what's on screen; a request for one already waiting
+// moves it to the front. Small images (the smallest bucket: thumbnails, row previews) go before
+// full-size scans, since they take a fraction of the time; background requests (`bg=1`) only use
+// what's left. A download only takes a slot once its host's limiter can start it, so a host paced
+// at one request a second never holds slots that covers from other hosts could use.
+const DOWNLOADS = 6
+const BG_DOWNLOADS = 2
+
+/** 0 = small image, 1 = full-size, on screen, 2 = background. */
+type Tier = 0 | 1 | 2
+
+interface Download {
+  /** The cover URL (`#thumb` for its thumbnail): what a later request for it can move up. */
+  key: string
+  host: string
+  tier: Tier
+  start: () => void
+}
+const waiting: Download[] = []
+let downloading = 0
+let downloadingBg = 0
+let retry: ReturnType<typeof setTimeout> | null = null
+
+function pumpDownloads(): void {
+  if (retry) {
+    clearTimeout(retry)
+    retry = null
+  }
+  let soonest = Infinity
+  // by tier, newest first within each; background ones only while there's room for them
+  for (const tier of [0, 1, 2] as const) {
+    for (let i = waiting.length - 1; i >= 0 && downloading < DOWNLOADS; i--) {
+      const d = waiting[i]
+      if (d.tier !== tier || (tier === 2 && downloadingBg >= BG_DOWNLOADS)) continue
+      const ready = sharedHttp().limiter(d.host).readyIn()
+      if (ready > 0) {
+        soonest = Math.min(soonest, ready)
+        continue
+      }
+      waiting.splice(i, 1)
+      downloading++
+      if (tier === 2) downloadingBg++
+      d.start()
+    }
+  }
+  // A host that's only spaced out: look again when it can start. A busy one (or one paced by
+  // requests other than these) is looked at again when a download ends, or after a moment.
+  if (waiting.length && downloading < DOWNLOADS) {
+    retry = setTimeout(pumpDownloads, Number.isFinite(soonest) ? soonest + 1 : 250)
+    retry.unref?.()
+  }
+}
+
+/** Run a download when its turn comes (see above). */
+function inTurn<T>(key: string, url: string, tier: Tier, fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const d: Download = {
+      key,
+      host: new URL(url).host,
+      tier,
+      start: () => {
+        const counted = d.tier === 2
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            downloading--
+            if (counted) downloadingBg--
+            pumpDownloads()
+          })
+      }
+    }
+    waiting.push(d)
+    pumpDownloads()
+  })
+}
+
+/** Someone wants `url` now: its waiting download(s) move to the front, as on-screen work. */
+function moveUp(url: string): void {
+  for (let i = waiting.length - 1; i >= 0; i--) {
+    const d = waiting[i]
+    if (d.key !== url && d.key !== `${url}#thumb`) continue
+    waiting.splice(i, 1)
+    if (d.tier === 2) d.tier = d.key === url ? 1 : 0
+    waiting.push(d)
+  }
+  pumpDownloads()
+}
+
+/** Downloads waiting / running (tests). */
+export function artDownloadQueue(): { waiting: number; running: number } {
+  return { waiting: waiting.length, running: downloading }
 }
 
 // ---------------------------------------------------------------------------
@@ -336,17 +447,23 @@ async function fetchArt(url: string): Promise<{ bytes: Buffer; contentType: stri
 
 const inflight = new Map<string, Promise<CachedArt>>()
 
-/** Cached image bytes for a URL, capped (fetched and processed off-thread on a miss). `w` snaps to a bucket. */
-export async function getArt(url: string, w?: number): Promise<ArtBytes> {
-  const a = await load(url, variantFor(w))
+/**
+ * Cached image bytes for a URL, capped (fetched and processed off-thread on a miss). `w` snaps to
+ * a bucket; `bg` marks a request nobody is looking at yet (see "Download order").
+ */
+export async function getArt(url: string, w?: number, bg = false): Promise<ArtBytes> {
+  const a = await load(url, variantFor(w), bg)
   return { bytes: a.bytes, type: a.type }
 }
 
-function load(url: string, bucket: number | undefined): Promise<CachedArt> {
+function load(url: string, bucket: number | undefined, bg: boolean): Promise<CachedArt> {
   const key = bucket ? `${url}#w=${bucket}` : url
   const existing = inflight.get(key)
-  if (existing) return existing
-  const p = (bucket ? loadVariant(url, bucket) : loadBase(url)).finally(() => inflight.delete(key))
+  if (existing) {
+    if (!bg) moveUp(url)
+    return existing
+  }
+  const p = (bucket ? loadVariant(url, bucket, bg) : loadBase(url, bg)).finally(() => inflight.delete(key))
   inflight.set(key, p)
   return p
 }
@@ -357,13 +474,13 @@ function baseIsCurrent(m: ArtMeta): boolean {
   return m.width != null && m.height != null && m.width <= BASE_MAX_WIDTH && m.height <= BASE_MAX_WIDTH * MAX_ASPECT
 }
 
-async function loadBase(url: string): Promise<CachedArt> {
+async function loadBase(url: string, bg: boolean): Promise<CachedArt> {
   const cached = await readCached(url)
   // (Without the native pipeline there is nothing better to make of an older entry.)
   if (cached && (baseIsCurrent(cached.meta) || !artPipelineAvailable())) return cached
   // An older entry of unknown / oversized dimensions (e.g. an untouched GIF): re-process once.
   if (cached) return storeBase(url, cached.bytes, cached.type, false)
-  const res = await fetchArt(url)
+  const res = await inTurn(url, url, bg ? 2 : 1, () => fetchArt(url))
   stats.fetched++
   const type = sniffType(res.bytes, res.contentType)
   if (!type) throw new NetError('parse', `not an image: ${url}`, { url })
@@ -408,10 +525,17 @@ async function storeBase(url: string, original: Buffer, type: string, fetched: b
   return { bytes, type: meta.type, meta }
 }
 
-async function loadVariant(url: string, bucket: number): Promise<CachedArt> {
+/** The bucket the source's thumbnail is enough for (see thumbnailUrl). */
+const THUMB_MAX_BUCKET = 128
+
+async function loadVariant(url: string, bucket: number, bg: boolean): Promise<CachedArt> {
   const cached = await readCached(url, bucket)
   if (cached && cached.meta.v === META_VERSION) return cached
-  const base = await load(url, undefined)
+  if (bucket <= THUMB_MAX_BUCKET) {
+    const small = await loadThumbnail(url, bucket, bg)
+    if (small) return small
+  }
+  const base = await load(url, undefined, bg)
   // Already narrow enough (or of unknown size): the base is the answer, no extra file.
   if (base.meta.width == null || base.meta.width <= bucket) return base
   try {
@@ -423,6 +547,41 @@ async function loadVariant(url: string, bucket: number): Promise<CachedArt> {
   } catch {
     return base
   }
+}
+
+/**
+ * The smallest bucket from the source's thumbnail instead of the full scan (null: there is none,
+ * it failed, or the full-size base is already cached, which is resized instead).
+ */
+async function loadThumbnail(url: string, bucket: number, bg: boolean): Promise<CachedArt | null> {
+  const thumb = thumbnailUrl(url)
+  if (!thumb) return null
+  // (still worth it while the full scan is on its way: it's a fraction of the size)
+  if (await stat(cachePaths(url).meta).then(() => true, () => false)) return null
+  let res: { bytes: Buffer; contentType: string | null }
+  try {
+    res = await inTurn(`${url}#thumb`, thumb, bg ? 2 : 0, () => fetchBytes(thumb, 1))
+  } catch {
+    return null
+  }
+  const type = sniffType(res.bytes, res.contentType)
+  if (!type) return null
+  stats.fetched++
+  const meta: ArtMeta = { v: META_VERSION, type, url, w: bucket, width: null, height: null, at: Date.now() }
+  let bytes = res.bytes
+  try {
+    const r = await processArt(res.bytes, { maxWidth: bucket, maxHeight: bucket * MAX_ASPECT, quality: JPEG_QUALITY, passthroughMaxBytes: PASSTHROUGH_MAX_BYTES, accent: false })
+    if (r.width > 0) {
+      bytes = r.data
+      meta.type = r.mime
+      meta.width = r.width
+      meta.height = r.height
+    }
+  } catch {
+    /* served as fetched */
+  }
+  await writeCached(url, bucket, bytes, meta).catch(() => {})
+  return { bytes, type: meta.type, meta }
 }
 
 // ---------------------------------------------------------------------------
@@ -475,9 +634,20 @@ async function computeAccent(url: string, bytes?: Buffer): Promise<string | null
 // ---------------------------------------------------------------------------
 // Housekeeping
 
-/** Delete least-recently-written art until the cache is under `maxBytes`. */
-export async function trimArtCache(maxBytes = 2 * 1024 ** 3): Promise<{ files: number; bytes: number; removed: number }> {
+/** The cache grows by a few covers a minute at most: looking at every file once a day is plenty. */
+const TRIM_EVERY_MS = 24 * 3600_000
+
+/**
+ * Delete least-recently-written art until the cache is under `maxBytes`. Reads every file's size,
+ * so it runs at most once a day (`force` to run anyway); null when it was skipped.
+ */
+export async function trimArtCache(maxBytes = 2 * 1024 ** 3, force = false): Promise<{ files: number; bytes: number; removed: number } | null> {
   const root = artDir()
+  const marker = join(root, '.trimmed')
+  if (!force) {
+    const last = await stat(marker).then((s) => s.mtimeMs, () => 0)
+    if (Date.now() - last < TRIM_EVERY_MS) return null
+  }
   const files: { path: string; size: number; mtime: number }[] = []
   let total = 0
   let subdirs: string[] = []
@@ -513,5 +683,6 @@ export async function trimArtCache(maxBytes = 2 * 1024 ** 3): Promise<{ files: n
       removed++
     }
   }
+  await writeFile(marker, '').catch(() => {})
   return { files: files.length, bytes: total, removed }
 }

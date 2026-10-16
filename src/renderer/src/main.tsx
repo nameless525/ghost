@@ -8,9 +8,11 @@ import { installMockGhost } from './mock'
 import { initPlayerStore } from './state/player'
 import { initTaskProgress } from './state/progress'
 import { initSettingsStore } from './state/settings'
+import { initUpdatesStore } from './state/updates'
 import { useUI } from './state/ui'
 import { initFramePacing } from './motion/pacing'
 import { startRendererPerf } from './lib/perf'
+import { watchFirstScreen } from './shell/firstScreen'
 import { preloadScreen } from './shell'
 import App from './App'
 
@@ -24,8 +26,10 @@ preloadScreen(useUI.getState().screen)
 initPlayerStore()
 initTaskProgress()
 initSettingsStore()
+initUpdatesStore()
 initFramePacing()
 startRendererPerf()
+watchFirstScreen()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -181,6 +181,8 @@ export interface RunOptions {
    * it). yt-dlp then prints progress lines, which are left out of `stdout`.
    */
   onProgress?: (bytes: number, totalBytes: number | null) => void
+  /** Each line yt-dlp prints to stdout, as it arrives (a batch's results one at a time); not progress lines. */
+  onLine?: (line: string) => void
 }
 
 export interface RunResult {
@@ -196,6 +198,22 @@ interface ManagedState {
   version: string | null
   downloadedAt: number
   updateCheckedAt: number
+  /** The binary as it was when it last ran: while it's unchanged, it needn't run to prove it. */
+  ran?: FileStamp
+}
+
+interface FileStamp {
+  size: number
+  mtimeMs: number
+}
+
+async function fileStamp(path: string): Promise<FileStamp | null> {
+  try {
+    const s = await stat(path)
+    return { size: s.size, mtimeMs: s.mtimeMs }
+  } catch {
+    return null
+  }
 }
 
 export class YtDlp {
@@ -267,8 +285,14 @@ export class YtDlp {
     }
     if (!managed) throw new Error(`yt-dlp has no standalone build for ${this.platform}/${this.opts.arch ?? process.arch}; install it and put it on PATH`)
     if (await isExecutable(managed)) {
-      const v = await this.version(managed)
+      // Every start of the standalone build costs seconds (it unpacks itself first): a copy that
+      // ran before and hasn't changed since isn't run again just to read its version.
+      const st = await this.readState()
+      const stamp = await fileStamp(managed)
+      const proven = !!st?.version && !!stamp && st.ran?.size === stamp.size && st.ran.mtimeMs === stamp.mtimeMs
+      const v = proven ? st!.version : await this.version(managed)
       if (v) {
+        if (!proven && st && stamp) await this.writeState({ ...st, version: v, ran: stamp })
         this.maybeUpdate(managed)
         return { path: managed, version: v, managed: true }
       }
@@ -287,7 +311,7 @@ export class YtDlp {
       report?.({ phase: 'check', bytes, totalBytes: total })
       const v = await this.version(managed)
       if (!v) throw new Error('downloaded yt-dlp does not run')
-      await this.writeState({ ...(await this.readState())!, version: v })
+      await this.writeState({ ...(await this.readState())!, version: v, ran: (await fileStamp(managed)) ?? undefined })
       report?.({ phase: 'done', bytes, totalBytes: total })
       return { path: managed, version: v, managed: true }
     } catch (e) {
@@ -386,7 +410,7 @@ export class YtDlp {
         const line = r.stdout.trim().split(/\r?\n/).at(-1) ?? ''
         this.log(`yt-dlp -U: ${line}`)
         const v = await this.version(path)
-        await this.writeState({ ...base, version: v, updateCheckedAt: this.now() })
+        await this.writeState({ ...base, version: v, updateCheckedAt: this.now(), ran: v ? ((await fileStamp(path)) ?? undefined) : undefined })
         if (v && this.located) this.located = Promise.resolve({ path, version: v, managed: true })
       } catch (e) {
         this.log(`yt-dlp self-update failed: ${(e as Error).message}`)
@@ -429,15 +453,16 @@ export class YtDlp {
           reject(classifyYtDlpError(String(stderr ?? ''), e.message))
         }
       )
-      const onProgress = opts.onProgress
-      if (onProgress && child.stdout) {
+      const { onProgress, onLine } = opts
+      if ((onProgress || onLine) && child.stdout) {
         let partial = ''
         child.stdout.on('data', (chunk: string | Buffer) => {
           const lines = (partial + String(chunk)).split('\n')
           partial = lines.pop() ?? ''
           for (const line of lines) {
-            const p = parseProgressLine(line)
+            const p = onProgress && parseProgressLine(line)
             if (p) onProgress(p.bytes, p.totalBytes)
+            else if (onLine && !line.startsWith(PROGRESS_MARK)) onLine(line)
           }
         })
       }

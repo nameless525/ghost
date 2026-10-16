@@ -2,10 +2,11 @@
 // credits, stats for the selection, which source will play, and the group's album list.
 // Content changes cross-slide (old layer slides out while the new one slides in).
 import { AudioLines, Disc3, Gamepad2, SearchX } from 'lucide-react'
-import { useMemo, useReducer, useRef, type ReactNode } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react'
 import { parseSearch } from '@shared/search'
-import type { Album, SourceSummary } from '@shared/types'
+import type { Album, SourceSummary, TrackAnalysisSummary } from '@shared/types'
 import { artUrl } from '../../lib/art'
+import { usePlayer } from '../../state/player'
 import { useSettings } from '../../state/settings'
 import { CoverArt } from '../../ui/CoverArt'
 import { IntensityBadge, SourceBadge, sourceLabel } from '../../ui/Badges'
@@ -63,6 +64,14 @@ const partialHint = (what: string) => `At least ${what}: some albums’ track li
 /** Why a value reads "–". */
 const UNKNOWN_TRACKS = 'Not known yet: an album’s track list loads when you open it.'
 
+/** `a` with the counts of its track list when that's loaded here but the album list (from the index) doesn't have them yet. */
+function withDetail(a: Album): Album {
+  if (a.trackCount != null && a.totalMs) return a
+  const d = browseModel.peekDetail(a.id)
+  if (!d?.tracks.length) return a
+  return { ...a, trackCount: a.trackCount ?? d.tracks.length, totalMs: a.totalMs || d.tracks.reduce((n, t) => n + (t.durationMs ?? 0), 0) || null }
+}
+
 /** An album row's "tracks · length", leaving out what isn't known. */
 const albumMeta = (a: Album) => [a.trackCount != null ? String(a.trackCount) : null, a.totalMs ? formatTime(a.totalMs) : null].filter(Boolean).join(' · ')
 
@@ -82,9 +91,10 @@ function yearSpan(years: (number | null)[]): string | null {
   return a === b ? String(a) : `${a}–${String(b).slice(-2)}`
 }
 
-function describe(sel: SelInfo, preferOrig: boolean): View {
+/** `live`: the selected track's analysis as the player has it (it measures a track while it plays or previews), ahead of the catalog's copy. */
+function describe(sel: SelInfo, preferOrig: boolean, live: TrackAnalysisSummary | null): View {
   const g = sel.group
-  const albums = sel.albums
+  const albums = sel.albums?.map(withDetail) ?? null
   const pick = (title: string, original: string | null) => {
     if (!original || original === title) return { title, alt: null }
     return preferOrig ? { title: original, alt: title } : { title, alt: original }
@@ -94,7 +104,7 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
     const t = sel.track
     const d = sel.detail
     const { title, alt } = pick(t.title, t.titleOriginal)
-    const a = t.analysis
+    const a = live ?? t.analysis
     return {
       kicker: `Track ${t.number}${d ? ` of ${d.tracks.length}` : ''}${t.disc > 1 ? ` · Disc ${t.disc}` : ''}`,
       title,
@@ -106,11 +116,11 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
       accent: t.accent ?? g?.accent ?? null,
       stats: [
         { label: 'Length', value: <span className="tnum">{t.durationMs ? formatTime(t.durationMs) : '–'}</span> },
-        { label: 'BPM', value: <span className="tnum">{a?.bpm ? Math.round(a.bpm) : '–'}</span>, hint: a?.bpm ? 'Tempo, in beats per minute' : 'Tempo: measured the first time the track plays' },
-        { label: 'Intensity', value: <IntensityBadge value={a?.intensity ?? null} size="lg" glow />, hint: a?.intensity != null ? 'How energetic the track is, from 0 (calm) to 10 (frantic)' : 'How energetic the track is: measured the first time it plays' },
+        { label: 'BPM', value: <span className="tnum">{a?.bpm ? Math.round(a.bpm) : '–'}</span>, hint: a?.bpm ? 'Tempo, in beats per minute' : 'Tempo: measured the first time the track plays or is previewed' },
+        { label: 'Intensity', value: <IntensityBadge value={a?.intensity ?? null} size="lg" glow />, hint: a?.intensity != null ? 'How energetic the track is, from 0 (calm) to 10 (frantic)' : 'How energetic the track is: measured the first time it plays or is previewed' },
         {
           label: 'Loudness',
-          hint: a?.lufs != null ? 'Average loudness (LUFS). GHOST evens out the volume between tracks.' : 'Average loudness: measured the first time the track plays',
+          hint: a?.lufs != null ? 'Average loudness (LUFS). GHOST evens out the volume between tracks.' : 'Average loudness: measured the first time the track plays or is previewed',
           value: a?.lufs != null ? (
             <>
               <span className="tnum">{a.lufs.toFixed(1)}</span>
@@ -135,7 +145,7 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
   }
 
   if (sel.album) {
-    const al = sel.album
+    const al = withDetail(sel.album)
     const d = sel.detail
     const { title, alt } = pick(al.title, al.titleOriginal)
     const peak = d?.tracks.reduce((m, t) => Math.max(m, t.analysis?.intensity ?? -1), -1) ?? -1
@@ -185,12 +195,20 @@ function describe(sel: SelInfo, preferOrig: boolean): View {
           { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span>, hint: lengthHint },
           { label: 'Released', value: <span className="tnum">{years ?? g.year ?? '–'}</span>, hint: years ? 'When its soundtrack albums came out' : undefined }
         ]
-      : [
-          { label: g.kind === 'album' ? 'Tracks' : 'Albums', value: <span className="tnum">{g.albumCount}</span> },
-          { label: 'Games', value: <span className="tnum">{albums ? uniq(albums.map((a) => a.gameName ?? a.title)).length : '–'}</span> },
-          { label: 'Tracks', value: <span className="tnum">{tracks}</span>, hint: tracksHint },
-          { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span>, hint: lengthHint }
-        ]
+      : g.kind === 'album'
+        ? // its track list is still loading (then it shows as an album)
+          [
+            { label: 'Tracks', value: '–', hint: UNKNOWN_TRACKS },
+            { label: 'Length', value: '–', hint: UNKNOWN_TRACKS },
+            { label: 'Peak', value: <LoadingRing size={18} /> },
+            { label: 'Discs', value: '–' }
+          ]
+        : [
+            { label: 'Albums', value: <span className="tnum">{g.albumCount}</span> },
+            { label: 'Games', value: <span className="tnum">{albums ? uniq(albums.map((a) => a.gameName ?? a.title)).length : '–'}</span> },
+            { label: 'Tracks', value: <span className="tnum">{tracks}</span>, hint: tracksHint },
+            { label: 'Length', value: <span className="tnum">{albums ? sumMs(albums) : '–'}</span>, hint: lengthHint }
+          ]
   const providers = albums ? uniq(albums.map((a) => a.provider)) : []
   const formats = albums ? uniq(albums.flatMap((a) => a.formats)) : []
   return {
@@ -244,13 +262,28 @@ function Swap({ id, children, className }: { id: string; children: ReactNode; cl
   )
 }
 
+const HERO_REST_MS = 160
+
+/** `value` once it has stayed the same for `ms`. */
+function useRested<T>(value: T, ms: number): T {
+  const [rested, setRested] = useState(value)
+  useEffect(() => {
+    if (Object.is(value, rested)) return
+    const t = window.setTimeout(() => setRested(value), ms)
+    return () => window.clearTimeout(t)
+  }, [value, rested, ms])
+  return rested
+}
+
 export function InfoWedge() {
   const sel = useBrowse((s) => s.sel)
   const total = useBrowse((s) => s.total)
   const loading = useBrowse((s) => s.loading)
   const text = useBrowse((s) => s.text) && browseModel.query.text
   const preferOrig = useSettings((s) => s.interface.preferOriginalTitles)
-  const v = useMemo(() => (sel ? describe(sel, preferOrig) : null), [sel, preferOrig])
+  const trackId = sel?.track?.id ?? null
+  const live = usePlayer((s) => (trackId == null ? null : s.preview?.track.id === trackId ? s.preview.track.analysis : s.current?.id === trackId ? s.current.analysis : null))
+  const v = useMemo(() => (sel ? describe(sel, preferOrig, live) : null), [sel, preferOrig, live])
 
   // only read while showing "no matches": catalog:status arrives several times a second while
   // indexing, and the game count re-rendered the whole wedge each time
@@ -260,7 +293,10 @@ export function InfoWedge() {
   const noMatch = !sel && !loading && total === 0 && !!text && !unavailable
   const hasFilters = useMemo(() => (noMatch ? parseSearch(text).filters.length > 0 : false), [noMatch, text])
 
-  const hero = artUrl(v?.hero ?? v?.cover ?? null, { w: 720 })
+  // The hero is the 1600 px copy: decoded and uploaded on every row passed while scrolling, it was
+  // thrown away a few frames later. It follows once the selection rests (the cover above it,
+  // the size the row already asked for, comes at once).
+  const hero = useRested(artUrl(v?.hero ?? v?.cover ?? null, { w: 720 }), HERO_REST_MS)
 
   return (
     <Wedge side="left" className="bw" glow>

@@ -64,6 +64,12 @@ GHOST isn't signed with a paid developer certificate, so your system will ask on
 - **Windows** SmartScreen says it "protected your PC". Click **More info**, then **Run anyway**.
 - **Linux AppImage** needs FUSE 2. On Ubuntu 24.04 and later, install it with `sudo apt install libfuse2t64`, or use the `.deb` instead.
 
+### Updates
+
+From 0.4.0 on, GHOST checks for a new release once a day. It downloads it in the background ("Updating GHOST to 0.4.1"), checks it against its SHA-256 checksum, and installs it when you quit, or right away with **Restart to update** in the top bar. The first launch after an update shows what's new. Turn **Install updates automatically** off in Settings → About to be asked first instead.
+
+The `.deb` package can't replace itself (that needs administrator rights): GHOST tells you when a release is out, and you install it the same way as before. The AppImage, the Windows installer and the Mac app in Applications update themselves.
+
 Intel Macs, ARM Linux and other setups can [build from source](docs/DEVELOPMENT.md).
 
 ## Getting started

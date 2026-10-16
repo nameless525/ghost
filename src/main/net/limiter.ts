@@ -1,6 +1,8 @@
 // Per-host request scheduler: at most N requests in flight, at least `spacingMs` between request
 // starts, and a priority queue so interactive requests (opening an album, resolving the track that
-// is about to play) jump ahead of background work (index crawl, art prefetch).
+// is about to play) jump ahead of background work (index crawl, art prefetch). Interactive requests
+// run newest first: someone scrolling through albums waits for the one they stopped on, not for
+// every one they passed (those still run, after it); the other queues run in order.
 
 import { NetError } from './errors'
 
@@ -80,7 +82,17 @@ export class HostLimiter {
     })
   }
 
+  /**
+   * How long until a job queued now would start: 0 = at once, Infinity = when a running one ends
+   * (all slots busy, or others already waiting ahead of it).
+   */
+  readyIn(): number {
+    if (this.pending > 0 || this.active >= this.opts.concurrency) return Infinity
+    return Math.max(0, Math.max(this.lastStart + this.opts.spacingMs, this.pausedUntil) - this.now())
+  }
+
   private next(): Job | undefined {
+    if (this.queues[0].length) return this.queues[0].pop()
     for (const q of this.queues) if (q.length) return q.shift()
     return undefined
   }

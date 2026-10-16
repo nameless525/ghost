@@ -5,7 +5,8 @@
 // Elements tagged data-flip="cover|title|game" travel; data-fade ones just leave.
 import { forwardRef } from 'react'
 import type { PlayStatus, Progress, TrackView } from '@shared/types'
-import { CoverArt, IntensityBadge, LoadingRing, ProgressBar, SourceBadge, formatTime } from '../../ui'
+import { backupReason } from '@shared/providers'
+import { BackupBadge, CoverArt, IntensityBadge, LoadingRing, ProgressBar, SourceBadge, formatTime } from '../../ui'
 
 export interface TitleCardProps {
   track: TrackView
@@ -75,11 +76,16 @@ export const TitleCard = forwardRef<HTMLDivElement, TitleCardProps>(function Tit
             {bpm ? <span className="pl-stat tnum">{Math.round(bpm)} BPM</span> : null}
             {durationMs ? <span className="pl-stat tnum">{formatTime(durationMs)}</span> : null}
             {track.source && <SourceBadge source={track.source} />}
+            <BackupBadge source={track.source} />
           </div>
           {loading && progress ? (
             <div className="pl-card__load" data-fade>
               <ProgressBar caption progress={progress} waitKey={progress.wait} />
             </div>
+          ) : track.source?.backupFor ? (
+            <p className="pl-card__backup" data-fade>
+              {backupReason(track.source.backupFor, track.source)}
+            </p>
           ) : (
             <div className="pl-card__progress" data-fade>
               <i key={showKey} />

@@ -62,9 +62,13 @@ describe.skipIf(!existsSync(addon))('ghost-art protocol pipeline', () => {
       fetched.push(url)
       expect((init as RequestInit).cache).toBe('no-store')
       if (url.endsWith('/missing.png')) return new Response('nope', { status: 404 })
+      const gate = gates.get(url)
+      if (gate) await gate
       return new Response(new Uint8Array(big), { status: 200, headers: { 'content-type': 'image/png' } })
     })
   })
+  /** URLs whose fetch waits until the promise settles (download-order test). */
+  const gates = new Map<string, Promise<void>>()
 
   afterAll(() => rmSync(tmp, { recursive: true, force: true }))
 
@@ -102,5 +106,50 @@ describe.skipIf(!existsSync(addon))('ghost-art protocol pipeline', () => {
 
   it('404s stay errors', async () => {
     await expect(art.getArt('https://cdn.example/covers/missing.png')).rejects.toThrow(/not_found/)
+  })
+
+  it("small sizes come from the source's thumbnail, not the full scan", async () => {
+    const url = 'https://nu.vgmtreasurechest.com/soundtracks/some-game-ost/Cover.png'
+    const thumb = 'https://nu.vgmtreasurechest.com/soundtracks/some-game-ost/thumbs/Cover.png'
+    expect(dims((await art.getArt(url, 40)).bytes)).toEqual([128, 64])
+    expect(fetched).toContain(thumb)
+    expect(fetched).not.toContain(url)
+    // a bigger size needs the full scan
+    expect(dims((await art.getArt(url, 300)).bytes)).toEqual([512, 256])
+    expect(fetched).toContain(url)
+    // no thumbnail (404): the full scan, resized
+    const lone = 'https://nu.vgmtreasurechest.com/soundtracks/other-ost/missing.png'
+    await expect(art.getArt(lone, 40)).rejects.toThrow(/not_found/)
+    expect(fetched).toContain('https://nu.vgmtreasurechest.com/soundtracks/other-ost/thumbs/missing.png')
+  })
+
+  it('downloads at most six at a time, newest first; a repeat request moves one up', async () => {
+    const release: (() => void)[] = []
+    const url = (i: number) => `https://h${i}.example/c${i}.png`
+    for (let i = 0; i < 9; i++) gates.set(url(i), new Promise<void>((r) => release.push(r)))
+    const started = () => fetched.filter((u) => /^https:\/\/h\d\.example/.test(u))
+    // One at a time: each request reads the disk cache before it joins the queue, so requests made
+    // together can join in any order on a busy machine (and "newest" would be whichever came last).
+    const done: Promise<unknown>[] = []
+    for (let i = 0; i < 9; i++) {
+      done.push(art.getArt(url(i), 300))
+      await vi.waitFor(() => {
+        const q = art.artDownloadQueue()
+        expect(q.waiting + q.running).toBe(i + 1)
+      })
+    }
+    await vi.waitFor(() => expect(started()).toHaveLength(6))
+    expect(art.artDownloadQueue()).toEqual({ waiting: 3, running: 6 })
+    // c6, c7, c8 wait; asking for c6 again puts it ahead of the newer c7 and c8
+    const again = art.getArt(url(6), 300)
+    release[0]()
+    await vi.waitFor(() => expect(started()).toHaveLength(7))
+    expect(started()[6]).toBe(url(6))
+    release[1]()
+    await vi.waitFor(() => expect(started()).toHaveLength(8))
+    expect(started()[7]).toBe(url(8)) // then newest first
+    release.forEach((r) => r())
+    await Promise.all([...done, again])
+    expect(art.artDownloadQueue()).toEqual({ waiting: 0, running: 0 })
   })
 })

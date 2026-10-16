@@ -12,7 +12,7 @@ import { LOSSLESS_FORMATS } from '../providers/types'
 import { cleanCredits } from '../providers/credits'
 import { ftsFold, GAME_ALIASES, searchAliases, TITLE_ALIASES } from './aliases'
 import { baseTitle, clusterKeys, franchiseGuess, gameKey, headKey, keyOf, kindRank, MERGEABLE_KINDS, pickGameName, sortKey } from './normalize'
-import { CLUSTER_VERSION, ensureCatalogSchema, FTS_VERSION, recountCatalog, UNKNOWN_INTENSITY, UNKNOWN_LEN, UNKNOWN_YEAR } from './schema'
+import { CLUSTER_VERSION, ensureCatalogSchema, FTS_VERSION, RECLUSTER_PENDING, recountCatalog, UNKNOWN_INTENSITY, UNKNOWN_LEN, UNKNOWN_YEAR } from './schema'
 
 export type Quality = Settings['sources']['quality']
 
@@ -398,7 +398,7 @@ export class CatalogRepo {
    * initial crawl (then unknown until the album page or the "latest" feed tells us).
    * Returns the album ids (in input order). `changed` collects the ids whose clustering or search
    * text may have moved (new, edited or never clustered albums): a refresh crawl re-reads ~135k
-   * listing rows that are nearly all unchanged, and those only get their last_seen stamped.
+   * listing rows that are nearly all unchanged, and those aren't written at all.
    */
   upsertHits(hits: AlbumHit[], opts: { initial: boolean }, changed?: number[]): number[] {
     const now = this.now()
@@ -466,8 +466,9 @@ export class CatalogRepo {
           sort_added: addedAt ?? 0
         }
         ids.push(ex.id)
+        // Unchanged: no write at all (last_seen is only kept current on rows that change; nothing
+        // reads it, and stamping it dirtied ~135k scattered pages on every weekly refresh).
         if (ex.gone === 0 && (Object.keys(next) as (keyof typeof next)[]).every((k) => next[k] === ex[k])) {
-          this.run(`UPDATE albums SET last_seen = ? WHERE id = ?`, now, ex.id)
           if (ex.game_id == null) changed?.push(ex.id)
           continue
         }
@@ -992,6 +993,7 @@ export class CatalogRepo {
       await yieldFn()
     }
     this.setMeta('cluster_version', String(CLUSTER_VERSION))
+    this.setMeta(RECLUSTER_PENDING, '0')
     this.revision++
     await this.compactFts(yieldFn)
   }

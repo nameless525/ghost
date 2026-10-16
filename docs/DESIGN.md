@@ -103,6 +103,12 @@ The machine already has Rust 1.99 and Node 26. Install later: `yt-dlp`, `ffmpeg`
 - **The main process owns the queue and decides what plays.** The engine only knows `current`, `next` (preloaded so the transition is gapless) and an optional `preview`.
 - **The renderer never touches audio directly.** It sends commands and receives state, and reads analysis frames (spectrum, waveform, beat phase, audible clock) from a shared-memory triple buffer that the engine writes.
 - **The engine lives in the main process, not the renderer.** A renderer reload or crash doesn't stop the music, and playback keeps going with the window closed.
+- **GHOST updates itself** (`src/main/updates`). Not signed with vendor certificates, so the stock updaters are out (Squirrel.Mac checks the code signature of both versions). Instead:
+  - It asks GitHub's latest-release API at launch when a day has passed since the last check, then every 24 hours by the wall clock.
+  - It picks this system's installer from the release and checks the download against GitHub's own SHA-256 digest of the file (the release's `SHA256SUMS` when that's missing). It only downloads from GitHub.
+  - Installing: on macOS, the app is copied out of the disk image and a small script swaps it in for the running bundle once GHOST has quit. On Windows, the NSIS installer runs silently (`/S --updated`). A Linux AppImage replaces its own file. A `.deb`, a read-only folder or a copy run from source only hears that a release is out.
+  - With auto updates on (the default) a release downloads by itself and installs on quit or on "Restart to update". Off, the user is asked first and can dismiss a version.
+  - After an update, the changelog bundled in the app shows each version's section since the one last run.
 
 ---
 
@@ -111,15 +117,15 @@ The machine already has Rust 1.99 and Node 26. Install later: `yt-dlp`, `ffmpeg`
 ### 5.1 Threads
 | Thread | Job | Rules |
 |---|---|---|
-| Output callback (cpal) | Pull from the mixer, apply DSP, write to the device | No allocation, no locks, no I/O. Lock-free SPSC rings (`rtrb`) only. |
+| Output callback (cpal) | Pull from the mixer, apply DSP, write to the device | No allocation, no locks, no I/O. Lock-free SPSC rings (`rtrb`) only. The stream is paused after 30 s with nothing playing and resumed by the next command. |
 | Decode workers (one each for current, next and preview) | Decode, resample, fill a ~2 s ring | Blocking reads from the stream cache are fine here. |
-| Analysis | FFT, band energies, onset flux. Publishes frames to a triple buffer | Fed by a tap on the output path. |
+| Analysis | FFT, band energies, onset flux. Publishes frames to a triple buffer | Fed by a tap on the output path, only while the window can be seen (the renderer reports it). |
 | I/O (tokio) | HTTP range fetches into the chunk cache; downloads | |
 | Background jobs | Full-file loudness and beat analysis, low priority | Runs faster than real time on cached files. |
 
 ### 5.2 Signal chain
 ```
-source ─▶ decode ─▶ trim gapless padding ─▶ resample (rubato sinc) ─▶ loop/fade stage
+source ─▶ decode ─▶ trim gapless padding ─▶ resample (rubato sinc, exact polyphase) ─▶ loop/fade stage
       ─▶ track/album gain (R128) ─┐
                                   ├─▶ MUSIC BUS ─▶ duck (when previewing) ─▶ overlay low-pass
 preview source ─▶ … ─▶ PREVIEW BUS┘                 ─▶ EQ ─▶ master volume (dB curve, 20 ms smoothing)
@@ -134,8 +140,10 @@ analysis tap: taken AFTER gain, BEFORE master volume, so visuals stay lively at 
 - Each remote source opens as a **sparse chunk cache**: 256 KB chunks, a bitmap of which chunks are present, and HTTP Range requests. The decoder sees an ordinary blocking `Read + Seek`.
 - When the decoder reads a missing chunk, that request jumps to the front of the queue. Seeking ahead means one range fetch, not a full download.
 - Prefetch the next 30 s first, then fill the rest of the file in the background.
+- A loudness measurement reads the stream while it plays, as a **background reader**: it never moves the prefetch window, and what it waits for is fetched only after that window, so it can't make playback stutter.
 - If the server doesn't support Range, fill linearly from the start.
 - If a URL expires (YouTube links are short-lived) and returns 403, re-resolve it through its provider and resume.
+- If none of a track's sources play, ask the catalog once more without them: its fallback search (YouTube and the others) runs before the track is skipped. A server that didn't answer (a timeout, a stall) has its folder's other files tried last for 5 minutes: the rest of an album on it is looked up elsewhere first, and a preloaded next track waiting on it is preloaded again.
 - The cache is evicted least-recently-used with a size cap (default 5 GB). Downloaded files are pinned elsewhere and never evicted.
 
 ### 5.4 Decoders
@@ -162,7 +170,12 @@ As built: the C libraries live in `native/crates/ghost-formats` (vendored releas
 - Measured with `ebur128`: integrated loudness, loudness range and true peak. Stored per source.
 - Default target −16 LUFS (configurable).
 - **Album mode** applies one gain to the whole album and is used automatically when the queue is playing an album in order. **Track mode** is used otherwise.
-- **First play of an unmeasured track:** start at a provisional gain chosen by source type (YouTube audio is usually already near −14 LUFS; chiptune rips swing widely). The cached file arrives much faster than real time, so the full measurement usually finishes within 1–3 s. The gain then ramps to the measured value over 2 s.
+- **First play of an unmeasured track:**
+  - It starts from the best guess at hand: its album's loudness when other tracks of the album are measured, else an assumed −12 LUFS (−4 dB at the default target).
+  - The measurement starts with the track and reads the stream as it downloads (§5.3), so it ends about when the download does. A chapter of a long video is measured from its own bytes, within a second or two, without waiting for the whole video.
+  - While it runs it reports the loudness so far about once a second. That may turn the track down at once (the part heard so far shows a loud track, not that the rest stays quiet), and it counts in full once it covers 3 minutes of audio (a long single-file soundtrack takes minutes to download).
+  - The gain ramps to each new value over 2 s. A skipped track's measurement stops with it, unless its file is already in.
+- **Previews** are measured too (a whole file once it's cached, a chapter at once), so a track you previewed starts its first real play at the right level.
 - A 1.5 ms look-ahead true-peak limiter at −1 dBTP guards boosted quiet tracks. Chiptune rips are often extremely quiet or right at full scale.
 
 ### 5.7 Analysis
@@ -276,6 +289,8 @@ Two tiers, so the app is useful on day one and gets richer over time:
    - First-time setup is explicit. A notice names the sources being added and says it only happens once, and the Browse status line ("One-time setup · … · ~3 min left") opens per-source progress. Afterwards, refreshes are quiet.
    - Albums cluster into games by normalized title (§6.4), so a second source's copy joins the game the first created.
    - Track lists and file URLs are fetched lazily (album page first, track page at play time) and cached.
+     - Resting on a game fetches its albums' track lists in the background (two at a time, the newest game's only), so its track count and length are complete.
+     - Each site gets its own request queue: what someone waits for goes before background work, newest first (scrolling past albums and stopping, the one stopped on is fetched next), then crawls and art in order.
 2. **Enrichment.**
    - **IGDB:** pull the whole game list (500 per request, about 4 requests a second, so minutes). Gives names, alternate names, platforms, franchises, covers and artwork.
    - **SteamGridDB:** hero images, logos and backgrounds.
@@ -365,7 +380,7 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 - **Carousel (right):** three levels, Game ▸ Albums ▸ Tracks, like osu!'s beatmap set ▸ difficulties. Track rows show length, an intensity badge, the source quality (FLAC / 320 / CHIP / YT) and a downloaded dot.
 - **Info wedge (left):**
   - Cover, then title (romanized or original, toggled with Alt+J), composers, year, platform and catalog number.
-  - Stats: length, BPM, intensity, loudness.
+  - Stats: length, BPM, intensity, loudness. A game's track count and length cover every album once their track lists are in (fetched as the selection rests); a "+" marks a total some albums are still missing from.
   - Which source will play.
 - **Background:** the selected game's hero art, blurred and dimmed, cross-fading on every change of selection.
 - **Browse previews:** when the selection rests on a game for 400 ms, its signature track starts from its preview point with a fade-in. If the queue is already playing, previews are opt-in (press P, or the Preview button on the cover). Only one song is ever audible: a preview pauses a playing queue (the engine fades one out as the other fades in) and resumes it when the preview ends, at its 30 s limit or when it is stopped. Playing, resuming or skipping in the queue, from anywhere, ends the preview. Otherwise the music changes as you browse, which is what makes osu!'s song select feel alive.

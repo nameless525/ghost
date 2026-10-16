@@ -45,6 +45,11 @@ interface Slot {
 const FADE_MS = 650
 const SHARP_FADE_MS = 400
 const CACHE = 8
+/**
+ * Full-size copies (up to ~10 MB decoded each) are only needed while a screen shows the art
+ * sharp (Play): drop them this long after the blur is back, and keep one per image on screen.
+ */
+const SHARP_KEEP_MS = 10_000
 /** Device-px width requested for the blur source. */
 const BLUR_SRC_PX = 512
 
@@ -109,6 +114,10 @@ function place(sp: Sprite, x: number, y: number, w: number, h: number, tint: num
 function destroyEntry(e: ArtEntry): void {
   e.dead = true
   e.blurred.destroy(true)
+  releaseSharp(e)
+}
+
+function releaseSharp(e: ArtEntry): void {
   e.sharp?.destroy(true)
   e.sharpBitmap?.close()
   e.sharp = null
@@ -124,6 +133,8 @@ export class ArtLayer {
   private dimTarget = 0.55
   private blur = 1
   private blurTarget = 1
+  /** When the art went back to fully blurred (0 while a screen wants it sharp). */
+  private blurredSince = 0
   quality: 'low' | 'high' = 'high'
 
   /** 0..1: how opaque the topmost settled art is (lets the gradient layer sleep). */
@@ -190,6 +201,7 @@ export class ArtLayer {
         }
         art.sharpBitmap = bmp
         art.sharp = Texture.from(bmp)
+        this.dropSharp((e) => e !== art)
       })
       .catch((err) => {
         art.sharpFailed = true
@@ -198,6 +210,20 @@ export class ArtLayer {
       .finally(() => {
         art.sharpLoading = null
       })
+  }
+
+  /** Free the full-size copies of cached art that `which` picks and no slot is showing sharp. */
+  private dropSharp(which: (e: ArtEntry) => boolean): void {
+    for (const e of this.cache.values()) {
+      if (!e.sharp || !which(e)) continue
+      if (this.slots.some((s) => s.art === e && s.sharp.visible)) continue
+      for (const s of this.slots) {
+        if (s.art !== e) continue
+        s.sharp.texture = Texture.EMPTY
+        s.sharpIn = 0
+      }
+      releaseSharp(e)
+    }
   }
 
   private remember(art: ArtEntry): void {
@@ -278,6 +304,13 @@ export class ArtLayer {
       if (s.fadeTo === 1) coverage = Math.max(coverage, s.fade)
     }
     this.coverage = coverage
+
+    if (this.wantsSharp) this.blurredSince = 0
+    else if (!this.blurredSince) this.blurredSince = now
+    else if (now - this.blurredSince > SHARP_KEEP_MS) {
+      this.dropSharp(() => true)
+      this.blurredSince = Infinity // done until a screen asks for sharp art again
+    }
 
     // retire slots that are fully hidden under a settled newer one, or faded out
     for (let i = this.slots.length - 1; i >= 0; i--) {

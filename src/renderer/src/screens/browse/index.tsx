@@ -34,6 +34,7 @@ import { activeCarousel, Carousel } from './carousel'
 import { ExternalSearch, ExternalSearchDialog, useExternalSourceNames, type Phase } from './ExternalSearch'
 import { Footer } from './Footer'
 import { InfoWedge } from './InfoWedge'
+import { prefetchCoversAround } from './prefetch'
 import { formatEta } from './activity'
 import { openSelectionMenu } from './menu'
 import { browseModel } from './model'
@@ -311,14 +312,58 @@ export default function BrowseScreen(props: BrowseScreenProps) {
     }
   }, [])
 
-  // ---- album details for the wedge once the selection rests
+  // ---- covers of the rows ahead, once the selection rests
+  useEffect(() => {
+    let t = 0
+    const off = useBrowse.subscribe((s, p) => {
+      if (s.sel?.gi === p.sel?.gi || !s.sel) return
+      window.clearTimeout(t)
+      const gi = s.sel.gi
+      t = window.setTimeout(() => prefetchCoversAround(gi), 250)
+    })
+    return () => {
+      off()
+      window.clearTimeout(t)
+    }
+  }, [])
+
+  // ---- album details for the wedge once the selection rests (an album row, or an album group:
+  // holding an arrow key through album groups no longer opens every one passed)
   useEffect(() => {
     let t = 0
     const off = useBrowse.subscribe((s, p) => {
       if (s.sel?.id === p.sel?.id) return
       window.clearTimeout(t)
-      const a = s.sel?.album
-      if (a && !s.sel?.detail) t = window.setTimeout(() => void browseModel.loadDetail(a.id), 150)
+      const sel = s.sel
+      const g = sel?.group
+      const albumId = sel?.album?.id ?? (g?.kind === 'album' ? g.key.slice(g.key.indexOf(':') + 1) : null)
+      if (albumId && !sel?.detail) t = window.setTimeout(() => void browseModel.loadDetail(albumId), 150)
+    })
+    return () => {
+      off()
+      window.clearTimeout(t)
+    }
+  }, [])
+
+  // ---- a game rested on: its albums' unknown track lists load in the background, so the wedge's
+  // track count and length fill in without opening each album (another game replaces the request)
+  useEffect(() => {
+    let t = 0
+    let game: string | null = null
+    let asked = false
+    const off = useBrowse.subscribe((s) => {
+      const sel = s.sel
+      const key = sel?.kind === 'group' && sel.group?.kind === 'game' ? sel.group.key : null
+      if (key !== game) {
+        window.clearTimeout(t)
+        game = key
+        asked = false
+      }
+      if (!key || asked || !sel?.albums) return
+      const ids = sel.albums.filter((a) => a.trackCount == null && !browseModel.peekDetail(a.id)).map((a) => a.id)
+      if (!ids.length) return
+      asked = true
+      t = window.setTimeout(() => void Promise.resolve(ghost().catalog.fillAlbums(ids)).catch(() => {}), 300)
     })
     return () => {
       off()

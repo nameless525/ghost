@@ -32,7 +32,9 @@ import type {
   ShuffleMode,
   SourceStat,
   TaskProgress,
-  TrackView
+  TrackView,
+  UpdateState,
+  WhatsNew
 } from './types'
 
 export interface CatalogAPI {
@@ -59,6 +61,8 @@ export interface CatalogAPI {
   sources(): Promise<SourceStat[]>
   /** Resolve these tracks' stream URLs ahead of a likely play (background priority, bounded). Fire-and-forget. */
   warmSources(trackIds: ID[]): void | Promise<void>
+  /** Fetch these albums' track lists in the background (the selected game's unknown ones); a newer call replaces older. Fire-and-forget. */
+  fillAlbums(albumIds: ID[]): void | Promise<void>
 }
 
 export interface PlayerAPI {
@@ -95,6 +99,11 @@ export interface PlayerAPI {
   devices(): Promise<AudioDevice[]>
   /** Mute sound-chip voices of the current track: bit i mutes `PlayerState.voices.names[i]`; 0 unmutes all. */
   setVoiceMask(mask: number): Promise<void>
+  /**
+   * Whether the window shows the live analysis (it's visible). The engine only computes the
+   * real-time spectrum and waveform while something can show them.
+   */
+  setAnalysisDemand(on: boolean): Promise<void>
 }
 
 export interface PlaylistsAPI {
@@ -142,6 +151,26 @@ export interface SystemAPI {
   info(): Promise<{ platform: string; version: string; dataDir: string; mock: boolean }>
 }
 
+/**
+ * GHOST's own updates (GitHub releases). Checked at launch and every 24 hours. With
+ * `settings.updates.auto` a newer release downloads by itself and installs when GHOST quits;
+ * without it, the UI asks first.
+ */
+export interface UpdatesAPI {
+  getState(): Promise<UpdateState>
+  /** Check GitHub now. */
+  check(): Promise<UpdateState>
+  /** Download the newest release now (when it isn't already), keeping it ready to install. */
+  download(): Promise<void>
+  /** Install the downloaded release and restart GHOST (downloading it first if needed). */
+  installNow(): Promise<void>
+  /** "Not now": don't ask about this release again (a newer one asks again). */
+  dismiss(): Promise<void>
+  /** The release notes to show after an update, until `whatsNewSeen` (null: nothing new). */
+  whatsNew(): Promise<WhatsNew | null>
+  whatsNewSeen(): Promise<void>
+}
+
 /** Events pushed from main to renderer. */
 export interface GhostEvents {
   /** The queue is omitted when unchanged since the previous broadcast (see PlayerStateEvent). */
@@ -155,6 +184,7 @@ export interface GhostEvents {
   notify: GhostNotification
   /** A long task's progress (opening a chiptune set, an import, a folder scan…); see TaskProgress.key. */
   progress: TaskProgress
+  'updates:state': UpdateState
 }
 export type GhostEventName = keyof GhostEvents
 
@@ -175,6 +205,7 @@ export interface GhostAPI {
   downloads: DownloadsAPI
   settings: SettingsAPI
   system: SystemAPI
+  updates: UpdatesAPI
   analysis: AnalysisAPI
   on<E extends GhostEventName>(event: E, cb: (payload: GhostEvents[E]) => void): () => void
 }
@@ -193,6 +224,7 @@ export const API_METHODS = [
   'catalog.suggest',
   'catalog.sources',
   'catalog.warmSources',
+  'catalog.fillAlbums',
   'catalog.searchExternal',
   'catalog.importExternal',
   'player.getState',
@@ -220,6 +252,7 @@ export const API_METHODS = [
   'player.setOverlayFilter',
   'player.devices',
   'player.setVoiceMask',
+  'player.setAnalysisDemand',
   'library.playlists.list',
   'library.playlists.get',
   'library.playlists.create',
@@ -246,7 +279,14 @@ export const API_METHODS = [
   'settings.pickFolder',
   'system.openExternal',
   'system.reveal',
-  'system.info'
+  'system.info',
+  'updates.getState',
+  'updates.check',
+  'updates.download',
+  'updates.installNow',
+  'updates.dismiss',
+  'updates.whatsNew',
+  'updates.whatsNewSeen'
 ] as const
 
 export type ApiMethod = (typeof API_METHODS)[number]

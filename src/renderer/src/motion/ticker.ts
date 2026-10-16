@@ -31,9 +31,6 @@ interface Entry {
   dead: boolean
 }
 
-/** How long before a capped frame is due the loop asks for it (covers timer jitter + one vsync). */
-const TIMER_LEAD_MS = 6
-
 class Ticker {
   /** Timestamp of the current/last frame. */
   now = performance.now()
@@ -45,6 +42,11 @@ class Ticker {
   frameId = 0
   /** Smoothed frames per second. */
   fps = 60
+  /**
+   * The display's refresh rate, measured from back-to-back frames (60 until measured). 120 on
+   * ProMotion and other high-refresh displays.
+   */
+  refreshHz = 60
   /** Called whenever a subscriber is added (the pacing policy wakes a paused loop with it). */
   onAdd: (() => void) | null = null
 
@@ -59,6 +61,22 @@ class Ticker {
   /** Inside the subscriber loop: add() must not splice the array being iterated. */
   private iterating = false
   private copied = false
+  /**
+   * When the cap timer asks for a capped frame, in ms relative to the vsync the frame should
+   * start on. Where a rAF asked for between vsyncs lands depends on the browser and on how long
+   * the page has been idle (Chromium serves some at once, stamped with the interval that has
+   * begun); a frame that lands a vsync early has to be skipped (a wasted round of frame work), one
+   * that lands late is a hitch. Nudged from where frames actually land.
+   */
+  private askOffset = 0
+  /** When the cap timer asked for the frame being run (0: it wasn't the timer). */
+  private timerAskedAt = 0
+  /** This callback was asked for by the previous one, straight away (so they're a vsync apart). */
+  private chained = false
+  private prevCallback = 0
+  /** Recent back-to-back frame intervals, for refreshHz. */
+  private intervals = new Float32Array(24)
+  private intervalCount = 0
 
   constructor() {
     if (typeof document !== 'undefined') {
@@ -92,6 +110,7 @@ class Ticker {
       // raised while waiting out a long capped interval: don't sit on the old timer
       clearTimeout(this.timer)
       this.timer = 0
+      this.chained = false
       this.raf = requestAnimationFrame(this.loop)
     }
   }
@@ -135,6 +154,7 @@ class Ticker {
     if (!this.entries.some((e) => !e.dead)) return
     this.running = true
     this.last = 0
+    this.chained = false
     this.raf = requestAnimationFrame(this.loop)
   }
 
@@ -146,34 +166,77 @@ class Ticker {
     this.timer = 0
   }
 
+  /** One display refresh, ms. */
+  private get vsyncMs(): number {
+    return 1000 / this.refreshHz
+  }
+
+  /** Frame time of the next capped frame: a whole number of vsyncs after the last one. */
+  private get due(): number {
+    const vsync = this.vsyncMs
+    return this.last + Math.max(1, Math.round(this.refreshHz / this.cap)) * vsync
+  }
+
   /**
    * Ask for the next frame. Below the display rate, wait on a timer first and only then request
    * the frame: a requested-but-skipped rAF still costs the renderer a full BeginMainFrame
-   * (lifecycle update + commit) and the compositor a frame, at every vsync.
+   * (lifecycle update + commit) and the compositor a frame. Not for frames two vsyncs apart
+   * (30 fps at 60 Hz, 60 at 120 Hz): no request time lands those reliably, so the loop asks every
+   * vsync and skips the one in between.
    */
   private schedule(): void {
-    if (this.cap !== Infinity && this.last) {
-      const wait = 1000 / this.cap - (performance.now() - this.last) - TIMER_LEAD_MS
+    if (this.cap !== Infinity && this.last && this.refreshHz / this.cap > 2.5) {
+      const wait = this.due + this.askOffset - performance.now()
       if (wait > 1) {
         this.timer = setTimeout(this.timed, wait)
         return
       }
     }
+    this.timerAskedAt = 0
+    this.chained = true
     this.raf = requestAnimationFrame(this.loop)
   }
 
   private timed = (): void => {
     this.timer = 0
+    this.timerAskedAt = performance.now()
+    this.chained = false
     if (this.running) this.raf = requestAnimationFrame(this.loop)
+  }
+
+  /** Refresh rate from the shortest typical interval (the median of the faster half of a window). */
+  private sampleInterval(ms: number): void {
+    if (ms < 2 || ms > 40) return
+    const n = this.intervals.length
+    this.intervals[this.intervalCount++ % n] = ms
+    if (this.intervalCount % n !== 0) return
+    const sorted = Array.from(this.intervals).sort((a, b) => a - b)
+    const hz = 1000 / sorted[n >> 2]
+    // snap to the common rates so small timing noise doesn't flip decisions
+    this.refreshHz = hz > 200 ? 240 : hz > 130 ? 144 : hz > 100 ? 120 : hz > 80 ? 90 : hz > 67 ? 75 : 60
   }
 
   private loop = (t: number): void => {
     if (!this.running) return
-    // Frame pacing: skip this vsync if we're running faster than the cap (no style writes on a
-    // skipped frame means the compositor has nothing to redraw). schedule() normally avoids it.
-    if (this.cap !== Infinity && this.last && t - this.last < 1000 / this.cap - 2) {
-      this.raf = requestAnimationFrame(this.loop)
-      return
+    if (this.chained && this.prevCallback) this.sampleInterval(t - this.prevCallback)
+    this.prevCallback = t
+    if (this.cap !== Infinity && this.last) {
+      const v = this.vsyncMs
+      const due = this.due
+      const asked = this.timerAskedAt
+      if (t < due - v / 2) {
+        // Early: skip it. From the timer, ask later from now on, and wait for the due vsync.
+        if (asked) {
+          this.askOffset = Math.min(this.askOffset + v / 6, v - 1)
+          this.schedule()
+        } else {
+          this.chained = true
+          this.raf = requestAnimationFrame(this.loop)
+        }
+        return
+      }
+      // Late (a vsync after the due one): ask earlier.
+      if (asked && t > due + v / 2) this.askOffset = Math.max(this.askOffset - v / 6, 1 - v)
     }
     const raw = this.last ? t - this.last : 1000 / 60
     this.last = t

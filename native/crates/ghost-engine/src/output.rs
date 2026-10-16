@@ -30,9 +30,38 @@ pub struct DeviceChoice {
 }
 
 pub struct OutputStream {
-    _stream: cpal::Stream,
+    stream: cpal::Stream,
+    /// Paused by `suspend` (nothing to play for a while).
+    suspended: bool,
+    /// The backend refused to pause once: don't keep asking.
+    unpausable: bool,
     pub device_id: String,
     pub device_name: String,
+}
+
+impl OutputStream {
+    /// Stop the device callback while there's nothing to play: the IO thread and the system's
+    /// audio daemon stop mixing silence, and the device (Bluetooth headphones too) can idle. The
+    /// mixer lives in the callback and simply waits there. Does nothing if the backend can't pause.
+    pub fn suspend(&mut self) {
+        if self.suspended || self.unpausable {
+            return;
+        }
+        match self.stream.pause() {
+            Ok(()) => self.suspended = true,
+            Err(_) => self.unpausable = true,
+        }
+    }
+
+    /// Restart a suspended stream. Err: the device is gone (rebuild the stream).
+    pub fn resume(&mut self) -> Result<(), String> {
+        if !self.suspended {
+            return Ok(());
+        }
+        self.stream.play().map_err(|e| format!("resume stream: {e}"))?;
+        self.suspended = false;
+        Ok(())
+    }
 }
 
 fn device_id(d: &cpal::Device) -> Option<String> {
@@ -97,7 +126,7 @@ pub fn start(choice: DeviceChoice, mixer: Box<Mixer>, clock: Arc<Clock>, err: Ar
     }
     .map_err(|e| format!("build stream: {e}"))?;
     stream.play().map_err(|e| format!("start stream: {e}"))?;
-    Ok(OutputStream { _stream: stream, device_id: id, device_name: name })
+    Ok(OutputStream { stream, suspended: false, unpausable: false, device_id: id, device_name: name })
 }
 
 fn build<T>(

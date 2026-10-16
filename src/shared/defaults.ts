@@ -54,7 +54,8 @@ export function defaultSettings(downloadDir: string): Settings {
       reduceMotion: false,
       showFps: false
     },
-    keys: { igdbClientId: '', igdbClientSecret: '', steamGridDbKey: '' }
+    keys: { igdbClientId: '', igdbClientSecret: '', steamGridDbKey: '' },
+    updates: { auto: true }
   }
 }
 

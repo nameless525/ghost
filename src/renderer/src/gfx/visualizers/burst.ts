@@ -56,6 +56,11 @@ export class Burst {
     this.root.addParticle(...this.bits.map((b) => b.p))
   }
 
+  /** Particles in flight. */
+  get active(): boolean {
+    return this.live > 0
+  }
+
   layout(w: number, h: number): void {
     this.root.boundsArea = { x: 0, y: 0, width: w, height: h } as never
   }

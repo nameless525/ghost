@@ -52,7 +52,7 @@ const LEAN_MIN_SKIP: u64 = 256 * 1024;
 
 /// Where the bytes come from, so the format reader can be rebuilt over another view of them.
 enum Origin {
-    Http { cache: Arc<CacheManager>, spec: SourceSpec, cancel: Arc<AtomicBool> },
+    Http { cache: Arc<CacheManager>, spec: SourceSpec, cancel: Arc<AtomicBool>, background: bool },
     File(std::path::PathBuf),
     Bytes(Arc<[u8]>),
 }
@@ -60,7 +60,9 @@ enum Origin {
 impl Origin {
     fn open(&self) -> Result<Box<dyn frag::ByteSource>, SourceError> {
         Ok(match self {
-            Origin::Http { cache, spec, cancel } => Box::new(cache.open_reader(spec, Some(cancel.clone())).map_err(|e| SourceError::new(e.to_string()))?),
+            Origin::Http { cache, spec, cancel, background } => {
+                Box::new(OpenCtx { cache, cancel: cancel.clone(), accurate_seek: false, background: *background }.reader(spec)?)
+            }
             Origin::File(p) => Box::new(std::fs::File::open(p).map_err(|e| SourceError::new(format!("open {}: {e}", p.display())))?),
             Origin::Bytes(b) => Box::new(std::io::Cursor::new(SharedBytes(b.clone()))),
         })
@@ -122,14 +124,14 @@ impl SymphoniaSource {
                 }
                 SourceSpec::Http { url, format_hint, .. } => {
                     let base = spec.base();
-                    let mut reader = ctx.cache.open_reader(&base, Some(ctx.cancel.clone())).map_err(|e| SourceError::new(e.to_string()))?;
+                    let mut reader = ctx.reader(&base)?;
                     // Wait for the first bytes (and with them the size / content type).
                     reader.wait_header().map_err(|e| SourceError::new(e.to_string()))?;
                     let len = reader.total_len();
                     let mime = reader.content_type();
                     let complete = reader.is_complete();
                     let ext = format_hint.clone().or_else(|| extension_of(url));
-                    let origin = Origin::Http { cache: ctx.cache.clone(), spec: base, cancel: ctx.cancel.clone() };
+                    let origin = Origin::Http { cache: ctx.cache.clone(), spec: base, cancel: ctx.cancel.clone(), background: ctx.background };
                     // Still downloading: don't make playback wait for embedded cover art.
                     let lean = match (complete, len) {
                         (false, Some(total)) => frag::lean_head(&mut reader, total, LEAN_MIN_SKIP).map(|v| (v, total)),

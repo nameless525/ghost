@@ -279,6 +279,8 @@ export interface EngineBridge {
    * (engines without chip voices don't have it).
    */
   setVoiceMask?(mask: number): void
+  /** Whether anyone shows the live analysis frames (engines without them don't have it). */
+  setAnalysisDemand?(on: boolean): void
   /** Mutable voices of the current track (0 when unsupported or idle). */
   voiceCount?(): number
   /**

@@ -308,6 +308,13 @@
   width: min(380px, 100%);
   margin-top: 18px;
 }
+.pl-card__backup {
+  max-width: min(460px, 100%);
+  margin: 16px 0 0;
+  color: #ffcf8f;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
 .pl-card__load .g-progress__caption {
   font-size: var(--fs-sm);
 }
@@ -1143,11 +1150,11 @@ html.reduce-motion .pl-paused--on {
   border-radius: var(--radius-sm);
   background:
     linear-gradient(90deg, rgb(var(--accent-rgb) / 0.17), rgb(var(--accent-rgb) / 0) 72%),
-    rgb(var(--bg-3-rgb) / 0.8);
+    rgb(var(--bg-3-rgb) / 0.86);
   box-shadow:
     inset 0 0 0 1px var(--line-2),
     0 4px 14px rgb(0 0 0 / 0.3);
-  backdrop-filter: blur(10px);
+  /* no backdrop-filter: one blur pass per pill, every frame, over the animating visualizer */
   color: var(--fg-1);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);

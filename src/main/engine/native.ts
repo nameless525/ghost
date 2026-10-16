@@ -12,6 +12,7 @@ import { app } from 'electron'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
+import { perfMark } from '../perf'
 import type {
   ArchiveListing,
   EngineBridge,
@@ -34,6 +35,8 @@ export type NativeGhostEngine = EngineBridge & {
   setVoiceMask(mask: number): void
   /** Mutable voices of the current track (0 when unsupported or idle). */
   voiceCount(): number
+  /** Absent in addons built before it existed. */
+  setAnalysisDemand?(on: boolean): void
   /** Health counters (absent in addons built before it existed). */
   stats?(reset?: boolean): EngineStats
   /** Load / cache progress (absent in addons built before they existed). */
@@ -153,6 +156,9 @@ class NativeEngine implements EngineBridge {
   setMuted(muted: boolean): void {
     this.native.setMuted(muted)
   }
+  setAnalysisDemand(on: boolean): void {
+    this.native.setAnalysisDemand?.(on)
+  }
   setLoop(mode: 'album' | 'endless' | 'custom', count: number, fadeSec: number): void {
     this.native.setLoop(mode, Math.max(0, Math.round(count)), fadeSec)
   }
@@ -244,6 +250,7 @@ const EMPTY_STATS: EngineStats = {
 export function loadEngine(config: EngineConfig): EngineBridge {
   const path = nativeAddonPath()
   const addon = loadAddon(path)
+  perfMark('engine:addon-loaded')
   let native: NativeGhostEngine
   try {
     native = new addon.GhostEngine(config)

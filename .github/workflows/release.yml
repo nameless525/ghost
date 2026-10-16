@@ -102,7 +102,10 @@ jobs:
             echo "expected 4 installers, found ${#files[@]}: ${files[*]}"
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+          # Checksums of the installers (GHOST's updater checks its download against GitHub's own
+          # digest of the file, or this list when that's missing).
+          for f in "${files[@]}"; do (cd "$(dirname "$f")" && sha256sum "$(basename "$f")"); done > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" SHA256SUMS \
             --verify-tag \
             --title "GHOST ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md

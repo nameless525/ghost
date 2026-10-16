@@ -21,7 +21,7 @@ import type { CatalogDeps, CatalogService } from './index'
 import { QueryEngine, reseedRandom } from './query'
 import { baseTitle } from './normalize'
 import { CatalogRepo, writerPause } from './repo'
-import { CLUSTER_VERSION } from './schema'
+import { CLUSTER_VERSION, RECLUSTER_PENDING } from './schema'
 import { SourceResolver } from './resolver'
 import { TaskReporter, TypicalMs } from './tasks'
 
@@ -43,6 +43,9 @@ export const PREFETCH_DWELL_MS = 600
 const SEARCHED_MAX = 500
 /** warmSources resolves at most this many tracks per call. */
 const WARM_MAX = 3
+/** fillAlbums fetches at most this many track lists per call (the selected game's albums), this many at a time. */
+const FILL_MAX = 24
+const FILL_PARALLEL = 2
 /**
  * Typical time to fetch an album's track list, per provider, until this session has measured its
  * own: a page request (KHInsider, Zophar's Domain, Bandcamp), an API call (Internet Archive), a
@@ -274,7 +277,8 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
         now,
         pageDelayMs: internals.crawlPageDelayMs ?? p.indexPageDelayMs ?? 750,
         sections: internals.crawlSections,
-        maxPagesPerSection: internals.crawlMaxPagesPerSection
+        maxPagesPerSection: internals.crawlMaxPagesPerSection,
+        deferRecluster: () => enabledIndexProviders().some((q) => q.id !== p.id && due(q))
       })
       crawlers.set(p.id, c)
     }
@@ -518,11 +522,22 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
   }
 
   // --- album pages ----------------------------------------------------------------------------
-  const detailInflight = new Map<number, Promise<void>>()
+  const detailInflight = new Map<number, { done: Promise<void>; priority: 0 | 1 | 2 }>()
   function fetchDetail(albumId: number, priority: 0 | 1 | 2, force = false): Promise<void> {
     const existing = detailInflight.get(albumId)
-    if (existing) return existing
-    const st = repo.albumState(albumId)
+    const st = existing ? null : repo.albumState(albumId)
+    if (existing) {
+      if (priority < existing.priority) {
+        // Someone more urgent joins a fetch still queued behind other work (the art fill, a
+        // refresh): asking for the page again at their priority moves the one request up its
+        // host's queue (the page fetch is shared).
+        existing.priority = priority
+        const ref = repo.albumState(albumId)
+        const provider = ref && getRegistry().get(ref.provider)
+        void provider?.getAlbum?.(ref!.provider_ref, { priority, force }).catch(() => {})
+      }
+      return existing.done
+    }
     if (!st) return Promise.reject(new NetError('not_found', `no album ${albumId}`))
     const provider = getRegistry().get(st.provider)
     if (!provider?.getAlbum) return Promise.resolve()
@@ -543,8 +558,29 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
         throw e
       })
       .finally(() => detailInflight.delete(albumId))
-    detailInflight.set(albumId, p)
+    detailInflight.set(albumId, { done: p, priority })
     return p
+  }
+
+  // The selected game's albums whose track lists aren't known yet, so its track count and length
+  // fill in without opening each album: normal priority (behind anything someone opens, ahead of
+  // crawls and art), a couple at a time. A newer call (another game) replaces what still waits.
+  let fillQueue: number[] = []
+  let fillWorkers = 0
+  function pumpFill(): void {
+    while (fillWorkers < FILL_PARALLEL && fillQueue.length && !stopped) {
+      fillWorkers++
+      void (async () => {
+        try {
+          while (fillQueue.length && !stopped) {
+            const id = fillQueue.shift()!
+            await fetchDetail(id, 1).catch((e) => log(`album ${id} track list: ${(e as Error).message}`))
+          }
+        } finally {
+          fillWorkers--
+        }
+      })()
+    }
   }
 
   /**
@@ -841,7 +877,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
         repo.revision++
         notify()
       }
-      if (repo.meta('cluster_version') !== String(CLUSTER_VERSION)) {
+      if (repo.meta('cluster_version') !== String(CLUSTER_VERSION) || repo.meta(RECLUSTER_PENDING) === '1') {
         if (!anyCrawling() && repo.counts().albums > 0) {
           const t0 = now()
           await repo.reclusterAll()
@@ -917,6 +953,7 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
 
     stop() {
       stopped = true
+      fillQueue = []
       for (const t of timers) clearTimeout(t)
       timers.length = 0
       for (const c of crawlers.values()) c.stop()
@@ -1065,6 +1102,16 @@ export function createCatalogService(deps: CatalogDeps, internals: CatalogIntern
 
     markSourceFailed(trackId, cacheKey, reason) {
       resolver.markFailed(trackId, cacheKey, reason)
+    },
+
+    fillAlbums(albumIds) {
+      const unknown = (id: number) => {
+        const r = repo.get<{ detail_at: number | null; detail_error: string | null; gone: number }>(`SELECT detail_at, detail_error, gone FROM albums WHERE id = ?`, id)
+        // One that failed before waits for someone to open it (no retrying on every selection).
+        return !!r && r.detail_at == null && r.detail_error == null && !r.gone
+      }
+      fillQueue = albumIds.map(Number).filter((id) => Number.isFinite(id) && unknown(id)).slice(0, FILL_MAX)
+      pumpFill()
     },
 
     warmSources(trackIds) {

@@ -5,6 +5,28 @@ use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Async, FixedAsync, Indexing, Resampler, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
 const CHUNK: usize = 1024;
+/** Largest exact phase table (sinc points per input sample) before falling back to cubic. */
+const MAX_EXACT_PHASES: u32 = 1024;
+
+const fn gcd(a: u32, b: u32) -> u32 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// Windowed-sinc parameters for a fixed ratio. Output sample k sits at input position
+/// k·from/to, whose fractional part is always a multiple of 1/(to/gcd): with that many table
+/// points per input sample, every position is exactly a table entry. Nearest lookup is then
+/// exact polyphase resampling: one dot product per channel instead of cubic's blend of four
+/// (2 instead of 6 for stereo), and no interpolation error. 44.1 → 48 kHz needs 160 points, 32 →
+/// 48 kHz 3, 48 → 44.1 kHz 147. Rates without a small common factor keep cubic interpolation.
+fn sinc_params(from_rate: u32, to_rate: u32) -> SincInterpolationParameters {
+    let base = SincInterpolationParameters::new(128, WindowFunction::BlackmanHarris2);
+    let phases = to_rate / gcd(from_rate, to_rate).max(1);
+    if phases <= MAX_EXACT_PHASES {
+        base.oversampling_factor(phases as usize).interpolation(SincInterpolationType::Nearest)
+    } else {
+        base.oversampling_factor(256).interpolation(SincInterpolationType::Cubic)
+    }
+}
 
 pub struct StreamResampler {
     inner: Async<f32>,
@@ -20,9 +42,7 @@ pub struct StreamResampler {
 impl StreamResampler {
     pub fn new(from_rate: u32, to_rate: u32) -> Result<Self, String> {
         let ratio = to_rate as f64 / from_rate as f64;
-        let params = SincInterpolationParameters::new(128, WindowFunction::BlackmanHarris2)
-            .oversampling_factor(256)
-            .interpolation(SincInterpolationType::Cubic);
+        let params = sinc_params(from_rate, to_rate);
         let inner = Async::<f32>::new_sinc(ratio, 1.0, &params, CHUNK, 2, FixedAsync::Input).map_err(|e| e.to_string())?;
         let out_max = inner.output_frames_max();
         let delay = inner.output_delay();
@@ -96,12 +116,9 @@ impl StreamResampler {
 mod tests {
     use super::*;
 
-    #[test]
-    fn length_and_alignment() {
-        let from = 44_100;
-        let to = 48_000;
+    /// 1 s of a 1 kHz sine through `from → to`: exact length, and aligned within a sample.
+    fn check(from: u32, to: u32) {
         let mut rs = StreamResampler::new(from, to).unwrap();
-        // 1 s of a 1 kHz sine.
         let n = from as usize;
         let input: Vec<f32> =
             (0..n).flat_map(|i| {
@@ -113,22 +130,45 @@ mod tests {
             rs.push(c, &mut out).unwrap();
         }
         rs.finish(&mut out).unwrap();
-        assert_eq!(out.len() / 2, to as usize);
-        // Alignment: rubato reports an integer delay; the true one has a fractional part. Allow
-        // up to one sample of offset, and require a clean match at the best offset.
-        let mut best = (f32::MAX, 0.0f32);
-        for s in -20..=20 {
-            let shift = s as f32 / 20.0;
+        assert_eq!(out.len() / 2, to as usize, "{from} -> {to}");
+        // Alignment: rubato reports an integer delay; the true one has a fractional part (and with
+        // nearest lookup, up to one more sample at some ratios: ≤ 42 µs, inaudible and the same
+        // for every track at that ratio). Allow 2.5 samples of offset; the match must be clean.
+        let err_at = |shift: f32| {
             let mut err = 0.0f32;
-            for i in 2000..46_000 {
+            for i in 2000..(to as usize - 2000) {
                 let expect = (2.0 * std::f32::consts::PI * 1000.0 * (i as f32 + shift) / to as f32).sin() * 0.5;
                 err = err.max((out[i * 2] - expect).abs());
             }
-            if err < best.0 {
-                best = (err, shift);
+            err
+        };
+        // coarse (1/20 sample), then fine (1/200) around the best
+        let mut best = (f32::MAX, 0.0f32);
+        for s in -50..=50 {
+            let e = err_at(s as f32 / 20.0);
+            if e < best.0 {
+                best = (e, s as f32 / 20.0);
             }
         }
-        assert!(best.0 < 1e-3, "max error {} at shift {}", best.0, best.1);
+        let centre = best.1;
+        for s in -10..=10 {
+            let shift = centre + s as f32 / 200.0;
+            let e = err_at(shift);
+            if e < best.0 {
+                best = (e, shift);
+            }
+        }
+        assert!(best.0 < 1e-3, "{from} -> {to}: max error {} at shift {}", best.0, best.1);
+    }
+
+    #[test]
+    fn length_and_alignment() {
+        // exact polyphase at the common source rates, then a ratio that keeps cubic
+        for (from, to) in [(44_100, 48_000), (32_000, 48_000), (48_000, 44_100), (22_050, 48_000), (16_000, 48_000), (96_000, 48_000), (11_025, 44_100), (44_100, 47_999)] {
+            check(from, to);
+        }
+        assert_eq!(sinc_params(44_100, 47_999).interpolation, SincInterpolationType::Cubic);
+        assert_eq!(sinc_params(44_100, 48_000).oversampling_factor, 160);
     }
 }
 
@@ -158,3 +198,4 @@ mod perf {
         }
     }
 }
+

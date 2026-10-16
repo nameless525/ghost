@@ -12,17 +12,19 @@ pub struct CacheReader {
     mgr: Arc<CacheManager>,
     pos: u64,
     cancel: Option<Arc<AtomicBool>>,
+    /// See [`CacheManager::open_background_reader`].
+    background: bool,
 }
 
 impl CacheReader {
-    pub(super) fn new(entry: Arc<Entry>, mgr: Arc<CacheManager>, cancel: Option<Arc<AtomicBool>>) -> Self {
+    pub(super) fn new(entry: Arc<Entry>, mgr: Arc<CacheManager>, cancel: Option<Arc<AtomicBool>>, background: bool) -> Self {
         entry.readers.fetch_add(1, Ordering::AcqRel);
         {
             let mut st = entry.state.lock();
             st.last_reader_seen = Instant::now();
         }
         entry.ensure_fetcher();
-        Self { entry, mgr, pos: 0, cancel }
+        Self { entry, mgr, pos: 0, cancel, background }
     }
 
     pub fn entry(&self) -> &Arc<Entry> {
@@ -79,8 +81,14 @@ impl CacheReader {
                 break Err(io::Error::other("canceled"));
             }
             if !demanded {
-                st.demand.retain(|&d| d != c);
-                st.demand.insert(0, c);
+                if self.background {
+                    if !st.bg_demand.contains(&c) {
+                        st.bg_demand.push(c);
+                    }
+                } else {
+                    st.demand.retain(|&d| d != c);
+                    st.demand.insert(0, c);
+                }
                 demanded = true;
                 self.entry.cond.notify_all();
             }
@@ -104,7 +112,11 @@ impl CacheReader {
             st.waiting -= 1;
         };
         if demanded {
-            st.demand.retain(|&d| d != c);
+            if self.background {
+                st.bg_demand.retain(|&d| d != c);
+            } else {
+                st.demand.retain(|&d| d != c);
+            }
         }
         if st.waiting == 0 {
             st.wait_since = None;
@@ -129,7 +141,9 @@ impl Read for CacheReader {
         if buf.is_empty() {
             return Ok(0);
         }
-        self.entry.read_hint.store(self.pos, Ordering::Relaxed);
+        if !self.background {
+            self.entry.read_hint.store(self.pos, Ordering::Relaxed);
+        }
         let avail = self.ensure_available(self.pos)?;
         if avail == 0 {
             return Ok(0);

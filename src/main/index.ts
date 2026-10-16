@@ -57,6 +57,7 @@ const rendererUrl = (): string => process.env.ELECTRON_RENDERER_URL || pathToFil
 
 function createWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
+  perfMark('window:create')
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -74,7 +75,12 @@ function createWindow(): BrowserWindow {
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
-      backgroundThrottling: false,
+      // Search boxes and playlist names: no squiggles wanted, and no Hunspell dictionary download
+      // (Windows/Linux) or per-keystroke spellcheck round trips.
+      spellcheck: false,
+      // Throttling stays on (Electron's default): a minimised or fully covered window then reports
+      // itself hidden, so the renderer stops drawing (motion/ticker.ts). Audio is native and keeps
+      // playing; nothing in the page needs timers while it can't be seen.
       additionalArguments: handle?.preloadArgs ?? []
     }
   })
@@ -104,7 +110,7 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-startMainPerf()
+startMainPerf({ followFocus: !app.isPackaged })
 
 app.whenReady().then(async () => {
   perfMark('app:ready')
@@ -150,6 +156,9 @@ app.on('browser-window-focus', () => setPerfFocus(true))
 app.on('browser-window-blur', () => setImmediate(() => setPerfFocus(BrowserWindow.getFocusedWindow() !== null)))
 
 app.on('window-all-closed', () => {
+  // macOS keeps playing with no window: nothing shows the live analysis (a new window's page
+  // turns it back on when it reports itself visible).
+  void handle?.services.player.setAnalysisDemand(false)
   if (process.platform !== 'darwin') app.quit()
 })
 

@@ -4,7 +4,10 @@
 // tree 2.5–6x faster (a 500-row KHInsider listing: ~50 ms → ~10 ms, an album page ~21 → ~5 ms),
 // which is crawl CPU and album-open latency in the catalog worker.
 
-import { load, type CheerioAPI } from 'cheerio'
+import type { CheerioAPI } from 'cheerio'
+// The slim entry: htmlparser2 only. The default one also loads parse5, undici and the encoding
+// sniffers at import, ~45 ms of catalog-worker start-up for code these options never reach.
+import { load } from 'cheerio/slim'
 
 const OPTIONS = { xml: { xmlMode: false, decodeEntities: true } } as const
 

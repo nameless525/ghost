@@ -239,6 +239,10 @@
 .bc-art__img.is-loaded {
   opacity: 1;
 }
+/* the small copy under the cover (the cover, once in, covers it) */
+.bc-art__img--preview {
+  transition-duration: 160ms;
+}
 .bc-shade {
   position: absolute;
   top: 0;

@@ -1,5 +1,5 @@
-// Root composition: GPU background, screen stack, overlays, toolbar, toasts, floating-UI
-// hosts, keyboard root and OS media session. Accent + background follow the player.
+// Root composition: GPU background, screen stack, overlays, toolbar, toasts, the update dialogs,
+// floating-UI hosts, keyboard root and OS media session. Accent + background follow the player.
 import { lazy, Suspense, useEffect } from 'react'
 import './theme'
 import { startAccentDriver } from './theme'
@@ -7,7 +7,7 @@ import './motion'
 import { BackgroundLayer } from './gfx/background'
 import { useMediaSession, usePlayerThemeSync } from './hooks'
 import { VolumeMeter } from './overlays/now-playing/VolumeMeter'
-import { applyDeepLinks, FpsMeter, GlobalKeys, initNotifications, OverlayHost, ScreenStack, ToastStack, Toolbar } from './shell'
+import { applyDeepLinks, FpsMeter, GlobalKeys, initNotifications, OverlayHost, ScreenStack, ToastStack, Toolbar, UpdatesHost } from './shell'
 import { ErrorBoundary } from './shell/ErrorBoundary'
 import { whenIdle } from './shell/lazyModule'
 import { useSettings } from './state/settings'
@@ -62,6 +62,9 @@ export default function App() {
           <ToastStack />
           <VolumeMeter />
           <FpsMeter />
+        </ErrorBoundary>
+        <ErrorBoundary label="Updates" silent>
+          <UpdatesHost />
         </ErrorBoundary>
         <UIHosts />
       </div>

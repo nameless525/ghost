@@ -7,7 +7,7 @@ import type { TrackView } from '@shared/types'
 import type { VisualizerMode } from '../../gfx/visualizers'
 import { goBack } from '../../shell/navigation'
 import { usePlayer } from '../../state/player'
-import { CoverArt, IconButton, Kbd, SegmentedControl, ShearButton } from '../../ui'
+import { BackupBadge, CoverArt, IconButton, Kbd, SegmentedControl, ShearButton } from '../../ui'
 import { cx } from '../../ui/util'
 import {
   AddToPlaylistButton,
@@ -47,6 +47,7 @@ export const MetaBlock = forwardRef<HTMLDivElement, { track: TrackView; intensit
         <div className="pl-meta__chips" data-meta-fade>
           <Intensity value={intensity} size="sm" />
           {bpm ? <span className="pl-stat pl-stat--sm tnum">{Math.round(bpm)} BPM</span> : null}
+          <BackupBadge source={track.source} />
           <span className="pl-meta__album g-ellipsis">{track.albumTitle}</span>
         </div>
       </div>
