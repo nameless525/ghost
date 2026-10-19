@@ -131,15 +131,20 @@ describe('parseMarkdown', () => {
 
   it('parses the real changelog', () => {
     const src = readFileSync(resolve(__dirname, '../../../../CHANGELOG.md'), 'utf8')
-    // one release's section, as main sends it: the text under "## x.y.z (date)"
-    const section = src.split(/^## .*$/m)[1]
-    const blocks = parseMarkdown(section)
-    expect(blocks.length).toBeGreaterThan(3)
-    expect(blocks[0].type).toBe('heading')
-    expect(blocks.some((b) => b.type === 'list')).toBe(true)
-    // no Markdown syntax left over in the text
-    const all = JSON.stringify(blocks)
-    expect(all).not.toMatch(/\*\*|\]\(|^#/)
+    // every release's section, as main sends it: the text under "## x.y.z (date)" (a small
+    // release can be one heading and one list)
+    const sections = src.split(/^## .*$/m).slice(1)
+    expect(sections.length).toBeGreaterThan(3)
+    sections.forEach((section, i) => {
+      const blocks = parseMarkdown(section)
+      // (the oldest, 0.1.0, is one line of prose)
+      if (i < sections.length - 1) {
+        expect(blocks[0].type).toBe('heading')
+        expect(blocks.some((b) => b.type === 'list')).toBe(true)
+      }
+      // no Markdown syntax left over in the text
+      expect(JSON.stringify(blocks)).not.toMatch(/\*\*|\]\(|^#/)
+    })
 
     // 0.3.2: three levels of bullets
     const v032 = src.split(/^## /m).find((s) => s.startsWith('0.3.2'))!

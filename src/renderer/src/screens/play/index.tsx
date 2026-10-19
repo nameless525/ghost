@@ -278,7 +278,9 @@ export default function PlayScreen(props: PlayScreenProps) {
         tween(target).delay(delay + GLIDE_MS * 0.5).fadeIn(GLIDE_MS * 0.45, 'outQuad')
       }
     })
-    sfx.play('expand', { volume: 0.35 })
+    // Only the card that opens the screen: the queue moving on is no reason for a UI sound (it
+    // sounded over the start of every next track)
+    if (firstShow.current) sfx.play('expand', { volume: 0.35 })
     window.clearTimeout(glideTimer.current)
     glideTimer.current = window.setTimeout(finishGlide, GLIDE_MS + 2 * 45 + 40)
   }

@@ -464,6 +464,7 @@ Inspired by osu!lazer, with its own identity. It doesn't reuse any osu! assets.
 - **Soft synthesized cues:** hover tick, select chime, back swoosh, confirm. Tuned to one pentatonic set so they never clash with each other.
 - Played around −18 dBFS on a separate UI bus that isn't normalized. Can be turned off.
 - The overlay low-pass and ducking (§5.2) give opening an overlay a physical feel.
+- UI sounds answer what the user does. The queue moving on to the next song makes none: the Play screen's title-card sound plays only when the screen opens.
 
 ### 7.5 Keyboard
 | Key | Action |

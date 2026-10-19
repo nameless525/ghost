@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 (2026-10-19)
+
+### Fixes
+- **No more UI sound at the start of every song in the queue.** On the Play screen, each new song's title card made a sound as it slid into the corner, about a second into the song. It now sounds only when you open the Play screen, not when the queue moves on to the next song.
+
 ## 0.4.1 (2026-10-16)
 
 ### Your music folders show up in Browse
